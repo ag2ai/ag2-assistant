@@ -49,11 +49,18 @@ SUPPORTED_BASIC_COMPONENTS = frozenset(
     }
 )
 
+# Primitives this renderer draws beyond the Basic Catalog: the visual atoms a Card
+# needs. A Card layout may draw them; the model never emits one directly.
+CARD_PRIMITIVES = frozenset({"Metric", "Sparkline"})
+
+# The vocabulary a Card's layout is composed from.
+CARD_VOCABULARY = SUPPORTED_BASIC_COMPONENTS | CARD_PRIMITIVES
+
 
 @lru_cache(maxsize=1)
 def bundled_cards() -> dict[str, Card]:
     """The Cards shipped with the app, read once from their files."""
-    return load_cards(bundled_cards_dir(), components=SUPPORTED_BASIC_COMPONENTS)
+    return load_cards(bundled_cards_dir(), components=CARD_VOCABULARY)
 
 
 class _AssistantSchemaManager:
@@ -479,42 +486,6 @@ def assistant_catalog(cards: dict[str, Card] | None = None) -> dict:
             "additionalProperties": False,
         },
     }
-    quote_array = {
-        "type": "array",
-        "items": {
-            "type": "object",
-            "properties": {
-                "symbol": {"type": "string", "description": "Ticker, e.g. 'AAPL' or '^AXJO'."},
-                "name": {"type": "string", "description": "Instrument name, e.g. 'Apple Inc.'."},
-                "price": {"type": "number"},
-                "change": {"type": "number", "description": "Absolute change vs previous close."},
-                "changePercent": {
-                    "type": "number",
-                    "description": "Percent change vs previous close.",
-                },
-                "currency": {"type": "string", "description": "ISO code, e.g. 'USD', 'AUD'."},
-                "exchange": {"type": "string"},
-                "dayLow": {"type": "number"},
-                "dayHigh": {"type": "number"},
-                "spark": {
-                    "type": "array",
-                    "items": {"type": "number"},
-                    "description": "Optional normalised intraday points (0-100) for the sparkline.",
-                },
-                "state": {
-                    "type": "string",
-                    "description": "Trading state if known: 'open', 'closed', 'pre', 'after'.",
-                },
-                "note": {
-                    "type": "string",
-                    "description": "Optional one-line driver for the lead, only if genuinely known.",
-                },
-            },
-            # First quote is rendered as the lead/featured; the rest as a ranked table.
-            "required": ["symbol", "name", "price", "changePercent"],
-            "additionalProperties": False,
-        },
-    }
 
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -551,28 +522,6 @@ def assistant_catalog(cards: dict[str, Card] | None = None) -> dict:
                     "stories": story_array,
                 },
                 ["topic", "stories"],
-            ),
-            "MarketBoard": _component_schema(
-                "MarketBoard",
-                "Markets board for stock, index, or crypto quotes across global exchanges.",
-                {
-                    "title": {"type": "string", "description": "Board heading, e.g. 'Technology'."},
-                    "currency": {
-                        "type": "string",
-                        "description": "Board currency if all quotes share one.",
-                    },
-                    "status": {
-                        "type": "string",
-                        "description": "Market state if all agree: 'open'/'closed'/'pre'/'after'.",
-                    },
-                    "asOf": {
-                        "type": "string",
-                        "description": "Timestamp of the quotes (ISO-8601).",
-                    },
-                    "source": {"type": "string"},
-                    "quotes": quote_array,
-                },
-                ["title", "quotes"],
             ),
             "RestaurantFinder": _component_schema(
                 "RestaurantFinder",
@@ -684,7 +633,6 @@ Gather the real data with your tools BEFORE you render — each tool's own descr
 When an answer matches one of these, EMIT that component — the surface is the answer itself, not an optional garnish, so do not settle for prose alone. These are the common matches, not the whole catalog: when another component fits an answer better, render that one instead.
 - Weather or forecast -> render a WeatherPanel from the weather data you gathered.
 - Latest news, headlines, or recent developments -> render a NewsDigest.
-- Stocks, shares, ETFs, funds, indices, crypto, or market prices -> render a MarketBoard from the quote data you gathered (first quote = the lead).
 - Restaurants, cafes, bars, open-now, lunch, dinner -> render a RestaurantFinder.
 - Email, inbox, unread, "any new mail" -> render an InboxBrief from the real mail (most important thread first; copy each link into url; set needsReply only when the mail clearly asks for something).
 - Calendar, agenda, schedule, "what's on today/tomorrow" -> render an AgendaCard from the real events (mark the single next upcoming event with next:true).
@@ -733,11 +681,6 @@ Decision — user asks "Should I get the MacBook Air or the ThinkPad X1 for trav
 {"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"__CATALOG_ID__"}}
 {"version":"v1.0","updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"DecisionMatrix","topic":"Travel laptop","options":[{"name":"MacBook Air 13","tagline":"Longest battery in class","price":"$1,499"},{"name":"ThinkPad X1 Carbon","tagline":"Best keyboard + ports","price":"$1,649"}],"criteria":[{"label":"Weight","values":["1.24 kg","1.09 kg"],"best":"ThinkPad X1 Carbon"},{"label":"Battery (real-world)","values":["~15 h","~10 h"],"best":"MacBook Air 13"},{"label":"Ports","values":["2× USB-C","2× USB-C · 2× USB-A · HDMI"],"best":"ThinkPad X1 Carbon"},{"label":"Keyboard","values":["Good","Excellent"],"best":"ThinkPad X1 Carbon"}],"recommended":"MacBook Air 13","verdict":"The Air wins on battery and weight-adjusted value for travel; pick the X1 Carbon if you need USB-A/HDMI without dongles or type all day."}]}}
 
-Markets — user asks "How are the tech stocks doing?" (call get_quotes first, then copy
-its quotes straight in; the first quote is the lead. Keep each quote's `spark`, `currency`,
-and numeric `price`/`change`/`changePercent` exactly as returned):
-{"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"__CATALOG_ID__"}}
-{"version":"v1.0","updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"MarketBoard","title":"Technology","currency":"USD","status":"open","asOf":"2026-06-29T18:17:30+00:00","source":"Yahoo Finance","quotes":[{"symbol":"NVDA","name":"NVIDIA Corporation","price":193.99,"change":1.46,"changePercent":0.76,"currency":"USD","exchange":"NasdaqGS","dayLow":190.1,"dayHigh":195.2,"spark":[12,30,22,45,38,60,55,72,64,80,70,88,76,92,84,100],"state":"open"},{"symbol":"AAPL","name":"Apple Inc.","price":281.51,"change":-2.27,"changePercent":-0.8,"currency":"USD","exchange":"NasdaqGS","spark":[100,82,90,60,66,48,40,20],"state":"open"}]}]}}
 """
 
 # The catalog id is a constant, not a literal repeated through the prompt: keep the

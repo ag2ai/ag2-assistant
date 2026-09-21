@@ -76,7 +76,8 @@ def test_a2ui_runtime_prompt_exposes_schema_and_custom_contracts():
     # MarketBoard, which the model replaced with prose.
     assert "EMIT that component" in prompt
     assert "Weather or forecast -> render a WeatherPanel" in prompt
-    assert "market prices -> render a MarketBoard" in prompt
+    # MarketBoard is a file now: its own description is what routes the model to it.
+    assert "MarketBoard — Use when the answer is market prices" in prompt
     assert "Gather the real data with your tools BEFORE you render" in prompt
     assert "Creating, scheduling, or planning a new task -> render a TaskPlan" in prompt
     assert "task status/history) -> render a TaskProgress" in prompt
@@ -391,3 +392,102 @@ def test_a_card_that_is_not_there_is_not_offered_and_not_drawable():
     unchanged = _checklist_emit()
 
     assert expand_card_messages(unchanged, {}) == unchanged
+
+
+def _market_emit() -> list[dict]:
+    return [
+        {"version": "v1.0", "createSurface": {"surfaceId": "s1", "catalogId": CATALOG_ID}},
+        {
+            "version": "v1.0",
+            "updateComponents": {
+                "surfaceId": "s1",
+                "components": [
+                    {
+                        "id": "root",
+                        "component": "MarketBoard",
+                        "title": "Technology",
+                        "currency": "USD",
+                        "quotes": [
+                            {
+                                "symbol": "NVDA",
+                                "name": "NVIDIA Corporation",
+                                "price": 193.99,
+                                "change": 1.46,
+                                "changePercent": 0.76,
+                                "spark": [12, 30, 22, 45, 100],
+                            },
+                            {
+                                "symbol": "AAPL",
+                                "name": "Apple Inc.",
+                                "price": 281.51,
+                                "changePercent": -0.8,
+                            },
+                        ],
+                    }
+                ],
+            },
+        },
+    ]
+
+
+def test_the_market_board_is_offered_to_the_agent_from_its_file():
+    card = bundled_cards()["MarketBoard"]
+    schema = assistant_catalog()["components"]["MarketBoard"]
+
+    assert schema["description"] == card.description
+    assert schema["required"] == ["id", "component", "title", "quotes"]
+    assert set(schema["properties"]) >= {"id", "component", "title", "quotes"}
+
+    runtime.cache_clear()
+    prompt = runtime().system_prompt_section
+    assert card.description in prompt
+    assert '"component":"MarketBoard"' in prompt
+
+
+def test_the_market_board_is_drawn_from_the_vocabulary_not_from_a_component():
+    messages = expand_card_messages(_market_emit(), bundled_cards())
+
+    drawn = messages[1]["updateComponents"]["components"]
+    kinds = {component["component"] for component in drawn}
+    assert "MarketBoard" not in kinds
+    assert {"Sparkline", "Metric"} <= kinds
+    assert [message["updateDataModel"]["path"] for message in messages[2:]] == [
+        "/title",
+        "/currency",
+        "/quotes",
+    ]
+
+
+def test_a_market_board_stored_before_it_was_a_file_is_redrawn_on_read():
+    stored = A2UISurface(
+        "s1",
+        component={
+            "id": "root",
+            "component": "MarketBoard",
+            "title": "Old board",
+            "quotes": [{"symbol": "AAPL", "name": "Apple Inc.", "price": 1.0, "changePercent": 2}],
+        },
+        data={
+            "title": "Old board",
+            "quotes": [{"symbol": "AAPL", "name": "Apple Inc.", "price": 1.0, "changePercent": 2}],
+        },
+        title="Old board",
+    )
+
+    redrawn = expanded_card_surface(stored, bundled_cards())
+
+    assert redrawn.component["component"] == "Card"
+    assert redrawn.data["quotes"][0]["symbol"] == "AAPL"
+    assert redrawn.title == "Old board"
+
+
+def test_a_board_of_two_quotes_and_a_board_of_twenty_are_the_same_layout():
+    def drawn(count: int) -> list:
+        emit = _market_emit()
+        quote = emit[1]["updateComponents"]["components"][0]["quotes"][1]
+        emit[1]["updateComponents"]["components"][0]["quotes"] = [
+            {**quote, "symbol": f"S{index}"} for index in range(count)
+        ]
+        return expand_card_messages(emit, bundled_cards())[1]["updateComponents"]["components"]
+
+    assert drawn(2) == drawn(20)

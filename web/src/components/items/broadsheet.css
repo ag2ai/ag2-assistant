@@ -1,6 +1,6 @@
 /* ============================================================
    Broadsheet shell — shared structural styles for the editorial
-   A2UI surfaces (NewsWire, WeatherCard, MarketBoard).
+   A2UI surfaces (NewsWire, WeatherCard, DecisionMatrix).
    ------------------------------------------------------------
    Pairs with design/tokens/editorial.css (the day/night --ed-*
    palette). These are plain GLOBAL classes (.bs / .bs-*) so the
@@ -39,8 +39,6 @@
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
-/* Markets variant: gains-green live dot instead of vermilion. */
-.bs--markets { --bs-dot: var(--up); --bs-glow: 47, 107, 70; }
 
 /* ---- masthead ---- */
 .bs-masthead { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; padding: 15px 20px 11px; }
@@ -48,7 +46,6 @@
 .bs-masthead h1 { margin: 3px 0 0; font-family: var(--ui); font-weight: 700; font-size: clamp(20px, 4vw, 28px); line-height: 1.02; letter-spacing: -.02em; }
 .bs-edition { flex: none; text-align: right; font-family: var(--code); font-size: 10px; line-height: 1.7; color: var(--ink-3); letter-spacing: .03em; }
 .bs-edition b { color: var(--ink-2); font-weight: 700; }
-.bs-edition b.open { color: var(--up-d); } /* markets "Market open" status */
 
 /* ---- ticker / tape ---- */
 .bs-ticker { display: flex; align-items: stretch; border-top: 1px solid var(--rule-2); border-bottom: 1px solid var(--rule); background: var(--paper-2); }

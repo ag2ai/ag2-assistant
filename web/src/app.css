@@ -199,7 +199,7 @@
    reads as the primary CTA (that's why Cancel looked wrong next to Save).
 
    `.open` MUST stay ancestor-scoped: the bare class is also a state modifier
-   elsewhere (.shdot.open, MarketBoard/NewsWire class:open), so a global `.open`
+   elsewhere (.shdot.open, NewsWire class:open), so a global `.open`
    would style those as buttons. A page that renders outside a modal/panel opts in
    by adding its root class to the list below (today: .taskpage, .tf) — never by
    copying this block into the component. */
@@ -525,8 +525,76 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .a2ui-basic-col { display: flex; flex-direction: column; gap: 10px; }
 .a2ui-basic-row { display: flex; flex-wrap: wrap; gap: 10px; }
 .a2ui-basic-card { border: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 70%, var(--code) 30%); border-radius: 7px; padding: 10px; min-width: 0; }
-.a2ui-text { font-size: 12.5px; line-height: 1.4; color: var(--ink); overflow-wrap: anywhere; }
-.a2ui-divider { height: 1px; background: var(--line); margin: 2px 0; }
+.a2ui-text { font-size: 12.5px; line-height: 1.4; color: var(--a2ui-ink, var(--ink)); overflow-wrap: anywhere; min-width: 0; }
+.a2ui-divider { height: 1px; background: var(--a2ui-rule, var(--line)); margin: 2px 0; align-self: stretch; }
+.a2ui-divider.strong { height: 2px; background: var(--a2ui-rule-strong, var(--ink)); }
+
+/* ── The Card vocabulary (ADR 0028) ─────────────────────────────────────────
+   Every Card — ours or the user's — is drawn from these primitives and this
+   styling vocabulary. A Card names a tone, an emphasis, a size or a variant;
+   the token it resolves to lives here, never in the Card file. */
+
+/* Tone. The market up/down pair is the editorial palette's, which is already
+   theme-aware; the rest follow the surface the Card is drawn on. */
+:root { --a2ui-positive: var(--ed-up-d); --a2ui-negative: var(--ed-accent-d); }
+.a2ui-tone-neutral { color: var(--a2ui-ink, var(--ink)); }
+.a2ui-tone-muted { color: var(--a2ui-muted, var(--muted)); }
+.a2ui-tone-accent { color: var(--a2ui-accent, var(--accent)); }
+.a2ui-tone-positive { color: var(--a2ui-positive); }
+.a2ui-tone-negative { color: var(--a2ui-negative); }
+
+/* A feature Card carries its own frame and its own surface tokens, so the Text,
+   rules and metrics inside it read as one board. */
+.a2ui-feature {
+  --a2ui-ink: var(--ed-ink); --a2ui-muted: var(--ed-ink-3); --a2ui-accent: var(--ed-accent-d);
+  --a2ui-rule: var(--ed-rule); --a2ui-rule-strong: var(--ed-ink);
+  background: var(--ed-paper); color: var(--ed-ink);
+  border: 1px solid var(--ed-rule-2); border-radius: var(--radius-md);
+  padding: 16px 20px 18px; margin: 8px 0 12px;
+}
+
+/* Text variants — one scale, shared by every Card. */
+.a2ui-t-h1 { font-size: clamp(20px, 4vw, 27px); font-weight: var(--fw-bold); line-height: 1.05; letter-spacing: var(--tracking-tight); }
+.a2ui-t-h2 { font-size: 21px; font-weight: var(--fw-semibold); line-height: 1.1; letter-spacing: -.015em; }
+.a2ui-t-h3 { font-size: 16px; font-weight: var(--fw-semibold); line-height: 1.25; }
+.a2ui-t-h4 { font-size: 14.5px; font-weight: var(--fw-semibold); line-height: 1.3; }
+.a2ui-t-body { font-size: 12.5px; }
+.a2ui-t-caption { font-size: 11.5px; line-height: 1.35; }
+.a2ui-t-eyebrow { font-family: var(--font-mono); font-size: 9.5px; font-weight: var(--fw-bold); letter-spacing: .2em; text-transform: uppercase; }
+.a2ui-t-quote { font-size: 12.5px; line-height: 1.5; padding-left: 12px; border-left: 2px solid var(--a2ui-accent, var(--accent)); }
+.a2ui-strong { font-weight: var(--fw-bold); }
+
+/* A metric: a value, optionally a unit, and the movement behind it. */
+.a2ui-metric { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-family: var(--font-mono); }
+.a2ui-metric.end { align-items: flex-end; text-align: right; }
+.a2ui-metric-label { font-size: 10.5px; letter-spacing: var(--tracking-wide); text-transform: uppercase; color: var(--a2ui-muted, var(--muted)); }
+.a2ui-metric-value { font-weight: var(--fw-bold); letter-spacing: -.02em; line-height: 1; }
+.a2ui-metric-value i { font-style: normal; font-size: 9px; margin-left: 5px; color: var(--a2ui-muted, var(--muted)); letter-spacing: .06em; }
+.a2ui-metric-delta { font-weight: var(--fw-semibold); display: inline-flex; align-items: baseline; gap: 5px; }
+.a2ui-metric-arrow { font-size: .82em; }
+.a2ui-metric-sm { min-width: 96px; }
+.a2ui-metric-sm .a2ui-metric-value { font-size: 14px; }
+.a2ui-metric-sm .a2ui-metric-delta { font-size: 12px; }
+.a2ui-metric-md .a2ui-metric-value { font-size: 20px; }
+.a2ui-metric-md .a2ui-metric-delta { font-size: 13px; }
+.a2ui-metric-lg { flex-direction: row; align-items: baseline; flex-wrap: wrap; gap: 12px; }
+.a2ui-metric-lg .a2ui-metric-value { font-size: 30px; }
+.a2ui-metric-lg .a2ui-metric-delta { font-size: 14px; }
+
+/* A sparkline: a normalised series, drawn once on mount and then still. */
+.a2ui-spark { display: block; flex: none; }
+.a2ui-spark-sm { width: 78px; height: 30px; }
+.a2ui-spark-md { width: 160px; height: 56px; }
+.a2ui-spark-lg { width: 100%; max-width: 340px; height: 120px; flex: 1 1 200px; }
+.a2ui-spark .ln { fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; stroke-dasharray: 1; stroke-dashoffset: 1; animation: a2ui-spark-draw .7s cubic-bezier(.3, .6, .3, 1) .1s forwards; }
+.a2ui-spark .area { fill: currentColor; stroke: none; opacity: 0; animation: a2ui-spark-area .45s ease-out .55s forwards; }
+.a2ui-spark .end { fill: currentColor; opacity: 0; animation: a2ui-spark-end .25s ease-out .75s forwards; }
+@keyframes a2ui-spark-draw { to { stroke-dashoffset: 0; } }
+@keyframes a2ui-spark-area { to { opacity: .14; } }
+@keyframes a2ui-spark-end { to { opacity: 1; } }
+[data-animations='off'] .a2ui-spark .ln { animation: none; stroke-dashoffset: 0; }
+[data-animations='off'] .a2ui-spark .area { animation: none; opacity: .14; }
+[data-animations='off'] .a2ui-spark .end { animation: none; opacity: 1; }
 .a2ui-checkbox { display: flex; align-items: center; gap: 9px; min-height: 42px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 7px; background: color-mix(in srgb, var(--surface) 70%, var(--code) 30%); color: var(--ink); font-size: 12.5px; line-height: 1.35; cursor: pointer; }
 .a2ui-checkbox input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); cursor: pointer; }
 .a2ui-checkbox:has(input:focus-visible) { outline: none; box-shadow: var(--focus-ring); }
@@ -543,6 +611,8 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .a2ui-slider { display: grid; grid-template-columns: 1fr auto; align-items: center; }.a2ui-slider > span { grid-column: 1 / -1; }.a2ui-slider input { padding: 0; }.a2ui-slider output { color: var(--muted); min-width: 3ch; text-align: right; }
 .a2ui-choice { margin: 0; padding: 0; border: 0; }.a2ui-choice legend { padding: 0 0 6px; font-size: 12.5px; color: var(--ink); }.a2ui-choice > div { display: flex; flex-direction: column; gap: 6px; }.a2ui-choice label { display: flex; align-items: center; gap: 8px; min-height: 34px; color: var(--ink); font-size: 12.5px; }.a2ui-choice .chips { flex-direction: row; flex-wrap: wrap; }.a2ui-choice .chips label { border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; }
 .a2ui-list { display: flex; flex-direction: column; gap: 6px; margin-top: 9px; }
+/* Inside a layout the spacing is the parent's gap, not the list's own margin. */
+.a2ui-basic-col > .a2ui-list, .a2ui-basic-row > .a2ui-list { margin-top: 0; }
 .a2ui-story { display: flex; align-items: flex-start; gap: 10px; border: 1px solid var(--line); background: var(--code); border-radius: 8px; padding: 8px 9px; min-width: 0; }
 .a2ui-story > span { flex: none; display: inline-flex; width: 15px; justify-content: center; color: var(--muted); margin-top: 2px; }
 .a2ui-story div { min-width: 0; display: flex; flex-direction: column; gap: 2px; }

@@ -1,7 +1,7 @@
 <script lang="ts">
   import Icon from '../Icon.svelte'
   import BasicA2UIComponent from './BasicA2UIComponent.svelte'
-  import { a2uiValue, actionContext, bindingPath, childSlots, rows } from '../../lib/a2ui.ts'
+  import { a2uiPresent, a2uiText, a2uiTone, a2uiValue, actionContext, bindingPath, childSlots, metricParts, rows, sparkPath, str } from '../../lib/a2ui.ts'
   import type { A2UIAction, A2UIComponent, A2UIData, A2UIOption, NewsStory, WeatherRow } from '../../lib/a2ui.ts'
 
   type Props = {
@@ -105,6 +105,31 @@
   const ALIGN: Record<string, string> = { start: 'flex-start', center: 'center', end: 'flex-end', stretch: 'stretch' }
   const align = $derived(ALIGN[String(component.align ?? '')] || undefined)
 
+  // ── The styling vocabulary (ADR 0028) ──────────────────────────────────────
+  // A Card names a gap, an alignment, a size or a tone; each resolves to a token.
+  const GAP: Record<string, string> = { none: '0', xs: 'var(--space-2)', sm: 'var(--space-3)', md: 'var(--space-5)', lg: 'var(--space-7)' }
+  const gap = $derived(GAP[String(component.gap ?? '')] || undefined)
+  const JUSTIFY: Record<string, string> = { start: 'flex-start', center: 'center', end: 'flex-end', between: 'space-between' }
+  const justify = $derived(JUSTIFY[String(component.justify ?? '')] || undefined)
+  // A component that takes the room its row has left over.
+  const grow = $derived(component.grow === true ? 1 : undefined)
+  const tone = $derived(a2uiTone(component.tone, data, scope))
+  // Whether a component conditional on its data is drawn at all.
+  const present = $derived(a2uiPresent(component.when, data, scope))
+
+  const TEXT_VARIANTS = ['h1', 'h2', 'h3', 'h4', 'body', 'caption', 'eyebrow', 'quote']
+  const textVariant = $derived(TEXT_VARIANTS.includes(String(component.variant ?? '')) ? String(component.variant) : '')
+  const textValue = $derived(a2uiText(component, data, scope))
+
+  const metric = $derived(metricParts(component, data, scope))
+  const metricLabel = $derived(str(a2uiValue(component.label, data, scope)))
+  const sizeName = $derived(['sm', 'md', 'lg'].includes(String(component.size ?? '')) ? String(component.size) : 'md')
+  // The coordinate box a sparkline's 0..100 series is drawn in. The rendered size
+  // is the matching .a2ui-spark-* rule's, which at lg is fluid.
+  const SPARK: Record<string, { w: number; h: number; dot: number }> = { sm: { w: 78, h: 30, dot: 2.2 }, md: { w: 160, h: 56, dot: 2.6 }, lg: { w: 300, h: 120, dot: 3 } }
+  const sparkBox = $derived(SPARK[sizeName])
+  const spark = $derived(sparkPath(a2uiValue(component.values, data, scope), sparkBox.w, sparkBox.h))
+
   function clickButton() {
     const event = component.action?.event
     if (!event?.name) return
@@ -121,27 +146,56 @@
 
 {#if depth >= MAX_DEPTH}
   <!-- cyclic or pathologically deep component graph — stop recursing -->
+{:else if !present}
+  <!-- the data this component is conditional on is not there -->
 {:else if type === 'column'}
-  <div class="a2ui-basic-col" style:align-items={align}>
+  <div class="a2ui-basic-col" style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={grow}>
     {@render kids()}
   </div>
 {:else if type === 'row'}
-  <div class="a2ui-basic-row" style:align-items={align}>
+  <div class="a2ui-basic-row" style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={grow}>
     {@render kids()}
   </div>
 {:else if type === 'list'}
-  <div class="a2ui-list" style:align-items={align}>
+  <div class="a2ui-list" style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={grow}>
     {@render kids()}
   </div>
 {:else if type === 'card'}
   {@const kid = child(component.child)}
-  <div class="a2ui-basic-card">
+  <div class="a2ui-basic-card" class:a2ui-feature={component.variant === 'feature'}>
     {#if kid}<BasicA2UIComponent component={kid} {components} {data} {onDataChange} {onAction} {scope} depth={depth + 1} />{/if}
   </div>
 {:else if type === 'text'}
-  <div class:a2ui-main={component.variant && component.variant !== 'body'} class="a2ui-text">{a2uiValue(component.text, data, scope) || ''}</div>
+  <!-- Text that resolves to nothing draws nothing, so an optional field a Card
+       binds leaves no blank line behind. -->
+  {#if textValue}
+    <div class="a2ui-text a2ui-tone-{tone} {textVariant ? `a2ui-t-${textVariant}` : ''}" class:a2ui-main={!textVariant && component.variant && component.variant !== 'body'} class:a2ui-strong={component.emphasis === 'strong'} style:flex-grow={grow}>{textValue}</div>
+  {/if}
+{:else if type === 'metric'}
+  {#if metric.value || metric.delta}
+    <div class="a2ui-metric a2ui-metric-{sizeName}" class:end={component.align === 'end'} style:flex-grow={grow}>
+      {#if metricLabel}<div class="a2ui-metric-label">{metricLabel}</div>{/if}
+      <div class="a2ui-metric-value">{metric.value}{#if metric.unit}<i>{metric.unit}</i>{/if}</div>
+      {#if metric.delta}
+        <div class="a2ui-metric-delta a2ui-tone-{tone}">{#if metric.arrow}<span class="a2ui-metric-arrow">{metric.arrow}</span>{/if}{metric.delta}</div>
+      {/if}
+    </div>
+  {/if}
+{:else if type === 'sparkline'}
+  <!-- An empty series keeps its fixed column so neighbouring rows still line up;
+       at lg, which has no column, it draws nothing. -->
+  {#if !spark && sizeName !== 'lg'}
+    <span class="a2ui-spark a2ui-spark-{sizeName}"></span>
+  {:else if spark}
+    <!-- One draw-in on mount, then still. -->
+    <svg class="a2ui-spark a2ui-spark-{sizeName} a2ui-tone-{tone}" viewBox="0 0 {sparkBox.w} {sparkBox.h}" preserveAspectRatio="none" aria-hidden="true" style:flex-grow={grow}>
+      {#if sizeName === 'lg'}<path d={spark.area} class="area" />{/if}
+      <path d={spark.line} class="ln" pathLength="1" />
+      <circle cx={spark.endX} cy={spark.endY} r={sparkBox.dot} class="end" />
+    </svg>
+  {/if}
 {:else if type === 'divider'}
-  <div class="a2ui-divider" aria-hidden="true"></div>
+  <div class="a2ui-divider" class:strong={component.emphasis === 'strong'} aria-hidden="true"></div>
 {:else if type === 'checkbox'}
   <label class="a2ui-checkbox">
     <input type="checkbox" checked={checkboxValue} onchange={toggleCheckbox} />

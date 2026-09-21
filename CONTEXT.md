@@ -174,6 +174,14 @@ including the per-profile **Suppression** override, but recorded separately: a S
 and a Card may share a name and must not share a switch. A change reaches the agent
 on its next message, not its next build.
 
+**Card vocabulary**:
+The primitives and styling words a **Card**'s layout is composed from — the visual
+blocks the front end ships and the names (tone, emphasis, size, alignment, spacing)
+that resolve to design tokens. One ceiling for every Card, whatever its layer.
+Written down in `src/assistant/cards/VOCABULARY.md`.
+_Avoid_: component catalog (the A2UI protocol's own name for the Basic Catalog),
+design system (the app's own, which the vocabulary draws tokens from)
+
 **Card link**:
 A Card pointing at one of the app's own things — a **Task**, a **Chat**, a file —
 so a row in a rendered Card opens the page for it. Open to every Card, whatever its

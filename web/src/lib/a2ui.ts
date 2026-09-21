@@ -1,4 +1,6 @@
 import { nextItemId } from './ids.ts'
+import { fmtAgo, fmtClock, fmtDateTime } from './time.ts'
+import type { TimeValue } from './time.ts'
 import type { ThreadItem } from '../schemas/events.ts'
 
 // An A2UI payload is an untyped dictionary — the catalog, not this module, gives
@@ -30,6 +32,9 @@ export type A2UIComponent = {
   steps?: number
   children?: unknown
   child?: unknown
+  when?: unknown
+  map?: unknown
+  format?: unknown
   options?: A2UIOption[]
   action?: { event?: { name?: string; context?: unknown } }
   _components?: A2UIComponent[]
@@ -58,21 +63,6 @@ export type NewsStory = {
   meta?: string
   detail?: string
   text?: string
-}
-
-export type MarketQuote = {
-  symbol: string
-  name: string
-  price: number
-  changePercent: number
-  change?: number
-  currency?: string
-  exchange?: string
-  dayLow?: number
-  dayHigh?: number
-  spark?: number[]
-  state?: string
-  note?: string
 }
 
 export type DecisionOption = { name: string; tagline?: string; price?: string }
@@ -165,7 +155,110 @@ export function childSlots(children: unknown, data: A2UIData = {}, scope = ''): 
   const items = a2uiValue({ path }, data, scope)
   if (!Array.isArray(items)) return []
   const base = scoped(path, scope)
-  return items.map((_, index) => ({ id: componentId, scope: `${base}/${index}` }))
+  const start = Math.max(0, Math.trunc(Number((children as { start?: unknown }).start) || 0))
+  return items
+    .map((_, index) => ({ id: componentId, scope: `${base}/${index}` }))
+    .slice(start)
+}
+
+// ── The styling vocabulary (ADR 0028) ───────────────────────────────────────
+// A Card names a tone, a format or a label; the renderer resolves the name.
+
+export type A2UITone = 'neutral' | 'muted' | 'accent' | 'positive' | 'negative'
+
+const TONES: readonly string[] = ['neutral', 'muted', 'accent', 'positive', 'negative']
+
+/** The tone a component is drawn in: a word from the vocabulary, or a binding —
+ *  a bound number takes its tone from its sign. */
+export function a2uiTone(tone: unknown, data: A2UIData = {}, scope = ''): A2UITone {
+  const value = a2uiValue(tone, data, scope)
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value > 0 ? 'positive' : value < 0 ? 'negative' : 'neutral'
+  }
+  const word = str(value)
+  return TONES.includes(word) ? (word as A2UITone) : 'neutral'
+}
+
+/** Whether a component conditional on its data is drawn. Absent, empty, `false`
+ *  and an empty array are nothing to draw for; zero is a value like any other.
+ *  A list of conditions is drawn for when any one of them is there. */
+export function a2uiPresent(when: unknown, data: A2UIData = {}, scope = ''): boolean {
+  if (when === undefined) return true
+  if (Array.isArray(when)) return when.some((one) => a2uiPresent(one, data, scope))
+  const value = a2uiValue(when, data, scope)
+  if (value == null || value === '' || value === false) return false
+  return !Array.isArray(value) || value.length > 0
+}
+
+// A timestamp is written the way the rest of the app writes one.
+const FORMATS: Record<string, (v: TimeValue) => string> = {
+  time: fmtClock,
+  ago: fmtAgo,
+  datetime: fmtDateTime,
+}
+
+/** One Text's printed string: its bound value, put through the Card's own label
+ *  map or its time format. Nothing bound prints nothing. */
+export function a2uiText(component: A2UIComponent, data: A2UIData = {}, scope = ''): string {
+  const raw = a2uiValue(component.text, data, scope)
+  const format = FORMATS[str(component.format)]
+  if (format) return format(raw as TimeValue)
+  const named = isRecord(component.map) ? component.map[String(raw)] : undefined
+  const value = named === undefined ? raw : named
+  return value == null || value === '' ? '' : String(value)
+}
+
+export type A2UISpark = { line: string; area: string; endX: string; endY: string }
+
+/** A normalised 0..100 series as an SVG line, its filled area, and the end point,
+ *  inset by `pad` within a w×h box. Fewer than two points draw nothing. */
+export function sparkPath(values: unknown, w: number, h: number, pad = 3): A2UISpark | null {
+  const points = (Array.isArray(values) ? values : []).map(Number).filter(Number.isFinite)
+  if (points.length < 2) return null
+  const x = (i: number) => pad + (i / (points.length - 1)) * (w - pad * 2)
+  const y = (v: number) => pad + (1 - Math.max(0, Math.min(100, v)) / 100) * (h - pad * 2)
+  const drawn = points.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`)
+  const line = `M${drawn.join(' L')}`
+  return {
+    line,
+    area: `${line} L${x(points.length - 1).toFixed(1)},${(h - pad).toFixed(1)} L${x(0).toFixed(1)},${(h - pad).toFixed(1)} Z`,
+    endX: x(points.length - 1).toFixed(1),
+    endY: y(points[points.length - 1]).toFixed(1),
+  }
+}
+
+export type A2UIMetric = { value: string; unit: string; delta: string; arrow: string }
+
+// Numbers a Metric prints: grouped, two decimals, so a column of them lines up.
+const decimal = (n: number) =>
+  n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+const signed = (n: number) => `${n > 0 ? '+' : ''}${decimal(n)}`
+
+const finiteNumber = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isFinite(value) ? value : null
+
+/** One Metric's printable parts: its value, its unit, and its movement written
+ *  as a signed absolute change, a signed percent, or both. */
+export function metricParts(
+  component: A2UIComponent,
+  data: A2UIData = {},
+  scope = '',
+): A2UIMetric {
+  const raw = a2uiValue(component.value, data, scope)
+  const change = finiteNumber(a2uiValue(component.delta, data, scope))
+  const percent = finiteNumber(a2uiValue(component.deltaPercent, data, scope))
+  const moved = percent ?? change
+  const parts = [
+    change == null ? '' : signed(change),
+    percent == null ? '' : `${signed(percent)}%`,
+  ].filter(Boolean)
+  return {
+    value: typeof raw === 'number' ? decimal(raw) : str(raw),
+    unit: str(a2uiValue(component.unit, data, scope)),
+    delta: parts.length === 2 ? `${parts[0]} (${parts[1]})` : parts[0] || '',
+    arrow: moved == null || moved === 0 ? '' : moved > 0 ? '▲' : '▼',
+  }
 }
 
 // The key `part` names in `container`; null when it names nothing writable — an

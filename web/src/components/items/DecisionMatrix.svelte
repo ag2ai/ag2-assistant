@@ -1,7 +1,7 @@
 <script lang="ts">
   // "The Verdict" — editorial broadsheet rendering of a DecisionMatrix A2UI
-  // surface. Shares the day/night editorial language with NewsWire/MarketBoard/
-  // WeatherCard (broadsheet.css .bs shell). Options are columns, criteria are
+  // surface. Shares the day/night editorial language with NewsWire/WeatherCard
+  // (broadsheet.css .bs shell). Options are columns, criteria are
   // ruled rows; the recommended option gets the accent column and the verdict
   // reads like a pull quote. No ticker — a decision is a considered piece, not
   // a live feed.

@@ -1,6 +1,6 @@
 <script lang="ts">
   // Editorial broadsheet rendering of a WeatherPanel A2UI surface.
-  // Shares the "day/night edition" paper language with NewsWire/MarketBoard
+  // Shares the "day/night edition" paper language with NewsWire
   // (tokens/editorial.css, theme-aware via [data-theme]). The WebGPU
   // WeatherBanner is the hero band; rows become a ruled metric grid.
   import WeatherBanner from './WeatherBanner.svelte'

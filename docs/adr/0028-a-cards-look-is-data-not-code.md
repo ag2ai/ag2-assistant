@@ -69,7 +69,11 @@ unusable, which defeats the point of the directory.
   file drop.
 - **The riskiest Card decides the design.** The heaviest existing Card is migrated first, end
   to end; if it cannot be expressed, the escape hatch above is reconsidered before eleven more
-  files are written against the format.
+  files are written against the format. **It was, and it could**: MarketBoard is a file, drawn
+  from `Sparkline`, `Metric` and the tone vocabulary it grew. The scoped-CSS hatch stays shut.
+- **The vocabulary is written down** in `src/assistant/cards/VOCABULARY.md` — the primitives, the
+  styling words, and the tokens each resolves to. It is one list for every Card, ours and the
+  user's, and the place a new primitive is recorded when one is added.
 - **Relative bindings are a new concept in the protocol**, and must be carried through value
   resolution, data writes and action context alike — otherwise a button inside a repeated row
   cannot say which row it belongs to.

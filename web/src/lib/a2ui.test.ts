@@ -2,7 +2,7 @@
 // chat shows while that happens. Run: node --test src/lib
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { a2uiComposingSurfaceId, a2uiValue, actionContext, applyA2UIMessage, bindingPath, childSlots, splitA2UIText, withA2UIValue } from './a2ui.ts'
+import { a2uiComposingSurfaceId, a2uiPresent, a2uiText, a2uiTone, a2uiValue, actionContext, applyA2UIMessage, bindingPath, childSlots, metricParts, sparkPath, splitA2UIText, withA2UIValue } from './a2ui.ts'
 import type { ThreadItem } from '../schemas/events.ts'
 
 const PROSE = "Here's the current tech picture on OzBargain."
@@ -253,4 +253,150 @@ test('two instances of one card read their own rows, not each other\'s', () => {
   ])
   assert.equal(childSlots({ componentId: 'two__step', path: '/_cards/two/items' }, data).length, 2)
   assert.equal(a2uiValue({ path: '.' }, data, '/_cards/two/items/1'), 'c')
+})
+
+// ── The Card vocabulary: repetition offsets, tone, sparklines, metrics ───────
+
+test('a list can skip the items a layout already drew on its own', () => {
+  const data = { quotes: [{ symbol: 'NVDA' }, { symbol: 'AAPL' }, { symbol: 'MSFT' }] }
+
+  const slots = childSlots({ componentId: 'mover', path: '/quotes', start: 1 }, data)
+
+  assert.deepEqual(slots, [
+    { id: 'mover', scope: '/quotes/1' },
+    { id: 'mover', scope: '/quotes/2' },
+  ])
+})
+
+test('a list whose every item is skipped draws nothing', () => {
+  const data = { quotes: [{ symbol: 'NVDA' }] }
+
+  assert.deepEqual(childSlots({ componentId: 'mover', path: '/quotes', start: 1 }, data), [])
+})
+
+test('a rising value is toned positive and a falling one negative, from the data', () => {
+  const data = { quotes: [{ changePercent: 0.76 }, { changePercent: -0.8 }, { changePercent: 0 }] }
+
+  assert.equal(a2uiTone({ path: './changePercent' }, data, '/quotes/0'), 'positive')
+  assert.equal(a2uiTone({ path: './changePercent' }, data, '/quotes/1'), 'negative')
+  assert.equal(a2uiTone({ path: './changePercent' }, data, '/quotes/2'), 'neutral')
+})
+
+test('a tone named in a layout is taken as written, and anything else is neutral', () => {
+  assert.equal(a2uiTone('muted'), 'muted')
+  assert.equal(a2uiTone('accent'), 'accent')
+  assert.equal(a2uiTone('chartreuse'), 'neutral')
+  assert.equal(a2uiTone(undefined), 'neutral')
+})
+
+test('a sparkline maps a normalised series across its box, ending on the last point', () => {
+  const path = sparkPath([0, 100], 100, 100)
+
+  assert.ok(path)
+  assert.equal(path.line, 'M3.0,97.0 L97.0,3.0')
+  assert.equal(path.endX, '97.0')
+  assert.equal(path.endY, '3.0')
+  assert.ok(path.area.endsWith('L97.0,97.0 L3.0,97.0 Z'))
+})
+
+test('a series too short to draw a line is no sparkline at all', () => {
+  assert.equal(sparkPath([50], 100, 100), null)
+  assert.equal(sparkPath(undefined, 100, 100), null)
+})
+
+test('a metric signs and formats its delta, both absolute and percent', () => {
+  const data = { price: 193.99, change: 1.46, changePercent: 0.76, currency: 'USD' }
+  const metric = metricParts(
+    {
+      component: 'Metric',
+      value: { path: '/price' },
+      unit: { path: '/currency' },
+      delta: { path: '/change' },
+      deltaPercent: { path: '/changePercent' },
+    },
+    data,
+  )
+
+  assert.equal(metric.value, '193.99')
+  assert.equal(metric.unit, 'USD')
+  assert.equal(metric.arrow, '▲')
+  assert.equal(metric.delta, '+1.46 (+0.76%)')
+})
+
+test('a falling metric carries the minus sign it was given', () => {
+  const data = { price: 281.51, changePercent: -0.8 }
+  const metric = metricParts(
+    { component: 'Metric', value: { path: '/price' }, deltaPercent: { path: '/changePercent' } },
+    data,
+  )
+
+  assert.equal(metric.value, '281.51')
+  assert.equal(metric.arrow, '▼')
+  assert.equal(metric.delta, '-0.80%')
+})
+
+test('a metric with no movement to report is just its value', () => {
+  const metric = metricParts({ component: 'Metric', value: { path: '/price' } }, { price: 1234.5 })
+
+  assert.equal(metric.value, '1,234.50')
+  assert.equal(metric.arrow, '')
+  assert.equal(metric.delta, '')
+})
+
+test('a component conditional on absent data is not drawn', () => {
+  const data = { quotes: [{ symbol: 'NVDA' }], source: 'Yahoo Finance', tally: 0 }
+
+  assert.equal(a2uiPresent({ path: '/quotes/1' }, data), false)
+  assert.equal(a2uiPresent({ path: '/missing' }, data), false)
+  assert.equal(a2uiPresent({ path: '/source' }, data), true)
+  // Nothing is not the same as zero: a metric of 0 is still a metric.
+  assert.equal(a2uiPresent({ path: '/tally' }, data), true)
+})
+
+test('a component with no condition is always drawn', () => {
+  assert.equal(a2uiPresent(undefined, {}), true)
+})
+
+test('a condition bound to an array follows whether the array has rows', () => {
+  assert.equal(a2uiPresent({ path: '/rows' }, { rows: [] }), false)
+  assert.equal(a2uiPresent({ path: '/rows' }, { rows: ['one'] }), true)
+})
+
+test('a text names the label its value stands for, so a stored code still reads', () => {
+  const component = {
+    component: 'Text',
+    text: { path: '/status' },
+    map: { open: 'Market open', closed: 'Market closed' },
+  }
+
+  assert.equal(a2uiText(component, { status: 'open' }), 'Market open')
+  assert.equal(a2uiText(component, { status: 'closed' }), 'Market closed')
+  // A value the map does not name is printed as it is, not swallowed.
+  assert.equal(a2uiText(component, { status: 'halted' }), 'halted')
+  assert.equal(a2uiText(component, {}), '')
+})
+
+test('a text formats a timestamp instead of printing the ISO string', () => {
+  const at = new Date()
+  at.setHours(9, 5, 0, 0)
+  const shown = a2uiText({ component: 'Text', text: { path: '/at' }, format: 'time' }, { at: at.toISOString() })
+
+  assert.match(shown, /9:05/)
+  assert.equal(a2uiText({ component: 'Text', text: { path: '/at' }, format: 'time' }, {}), '')
+})
+
+test('a text with nothing bound prints nothing', () => {
+  assert.equal(a2uiText({ component: 'Text', text: { path: '/gone' } }, {}), '')
+  assert.equal(a2uiText({ component: 'Text', text: 'Movers' }, {}), 'Movers')
+})
+
+test('a condition bound to false is absent, a condition bound to zero is not', () => {
+  assert.equal(a2uiPresent({ path: '/flag' }, { flag: false }), false)
+  assert.equal(a2uiPresent({ path: '/flag' }, { flag: true }), true)
+})
+
+test('a condition can name alternatives, and any one of them is enough', () => {
+  assert.equal(a2uiPresent([{ path: '/source' }, { path: '/asOf' }], { asOf: '2026-01-01' }), true)
+  assert.equal(a2uiPresent([{ path: '/source' }, { path: '/asOf' }], { source: 'Yahoo' }), true)
+  assert.equal(a2uiPresent([{ path: '/source' }, { path: '/asOf' }], {}), false)
 })

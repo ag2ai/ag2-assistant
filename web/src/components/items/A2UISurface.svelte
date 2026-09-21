@@ -3,7 +3,6 @@
   import BasicA2UIComponent from './BasicA2UIComponent.svelte'
   import WeatherCard from './WeatherCard.svelte'
   import NewsWire from './NewsWire.svelte'
-  import MarketBoard from './MarketBoard.svelte'
   import DecisionMatrix from './DecisionMatrix.svelte'
   import TaskProgress from './TaskProgress.svelte'
   import AgendaCard from './AgendaCard.svelte'
@@ -22,12 +21,13 @@
   const components = $derived(item.components || item.component._components || [item.component])
   const type = $derived((item.component.component || 'AnswerBrief').toLowerCase())
   const isBasicLayout = $derived(['column', 'row', 'list', 'card', 'text', 'divider', 'checkbox', 'button', 'image', 'icon', 'video', 'textfield', 'choicepicker', 'slider', 'datetimeinput'].includes(type))
+  // A feature Card draws its own frame and heading; the generic chrome is skipped.
+  const isFeature = $derived(type === 'card' && str(item.component.variant) === 'feature')
   const componentIcon = $derived(
     isBasicLayout ? 'sparkles'
       : type === 'weatherpanel' ? 'sun'
       : type === 'taskplan' ? 'list'
       : type === 'newsdigest' ? 'globe'
-      : type === 'marketboard' ? 'trending-up'
       : type === 'decisionmatrix' ? 'check'
       : type === 'taskprogress' ? 'clock'
       : type === 'agendacard' ? 'clock'
@@ -40,7 +40,6 @@
       : type === 'weatherpanel' ? 'Live forecast'
       : type === 'taskplan' ? 'Task plan'
       : type === 'newsdigest' ? 'News brief'
-      : type === 'marketboard' ? 'Markets'
       : type === 'decisionmatrix' ? 'Decision'
       : type === 'taskprogress' ? 'Task status'
       : type === 'agendacard' ? 'Agenda'
@@ -85,7 +84,7 @@
   }
 
   const emptyAnswerBrief = $derived(
-    !['column', 'row', 'list', 'card', 'text', 'divider', 'checkbox', 'button', 'image', 'icon', 'video', 'textfield', 'choicepicker', 'slider', 'datetimeinput', 'weatherpanel', 'taskplan', 'newsdigest', 'marketboard', 'decisionmatrix', 'taskprogress', 'agendacard', 'inboxbrief', 'restaurantfinder', 'codingsession'].includes(type) &&
+    !['column', 'row', 'list', 'card', 'text', 'divider', 'checkbox', 'button', 'image', 'icon', 'video', 'textfield', 'choicepicker', 'slider', 'datetimeinput', 'weatherpanel', 'taskplan', 'newsdigest', 'decisionmatrix', 'taskprogress', 'agendacard', 'inboxbrief', 'restaurantfinder', 'codingsession'].includes(type) &&
     !list(data.sections).length &&
     genericText(data.topic) &&
     genericText(data.title) &&
@@ -95,13 +94,13 @@
 
 {#if isComposingUpdate}
   <A2UIComposing />
+{:else if isFeature}
+  <BasicA2UIComponent component={item.component} {components} data={inputData} onDataChange={setInputValue} onAction={submitAction} />
 {:else if !emptyAnswerBrief}
 {#if type === 'newsdigest' && list(data.stories).length}
   <NewsWire {data} />
 {:else if type === 'weatherpanel'}
   <WeatherCard {data} />
-{:else if type === 'marketboard' && list(data.quotes).length}
-  <MarketBoard {data} />
 {:else if type === 'decisionmatrix' && list(data.options).length}
   <DecisionMatrix {data} />
 {:else if type === 'taskprogress' && list(data.tasks).length}
