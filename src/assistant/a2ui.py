@@ -51,7 +51,9 @@ SUPPORTED_BASIC_COMPONENTS = frozenset(
 
 # Primitives this renderer draws beyond the Basic Catalog: the visual atoms a Card
 # needs. A Card layout may draw them; the model never emits one directly.
-CARD_PRIMITIVES = frozenset({"Figure", "Link", "Metric", "Sparkline", "Table", "WeatherGlyph"})
+CARD_PRIMITIVES = frozenset(
+    {"Diff", "Figure", "Link", "Metric", "Sparkline", "Table", "WeatherGlyph"}
+)
 
 # The conditions the WeatherGlyph primitive draws — its vocabulary, not any Card's.
 # The weather tool maps into it; mirrored in web/src/lib/weather/conditions.ts.

@@ -13,7 +13,7 @@ from ag2.context import ConversationContext
 from ag2.stream import MemoryStream
 
 from assistant.coding import session as sessmod
-from assistant.events import A2UISurface
+from assistant.events import A2UISurface, A2UISurfaceDataUpdated
 from tests.support.stubs import write_stub
 
 pytestmark = pytest.mark.asyncio
@@ -33,15 +33,19 @@ class FakePM:
 
 
 def _ctx_with_collector():
+    """A context, and the run's successive states: the opening surface's data model
+    and every later update to it."""
     stream = MemoryStream(id="s")
-    surfaces: list = []
+    states: list[dict] = []
 
     async def collect(event):
         if isinstance(event, A2UISurface):
-            surfaces.append(event)
+            states.append(event.data)
+        elif isinstance(event, A2UISurfaceDataUpdated):
+            states.append(event.data)
 
     stream.subscribe(collect)
-    return ConversationContext(stream=stream), surfaces
+    return ConversationContext(stream=stream), states
 
 
 def _only_claude(tmp_path) -> list:
@@ -84,7 +88,7 @@ async def test_directory_denied_refuses(tmp_path):
 
 
 async def test_happy_path_emits_surfaces_and_diff(tmp_path):
-    ctx, surfaces = _ctx_with_collector()
+    ctx, states = _ctx_with_collector()
     pm = FakePM(allow=True)
 
     async def runner(config, task, context):
@@ -103,9 +107,9 @@ async def test_happy_path_emits_surfaces_and_diff(tmp_path):
         runner=runner,
         search_path=_only_claude(tmp_path),
     )
-    # a running surface, then a terminal done surface
-    assert len(surfaces) >= 2
-    final = surfaces[-1].component
+    # a running state, then a terminal done one
+    assert len(states) >= 2
+    final = states[-1]
     assert final["status"] == "done"
     assert any(f["path"] == "hello.py" and f["status"] == "added" for f in final["files"])
     assert final["plan"] == [{"content": "write hello", "status": "completed"}]
@@ -113,7 +117,7 @@ async def test_happy_path_emits_surfaces_and_diff(tmp_path):
 
 
 async def test_runner_failure_emits_failed_surface(tmp_path):
-    ctx, surfaces = _ctx_with_collector()
+    ctx, states = _ctx_with_collector()
     pm = FakePM(allow=True)
 
     async def runner(config, task, context):
@@ -128,8 +132,8 @@ async def test_runner_failure_emits_failed_surface(tmp_path):
         runner=runner,
         search_path=_only_claude(tmp_path),
     )
-    assert surfaces[-1].component["status"] == "failed"
-    assert "adapter blew up" in surfaces[-1].component.get("error", "")
+    assert states[-1]["status"] == "failed"
+    assert "adapter blew up" in states[-1].get("error", "")
     assert "adapter blew up" in out or "failed" in out.lower()
 
 
@@ -137,7 +141,7 @@ async def test_missing_directory_is_created_after_approval(tmp_path):
     """The tool contract allows pointing at a not-yet-existing folder ("start a
     new project in ..."); the adapter needs a real cwd, so the run creates it
     once the permission gate passes."""
-    ctx, surfaces = _ctx_with_collector()
+    ctx, states = _ctx_with_collector()
     target = tmp_path / "new-project"
 
     async def runner(config, task, context):
@@ -152,14 +156,15 @@ async def test_missing_directory_is_created_after_approval(tmp_path):
         search_path=_only_claude(tmp_path),
     )
     assert target.is_dir()
-    assert surfaces[-1].component["status"] == "done"
+    assert states[-1]["status"] == "done"
     assert "failed" not in out.lower()
 
 
 async def test_plan_update_streams_onto_running_surface(tmp_path):
-    """An ACPPlan arriving mid-run re-emits the running surface with the plan,
-    so the workshop panel shows progress instead of 'warming up' forever."""
-    ctx, surfaces = _ctx_with_collector()
+    """An ACPPlan arriving mid-run updates the running surface's data with the
+    plan — no layout re-sent — so the panel shows progress instead of 'warming
+    up' forever."""
+    ctx, states = _ctx_with_collector()
 
     async def runner(config, task, context):
         await context.send(ACPPlan([ACPPlanEntry("step one", "in_progress", None)]))
@@ -174,8 +179,47 @@ async def test_plan_update_streams_onto_running_surface(tmp_path):
         runner=runner,
         search_path=_only_claude(tmp_path),
     )
-    running = [s.component for s in surfaces if s.component["status"] == "running"]
+    running = [state for state in states if state["status"] == "running"]
     assert running[-1]["plan"] == [{"content": "step one", "status": "in_progress"}]
+    # Only the first emit carries the layout; the plan arrives as data alone.
+    assert len(running) >= 2
+
+
+async def test_the_layout_is_sent_once_however_often_the_run_redraws(tmp_path):
+    """A live run redraws by updating its data model, so the Card instance — and with
+    it the whole layout — is emitted exactly once, when the surface opens."""
+    stream = MemoryStream(id="s")
+    emitted: list = []
+
+    async def collect(event):
+        if isinstance(event, (A2UISurface, A2UISurfaceDataUpdated)):
+            emitted.append(event)
+
+    stream.subscribe(collect)
+    ctx = ConversationContext(stream=stream)
+
+    async def runner(config, task, context):
+        await context.send(ACPPlan([ACPPlanEntry("step one", "in_progress", None)]))
+        await context.send(ACPPlan([ACPPlanEntry("step one", "completed", None)]))
+        (tmp_path / "hello.py").write_text("print('hi')\n")
+        return "ok"
+
+    await sessmod.run_coding_session(
+        context=ctx,
+        directory=str(tmp_path),
+        task="t",
+        pm=FakePM(),
+        surface_id="cs1",
+        runner=runner,
+        search_path=_only_claude(tmp_path),
+    )
+    layouts = [e for e in emitted if isinstance(e, A2UISurface)]
+    assert len(layouts) == 1
+    assert layouts[0].component["component"] == "CodingSession"
+    # …and the states after it are data alone, on the same surface.
+    assert len(emitted) > 1
+    assert {e.surface_id for e in emitted} == {"cs1"}
+    assert emitted[-1].data["status"] == "done"
 
 
 async def test_default_runner_survives_held_stream_turn_lock():

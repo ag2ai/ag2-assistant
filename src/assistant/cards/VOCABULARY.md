@@ -36,6 +36,7 @@ draw it twice.
 | `Link` | Its `child`, opening one of the app's own things or an external page. Exactly one target, and the first it names wins: `task`, `chat`, `file`, `folder` — or `url`, for a page on the web (http(s) only). A `task` or `chat` the app no longer lists, and a `url` on a scheme we will not follow, are drawn as the plain text the Link wraps; a path is taken as given. A target a row may not carry needs a `when` beside it, or every row draws the link's text. |
 | `Figure` | The picture a Card leads with: `url`, `description`, `caption` and a `size`. Cropped to fill its own box with the credit stamped in the corner — at `lg` it stretches to the row it is in, at `sm` and `md` it holds a thumbnail's box. No `url` is no figure. |
 | `WeatherGlyph` | One weather `condition` drawn as a band, with the `temperature` read in-scene and a `size`. The conditions it draws are its own vocabulary — `sunny`, `partly-cloudy`, `cloudy`, `foggy`, `rainy`, `thunderstorm`, `snow`, `windy` — and anything else is drawn as `cloudy`, so a Card can never name artwork nothing has. How richly it is drawn is the app-wide `animations` setting's business, not the Card's. |
+| `Diff` | One file's change, read as the unified diff its `hunks` carry: a row per line, the added and the removed ones washed in their own tone. The mark at the head of a line is the diff's own, so no Card says which rows are which. It scrolls inside its own frame rather than widening the Card, and no hunks are no diff at all — a file with no text to show says so in its own words. |
 | `Icon`, `Image`, `Video` | As the Basic Catalog declares them; an `Icon` also takes a `size`, a `tone` and a `map`. |
 | `Button`, `CheckBox`, `ChoicePicker`, `TextField`, `Slider`, `DateTimeInput` | As the Basic Catalog declares them. |
 
@@ -44,7 +45,7 @@ draw it twice.
 | Word | Values | On |
 |---|---|---|
 | `tone` | `neutral`, `muted`, `accent`, `positive`, `negative` — **or a binding**: a bound number takes its tone from its sign, so a rising value is green and a falling one red without a Card naming either, and a bound word carrying a `map` takes the tone that table names for it, so a status field colours its own badge. | `Text`, `Metric`, `Sparkline`, `Icon`, and a marked layout |
-| `variant` | `h1`, `h2`, `h3`, `h4`, `body`, `caption`, `eyebrow`, `quote` — or `pill`, a chip rather than a step on the scale: a short label a Card sets beside others, taking its ink from its `tone`; or `badge`, the status mark, one uppercase word outlined in its own tone | `Text` |
+| `variant` | `h1`, `h2`, `h3`, `h4`, `body`, `caption`, `eyebrow`, `quote` — or `pill`, a chip rather than a step on the scale: a short label a Card sets beside others, taking its ink from its `tone`; `badge`, the status mark, one uppercase word outlined in its own tone; or `code`, a path or a literal in the monospace face, so a file name reads as the thing it names rather than as prose | `Text` |
 | `variant` | `feature` | `Card` |
 | `variant` | `ranked` — the list numbers its rows by their place in the array its template repeats over, so a list opened at the second item reads 02, 03, 04 | `List` |
 | `emphasis` | `strong` | `Text`, `Divider` |

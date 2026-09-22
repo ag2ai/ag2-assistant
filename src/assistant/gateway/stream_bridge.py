@@ -10,10 +10,7 @@ straight back out through the subscription. History (replay) and live are one pa
 
 import contextlib
 
-from assistant.a2ui import bundled_cards, expanded_card_surface
-from assistant.events import A2UISurface
-from assistant.gateway.wire import is_binary_event, to_wire
-from assistant.observability import log_suppressed
+from assistant.gateway.wire import as_drawn, is_binary_event, to_wire
 
 
 class StreamBridge:
@@ -39,15 +36,8 @@ class StreamBridge:
     async def _forward(self, event) -> None:
         if is_binary_event(event):
             return  # audio rides its own binary frame, not {type, data}
-        if isinstance(event, A2UISurface):
-            # Re-derived per read, so a Card instance stored before its Card became
-            # a file still reaches the client as the primitives it draws.
-            try:
-                event = expanded_card_surface(event, bundled_cards())
-            except Exception as exc:
-                log_suppressed("a2ui card expansion", exc, surface_id=event.surface_id)
         with contextlib.suppress(Exception):
-            await self._ws.send_json({"event": to_wire(event)})
+            await self._ws.send_json({"event": to_wire(as_drawn(event))})
 
     async def run_turn(
         self,

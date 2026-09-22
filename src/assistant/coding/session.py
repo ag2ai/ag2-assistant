@@ -3,8 +3,9 @@
 Flow: resolve the agent → gate the working directory via the assistant's
 ``PermissionManager`` → snapshot the tree → run the coding turn on a private
 stream (its plan updates are forwarded onto the caller's stream and mirrored
-to the live surface) → compute the diff → emit a durable CodingSession surface
-and return a concise summary for the main agent.
+to the live surface) → compute the diff → fill the CodingSession Card and
+return a concise summary for the main agent. The Card's layout is emitted once,
+when the run opens; every later state is a data update on the same surface.
 
 The real ACP run is behind the ``runner`` seam so it can be exercised
 deterministically in tests; the default runner drives ``ag2.acp``.
@@ -20,7 +21,7 @@ from ag2.acp.events import ACPPlan
 
 from assistant.coding import config as cfgmod
 from assistant.coding import detect, diff
-from assistant.coding.surface import build_surface
+from assistant.coding.surface import build_surface, card_fields, surface_data
 
 _NO_AGENT = (
     "No coding agent available on this host. Install one whose ACP adapter is on "
@@ -140,17 +141,19 @@ async def run_coding_session(
     config = cfgmod.build_config(info, directory, endpoint=endpoint)
     baseline = diff.capture(directory)
 
-    # running surface
-    await context.send(
-        build_surface(
-            surface_id=sid,
+    def fields(status: str, *, files: list | None = None, **rest) -> dict:
+        """The Card's fields for the run as it stands at one moment."""
+        return card_fields(
             agent_label=info.label,
             directory=directory,
             task=task,
-            status="running",
-            files=[],
+            status=status,
+            files=files or [],
+            **rest,
         )
-    )
+
+    # The one emit that carries the layout; every later one updates the data.
+    await context.send(build_surface(sid, fields("running")))
 
     # Capture the agent's plan updates (forwarded by the runner) and mirror
     # them onto the running surface, so the workshop panel shows the plan
@@ -160,17 +163,7 @@ async def run_coding_session(
     async def _watch(event):  # positional
         if isinstance(event, ACPPlan):
             latest_plan[:] = _plan_from_event(event)
-            await context.send(
-                build_surface(
-                    surface_id=sid,
-                    agent_label=info.label,
-                    directory=directory,
-                    task=task,
-                    status="running",
-                    files=[],
-                    plan=latest_plan,
-                )
-            )
+            await context.send(surface_data(sid, fields("running", plan=latest_plan)))
 
     sub = context.stream.subscribe(_watch)
     run = runner or (lambda c, t, ctx: _default_runner(c, t, ctx, asker=asker))
@@ -189,31 +182,13 @@ async def run_coding_session(
     except Exception as exc:  # noqa: BLE001 — surface any adapter failure, don't crash the turn
         files = diff.compute_diff(baseline, directory)
         await context.send(
-            build_surface(
-                surface_id=sid,
-                agent_label=info.label,
-                directory=directory,
-                task=task,
-                status="failed",
-                files=files,
-                plan=latest_plan,
-                error=str(exc),
-            )
+            surface_data(sid, fields("failed", files=files, plan=latest_plan, error=str(exc)))
         )
         return f"The {info.label} coding run failed: {exc}"
 
     files = diff.compute_diff(baseline, directory)
     summary = _summary(info.label, directory, files, reply)
     await context.send(
-        build_surface(
-            surface_id=sid,
-            agent_label=info.label,
-            directory=directory,
-            task=task,
-            status="done",
-            files=files,
-            plan=latest_plan,
-            summary=summary,
-        )
+        surface_data(sid, fields("done", files=files, plan=latest_plan, summary=summary))
     )
     return summary

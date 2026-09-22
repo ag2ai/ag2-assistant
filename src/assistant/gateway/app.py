@@ -161,7 +161,7 @@ from assistant.gateway.profile_manager import (
     UnknownProfile,
 )
 from assistant.gateway.stream_bridge import StreamBridge
-from assistant.gateway.wire import to_wire
+from assistant.gateway.wire import as_drawn, to_wire
 from assistant.hitl import DurableAsker, GatewayAsker, NullAsker, add_hitl_routes
 from assistant.integrations.google_auth import GoogleAuth
 from assistant.live_configs import LiveConfigStore
@@ -3835,7 +3835,7 @@ def create_app(
             # StreamBridge) so the voice client folds it with the one shared reducer
             # → tool chips/cards, task cards, deliverables, all "for free".
             with contextlib.suppress(Exception):
-                await websocket.send_json({"event": to_wire(event)})
+                await websocket.send_json({"event": to_wire(as_drawn(event))})
 
         # The voice agent can hang up the call itself via its end_call tool, which
         # trips this event; wait_end() (below) then ends the job race → teardown.

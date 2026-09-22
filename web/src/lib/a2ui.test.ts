@@ -2,7 +2,7 @@
 // chat shows while that happens. Run: node --test src/lib
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { a2uiComposingSurfaceId, a2uiIconName, a2uiLink, a2uiPresent, a2uiText, a2uiTone, a2uiValue, actionContext, applyA2UIMessage, axisScopes, bindingPath, childSlots, markedColumn, metricParts, sparkPath, splitA2UIText, templateStart, withA2UIValue } from './a2ui.ts'
+import { a2uiComposingSurfaceId, a2uiIconName, a2uiLink, a2uiPresent, a2uiText, a2uiTone, a2uiValue, actionContext, applyA2UIMessage, axisScopes, bindingPath, childSlots, diffLines, markedColumn, metricParts, sparkPath, splitA2UIText, templateStart, withA2UIValue } from './a2ui.ts'
 import type { ThreadItem } from '../schemas/events.ts'
 
 const PROSE = "Here's the current tech picture on OzBargain."
@@ -543,4 +543,32 @@ test('a mark naming a column that is not there marks nothing', () => {
 test('a table with no column axis has nothing to compare, and no columns to mark', () => {
   assert.deepEqual(axisScopes({ path: '/options' }, { options: [] }), [])
   assert.equal(markedColumn({ path: './name' }, { path: '/recommended' }, { options: [] }, []), -1)
+})
+
+// ── The diff primitive ──────────────────────────────────────────────────────
+
+test('a unified diff is split into typed lines', () => {
+  const hunks = '--- a/app.py\n+++ b/app.py\n@@ -1,3 +1,3 @@\n ctx\n-gone\n+kept\n'
+  assert.deepEqual(diffLines(hunks), [
+    { text: '--- a/app.py', kind: 'meta' },
+    { text: '+++ b/app.py', kind: 'meta' },
+    { text: '@@ -1,3 +1,3 @@', kind: 'hunk' },
+    { text: ' ctx', kind: 'ctx' },
+    { text: '-gone', kind: 'del' },
+    { text: '+kept', kind: 'add' },
+  ])
+})
+
+test('a blank line inside a diff keeps its row, and the trailing newline adds none', () => {
+  assert.deepEqual(diffLines('a\n\nb\n'), [
+    { text: 'a', kind: 'ctx' },
+    { text: ' ', kind: 'ctx' },
+    { text: 'b', kind: 'ctx' },
+  ])
+})
+
+test('nothing to draw is no diff at all', () => {
+  assert.deepEqual(diffLines(''), [])
+  assert.deepEqual(diffLines(undefined), [])
+  assert.deepEqual(diffLines(42), [])
 })

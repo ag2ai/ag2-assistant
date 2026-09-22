@@ -3,7 +3,7 @@
   import A2UILink from './A2UILink.svelte'
   import BasicA2UIComponent from './BasicA2UIComponent.svelte'
   import WeatherBanner from './WeatherBanner.svelte'
-  import { a2uiIconName, a2uiPresent, a2uiText, a2uiTone, a2uiValue, actionContext, axisScopes, bindingPath, childSlots, markedColumn, metricParts, rows, sparkPath, str, templateStart } from '../../lib/a2ui.ts'
+  import { a2uiIconName, a2uiPresent, a2uiText, a2uiTone, a2uiValue, actionContext, axisScopes, bindingPath, childSlots, diffLines, markedColumn, metricParts, rows, sparkPath, str, templateStart } from '../../lib/a2ui.ts'
   import type { A2UIAction, A2UIComponent, A2UIData, A2UIOption } from '../../lib/a2ui.ts'
 
   type Props = {
@@ -129,7 +129,7 @@
   const ranked = $derived(component.variant === 'ranked')
   const rankFrom = $derived(templateStart(component.children))
 
-  const TEXT_VARIANTS = ['h1', 'h2', 'h3', 'h4', 'body', 'caption', 'eyebrow', 'quote', 'pill', 'badge']
+  const TEXT_VARIANTS = ['h1', 'h2', 'h3', 'h4', 'body', 'caption', 'eyebrow', 'quote', 'pill', 'badge', 'code']
   const textVariant = $derived(TEXT_VARIANTS.includes(String(component.variant ?? '')) ? String(component.variant) : '')
   const textValue = $derived(a2uiText(component, data, scope))
 
@@ -289,6 +289,14 @@
       <img src={url} alt={String(a2uiValue(component.description, data, scope) ?? '')} loading="lazy" />
       {#if caption}<figcaption>{caption}</figcaption>{/if}
     </figure>
+  {/if}
+{:else if type === 'diff'}
+  <!-- One file's change, read as a unified diff: the mark at the head of each
+       line says whether it was added, removed or merely context. Empty hunks are
+       no diff at all — a binary or oversized file says so in its own words. -->
+  {@const lines = diffLines(a2uiValue(component.hunks, data, scope))}
+  {#if lines.length}
+    <pre class="a2ui-diff" style:flex-grow={grow}>{#each lines as line}<span class="a2ui-diff-line {line.kind}">{line.text}</span>{/each}</pre>
   {/if}
 {:else if type === 'weatherglyph'}
   <!-- The weather drawn as a band: the condition names the scene, the app-wide

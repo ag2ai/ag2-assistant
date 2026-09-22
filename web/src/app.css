@@ -561,6 +561,9 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 /* A badge is a status mark: one short word a Card sets against a row, outlined in
    its own tone rather than in the surface's rule colour. */
 .a2ui-t-badge { display: inline-flex; align-items: center; flex: none; align-self: flex-start; border: 1px solid currentColor; border-radius: var(--radius-sm); padding: 1px 7px; font-family: var(--font-mono); font-size: 9px; font-weight: var(--fw-bold); letter-spacing: .14em; line-height: 1.6; text-transform: uppercase; }
+/* Code is a path or a literal: the monospace face, at body size, so a file path
+   reads as the thing it names rather than as prose. */
+.a2ui-t-code { font-family: var(--font-mono); font-size: 11.5px; line-height: 1.4; overflow-wrap: anywhere; }
 .a2ui-strong { font-weight: var(--fw-bold); }
 
 /* A marker: a rule down a layout's leading edge, in its own tone — the mark a Card
@@ -623,6 +626,17 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .a2ui-glyph-sm { max-height: 64px; }
 .a2ui-glyph-md { max-height: 96px; }
 .a2ui-glyph-lg { max-height: 132px; }
+/* A unified diff: one row per line, the added and removed ones washed in their own
+   tone and the hunk and file headers left in the muted base. It scrolls inside its
+   own frame rather than widening or lengthening the Card, so a run that touched one
+   file and a run that touched thirty take the same room per file. */
+.a2ui-diff { margin: 0; padding: 8px 0; max-height: 340px; overflow: auto; border: 1px solid var(--a2ui-rule, var(--line)); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--a2ui-rule, var(--line)) 12%, transparent); font-family: var(--font-mono); font-size: 11.5px; line-height: 1.5; }
+.a2ui-diff-line { display: block; padding: 0 10px; white-space: pre; color: var(--a2ui-muted, var(--muted)); }
+.a2ui-diff-line.ctx { color: var(--a2ui-ink, var(--ink)); }
+.a2ui-diff-line.meta { font-weight: var(--fw-bold); }
+.a2ui-diff-line.add { color: var(--a2ui-positive); background: color-mix(in srgb, var(--a2ui-positive) 14%, transparent); }
+.a2ui-diff-line.del { color: var(--a2ui-negative); background: color-mix(in srgb, var(--a2ui-negative) 12%, transparent); }
+
 /* The comparison table: one column per option, one ruled row per criterion. The
    winning cell of a row is dotted, the picked column washed in the accent. */
 .a2ui-tablewrap { overflow-x: auto; min-width: 0; margin-inline: -2px; padding: 2px; }

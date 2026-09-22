@@ -1,7 +1,6 @@
 <script lang="ts">
   import Icon from '../Icon.svelte'
   import BasicA2UIComponent from './BasicA2UIComponent.svelte'
-  import CodingSession from './CodingSession.svelte'
   import A2UIComposing from './A2UIComposing.svelte'
   import { a2uiComposingSurfaceId, rows, str, withA2UIValue } from '../../lib/a2ui.ts'
   import type { A2UIAction, A2UIData } from '../../lib/a2ui.ts'
@@ -54,7 +53,7 @@
   }
 
   const emptyAnswerBrief = $derived(
-    ![...LAYOUT, 'codingsession'].includes(type) &&
+    !LAYOUT.includes(type) &&
     !list(data.sections).length &&
     genericText(data.topic) &&
     genericText(data.title) &&
@@ -67,9 +66,6 @@
 {:else if isFeature}
   <BasicA2UIComponent component={item.component} {components} data={inputData} onDataChange={setInputValue} onAction={submitAction} />
 {:else if !emptyAnswerBrief}
-{#if type === 'codingsession'}
-  <CodingSession {data} />
-{:else}
 <div class="a2ui">
   <div class="a2ui-head">
     <span class="a2ui-mark"><Icon name="sparkles" size={15} /></span>
@@ -89,7 +85,6 @@
     </div>
   {/if}
 </div>
-{/if}
 {/if}
 {#if actionPending}
   <div class="a2ui-action-pending" role="status" aria-label="Submitting action"><Icon name="rotate-cw" size={14} /></div>

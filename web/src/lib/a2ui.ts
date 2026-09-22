@@ -12,11 +12,10 @@ export type A2UIData = Record<string, unknown>
 type A2UIItem = Extract<ThreadItem, { kind: 'a2ui' }>
 
 // ── Catalog payloads ────────────────────────────────────────────────────────
-// Shapes declared by the backend catalog (assistant/a2ui.py assistant_catalog)
-// and, for CodingSession, by assistant/coding/surface.py. AG2 validates every
-// message against that catalog, so a schema `required` field is declared
-// non-optional here and the rest optional. `additionalProperties` is false, so
-// no field is declared that the catalog cannot send.
+// Shapes declared by the backend catalog (assistant/a2ui.py assistant_catalog).
+// AG2 validates every message against that catalog, so a schema `required` field
+// is declared non-optional here and the rest optional. `additionalProperties` is
+// false, so no field is declared that the catalog cannot send.
 
 // One node of a component tree. Fields the renderer reads directly are declared;
 // bindable ones stay `unknown` because they arrive either literal or as a
@@ -45,10 +44,6 @@ export type A2UIOption = { value?: unknown; label?: unknown }
 
 // An action a Button component submits back to the agent.
 export type A2UIAction = { name: string; sourceComponentId?: string; context?: unknown }
-
-// CodingSession is synthesized by the backend, not authored by the model.
-export type CodingPlanStep = { content: string; status: string }
-export type CodingFile = { path: string; status: string; hunks: string; added: number; removed: number }
 
 const isRecord = (v: unknown): v is A2UIData => !!v && typeof v === 'object' && !Array.isArray(v)
 
@@ -230,6 +225,34 @@ export function a2uiLink(
     return { kind, value }
   }
   return null
+}
+
+// ── The diff primitive ──────────────────────────────────────────────────────
+
+export type A2UIDiffKind = 'meta' | 'hunk' | 'add' | 'del' | 'ctx'
+export type A2UIDiffLine = { text: string; kind: A2UIDiffKind }
+
+/** One file's unified diff as typed lines, so an added row and a removed one are
+ *  told apart by the diff itself rather than by anything a Card writes. Nothing
+ *  to draw is no diff at all. */
+export function diffLines(hunks: unknown): A2UIDiffLine[] {
+  const text = str(hunks)
+  if (!text) return []
+  return text
+    .split('\n')
+    // A diff ends with a newline; that closing break is not a further line.
+    .filter((line, index, all) => !(line === '' && index === all.length - 1))
+    .map((line) => {
+      const first = line[0]
+      const kind: A2UIDiffKind =
+        line.startsWith('+++') || line.startsWith('---') ? 'meta'
+        : first === '@' ? 'hunk'
+        : first === '+' ? 'add'
+        : first === '-' ? 'del'
+        : 'ctx'
+      // A blank context row still occupies its line.
+      return { text: line || ' ', kind }
+    })
 }
 
 export type A2UISpark = { line: string; area: string; endX: string; endY: string }

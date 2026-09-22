@@ -22,6 +22,8 @@ from assistant.a2ui import (
     wrap_bare_a2ui,
 )
 from assistant.cards import bundled_cards_dir, load_cards
+from assistant.coding.diff import FileDiff
+from assistant.coding.surface import card_fields
 from assistant.events import A2UISurface
 from assistant.tools.weather import condition_for
 
@@ -1172,3 +1174,92 @@ def test_a_decision_matrix_stored_before_it_was_a_file_is_redrawn_on_read():
 def test_the_decision_matrix_is_no_longer_a_catalog_literal():
     assert "DecisionMatrix" not in assistant_catalog({})["components"]
     assert "render a DecisionMatrix" not in catalog_rules({})
+
+
+# --- The coding session is a Card like any other (10) ---
+
+
+def _coding_emit(**over) -> list[dict]:
+    """The Card instance the coding tool fills, as it reaches the expansion path."""
+    state = {
+        "agent_label": "Claude Code",
+        "directory": "/repo",
+        "task": "Add a /health endpoint",
+        "status": "done",
+        "files": [FileDiff("app.py", "modified", "@@ -1 +1 @@\n-a\n+b\n", 1, 1)],
+        **over,
+    }
+    return _emit({"id": "root", "component": "CodingSession", **card_fields(**state)})
+
+
+def _coding_drawn(**over) -> list[dict]:
+    return expand_card_messages(_coding_emit(**over), bundled_cards())[1]["updateComponents"][
+        "components"
+    ]
+
+
+def test_the_coding_session_is_a_card_in_the_catalog():
+    runtime.cache_clear()
+    card = bundled_cards()["CodingSession"]
+
+    assert assistant_catalog()["components"]["CodingSession"]["description"] == card.description
+    assert "CodingSession — Use when the answer is a coding agent's run" in (
+        runtime().system_prompt_section
+    )
+
+
+def test_the_coding_session_is_drawn_from_the_vocabulary_not_from_a_component():
+    drawn = _coding_drawn()
+
+    assert {component["component"] for component in drawn} <= CARD_VOCABULARY
+    assert "CodingSession" not in {component["component"] for component in drawn}
+
+
+def test_the_diff_is_a_primitive_any_card_can_draw():
+    drawn = _coding_drawn()
+
+    diff = next(component for component in drawn if component["component"] == "Diff")
+    # The hunks are read from the file the repeated row is drawing, not from a path
+    # the Card had to know in advance.
+    assert diff["hunks"] == {"path": "./hunks"}
+    assert "Diff" in CARD_VOCABULARY
+
+
+def test_a_changed_file_and_the_folder_are_opened_through_the_link_primitive():
+    drawn = _coding_drawn()
+    links = [component for component in drawn if component["component"] == "Link"]
+
+    assert {"path": "/directory"} in [link.get("folder") for link in links]
+    assert {"path": "./full"} in [link.get("file") for link in links]
+
+
+def test_a_run_of_one_file_and_a_run_of_thirty_are_the_same_layout():
+    def drawn(count: int) -> list:
+        return _coding_drawn(
+            files=[FileDiff(f"f{index}.py", "added", "@@\n+x\n", 1, 0) for index in range(count)]
+        )
+
+    assert drawn(1) == drawn(30)
+
+
+def test_a_coding_session_stored_before_it_was_a_file_is_redrawn_on_read():
+    fields = {
+        "agent": "Claude Code",
+        "directory": "/repo",
+        "task": "add hello",
+        "status": "done",
+        "plan": [{"content": "write hello", "status": "completed"}],
+        "files": [{"path": "hello.py", "status": "added", "added": 1, "removed": 0, "hunks": ""}],
+    }
+    stored = A2UISurface(
+        "cs1",
+        component={"id": "root", "component": "CodingSession", **fields},
+        data=dict(fields),
+        title="Coding session",
+    )
+
+    redrawn = expanded_card_surface(stored, bundled_cards())
+
+    assert redrawn.component["component"] == "Card"
+    assert redrawn.data["status"] == "done"
+    assert redrawn.title == "Coding session"
