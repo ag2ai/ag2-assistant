@@ -66,6 +66,7 @@ Route map:
 import asyncio
 import base64
 import contextlib
+import json
 import os
 import secrets as _secrets
 import tempfile
@@ -264,6 +265,27 @@ def _origin_ok(origin: str | None, host: str | None, allowed: set[str] = frozens
     if origin in allowed:
         return True
     return bool(host) and urlsplit(origin).netloc == host
+
+
+# Cap on the data model a click carries, bounding any client-supplied body.
+_MAX_A2UI_STATE_BYTES = 256 * 1024
+
+
+def _clicked_instance_model(state, surface_id: str) -> dict | None:
+    """The data model a click sends for the Card instance `surface_id` — None when it
+    sends none, or names a different instance."""
+    if not isinstance(state, dict) or state.get("surfaceId") != surface_id:
+        return None
+    data = state.get("data")
+    return data if isinstance(data, dict) else None
+
+
+def _oversized_model(model: dict) -> bool:
+    """Whether a client-supplied data model exceeds the bound on a persisted body."""
+    try:
+        return len(json.dumps(model, ensure_ascii=False).encode()) > _MAX_A2UI_STATE_BYTES
+    except (TypeError, ValueError):
+        return True
 
 
 # Surface context the client can request by token (kept server-side, not in the UI).
@@ -3608,15 +3630,19 @@ def create_app(
                         continue
                     if action is None:
                         # AG2's standard fallback for an undeclared Button action is
-                        # an agent turn. Preserve its supplied state first, then give
-                        # the agent a concise, structured description of the click.
-                        await runtime.gateway.emit_event(
-                            chat_id,
-                            A2UISurfaceDataUpdated(
-                                click.surface_id,
-                                data=click.context if isinstance(click.context, dict) else {},
-                            ),
-                        )
+                        # an agent turn. Persist the data model the client holds for
+                        # this instance, then describe the click to the agent.
+                        model = _clicked_instance_model(data.get("state"), click.surface_id)
+                        if model is not None and _oversized_model(model):
+                            await websocket.send_json(
+                                {"type": "error", "message": "A2UI state too large to store."}
+                            )
+                            model = None
+                        if model is not None:
+                            await runtime.gateway.emit_event(
+                                chat_id,
+                                A2UISurfaceDataUpdated(click.surface_id, data=model),
+                            )
                         await runtime.gateway.emit_event(
                             chat_id,
                             A2UIActionSubmitted(click.surface_id, action_name=click.name),

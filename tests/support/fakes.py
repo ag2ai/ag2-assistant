@@ -6,6 +6,9 @@ its own stand-in instead of patching a module attribute.
 """
 
 import asyncio
+import types
+
+from fast_depends import Provider
 
 from assistant.agent import build_skills_runtime, resolve_skills
 
@@ -71,7 +74,16 @@ class FakeRunMixin:
         return FakeRun(self, msg, kwargs)
 
 
-class FakeAgent(FakeRunMixin):
+class FakeActionsMixin:
+    """Gives a fake agent the DI surface AG2 resolves an A2UI server action against
+    — the dependencies, variables and provider ``build_server_action_context`` reads."""
+
+    _agent_dependencies = types.MappingProxyType({})
+    _agent_variables = types.MappingProxyType({})
+    dependency_provider = Provider()
+
+
+class FakeAgent(FakeRunMixin, FakeActionsMixin):
     """Deterministic fake agent: echo[N] proves per-chat continuity; empty tools."""
 
     def __init__(self):

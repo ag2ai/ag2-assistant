@@ -4,7 +4,7 @@
 // breaks the UI.
 import { z } from 'zod'
 import type { KeyedToolCard as ToolCard } from '../lib/toolcards.ts'
-import type { A2UIComponent } from '../lib/a2ui.ts'
+import type { A2UIComponent, A2UIData } from '../lib/a2ui.ts'
 
 const TextPart = z.object({ __event__: z.string().optional(), content: z.string().optional() })
 
@@ -180,6 +180,9 @@ export type VoiceFrame = z.infer<typeof VoiceFrame>
 // gateway decodes it into an AG2 input (app.py:3689 _decode_attachments).
 export type AttachmentPayload = { name: string; mime: string; data: string }
 
+// One Card instance's data model, riding beside `message` in an a2ui frame.
+export type A2UISurfaceState = { surfaceId: string; data: A2UIData }
+
 // Frames the client sends. A turn is the bare {text, attachments} shape.
 export type ClientFrame =
   // `model` rides only the message that CREATES a chat: a Text model chosen
@@ -189,7 +192,7 @@ export type ClientFrame =
   | { type: 'answer'; id: string; answer: string }
   | { type: 'feedback'; [k: string]: unknown }
   | { type: 'feedback_clear'; [k: string]: unknown }
-  | { type: 'a2ui'; message: unknown }
+  | { type: 'a2ui'; message: unknown; state?: A2UISurfaceState }
 
 // Thread items — the projection project.ts folds events into. These never cross
 // the wire, so they are plain types rather than schemas.

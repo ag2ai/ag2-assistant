@@ -6,7 +6,7 @@ import { installBrowserGlobals } from '../testing/browserGlobals.ts'
 // and window while initialising. Install those before the chain loads, hence the
 // dynamic import.
 installBrowserGlobals()
-const { readFrame } = await import('./stream.ts')
+const { readFrame, StreamClient } = await import('./stream.ts')
 
 test('readFrame returns null for malformed JSON', () => {
   assert.equal(readFrame('{not json'), null)
@@ -42,4 +42,41 @@ test('readFrame keeps the stream id the bridge stamps on ready and turn_end', ()
 test('readFrame keeps the chat id queued frames carry alongside the text', () => {
   const frame = readFrame(JSON.stringify({ type: 'queued', text: 'hi', chat: 'c1' }))
   assert.deepEqual(frame, { type: 'queued', text: 'hi', chat: 'c1' })
+})
+
+// A fake socket recording every frame the client sends.
+class FakeSocket {
+  static readonly OPEN = 1
+  static last: FakeSocket | null = null
+  readyState = 1
+  sent: string[] = []
+  onopen: (() => void) | null = null
+  onmessage: ((e: unknown) => void) | null = null
+  onclose: ((e: unknown) => void) | null = null
+  constructor() { FakeSocket.last = this }
+  send(raw: string) { this.sent.push(raw) }
+  close() {}
+}
+
+function connected() {
+  Object.defineProperty(globalThis, 'WebSocket', { value: FakeSocket, configurable: true, writable: true })
+  const client = new StreamClient('c1').connect()
+  FakeSocket.last?.onopen?.()
+  return { client, socket: FakeSocket.last as FakeSocket }
+}
+
+test('a click sends the instance data model beside the action envelope', () => {
+  const { client, socket } = connected()
+  client.a2ui({ version: 'v1.0', action: { name: 'buy' } }, { surfaceId: 's1', data: { rows: [1, 2] } })
+  const frame = JSON.parse(socket.sent[0])
+
+  assert.deepEqual(frame.state, { surfaceId: 's1', data: { rows: [1, 2] } })
+  assert.deepEqual(frame.message, { version: 'v1.0', action: { name: 'buy' } })
+})
+
+test('a click with no model sends no state key at all', () => {
+  const { client, socket } = connected()
+  client.a2ui({ version: 'v1.0', action: { name: 'buy' } })
+
+  assert.deepEqual(JSON.parse(socket.sent[0]), { type: 'a2ui', message: { version: 'v1.0', action: { name: 'buy' } } })
 })

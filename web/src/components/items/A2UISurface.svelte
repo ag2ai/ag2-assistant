@@ -34,11 +34,15 @@
     inputData = withA2UIValue(inputData, path, value)
   }
 
+  // The click carries the data model this instance holds alongside the envelope.
   function submitAction(action: A2UIAction) {
-    a2uiAction({
-      version: item.version || 'v1.0',
-      action: { ...action, surfaceId: item.surfaceId, timestamp: new Date().toISOString() },
-    })
+    a2uiAction(
+      {
+        version: item.version || 'v1.0',
+        action: { ...action, surfaceId: item.surfaceId, timestamp: new Date().toISOString() },
+      },
+      { surfaceId: item.surfaceId, data: inputData },
+    )
   }
 </script>
 
