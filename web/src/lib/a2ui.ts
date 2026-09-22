@@ -43,25 +43,8 @@ export type A2UIComponent = {
 
 export type A2UIOption = { value?: unknown; label?: unknown }
 
-export type WeatherRow = { label: string; value: string }
-
 // An action a Button component submits back to the agent.
 export type A2UIAction = { name: string; sourceComponentId?: string; context?: unknown }
-
-// `meta` is back-compat: old surfaces stored "Source · 2h ago" in one field.
-export type NewsStory = {
-  title: string
-  source: string
-  published?: string
-  category?: string
-  summary?: string
-  why?: string
-  image?: string
-  url?: string
-  meta?: string
-  detail?: string
-  text?: string
-}
 
 export type DecisionOption = { name: string; tagline?: string; price?: string }
 export type DecisionCriterion = { label: string; values: string[]; best?: string }
@@ -119,10 +102,16 @@ export function childSlots(children: unknown, data: A2UIData = {}, scope = ''): 
   const items = a2uiValue({ path }, data, scope)
   if (!Array.isArray(items)) return []
   const base = scoped(path, scope)
-  const start = Math.max(0, Math.trunc(Number((children as { start?: unknown }).start) || 0))
   return items
     .map((_, index) => ({ id: componentId, scope: `${base}/${index}` }))
-    .slice(start)
+    .slice(templateStart(children))
+}
+
+/** How many items of the bound array a repeated template skips — so a layout that
+ *  drew the lead on its own neither redraws it nor numbers the rest from one. */
+export function templateStart(children: unknown): number {
+  if (!isRecord(children)) return 0
+  return Math.max(0, Math.trunc(Number((children as { start?: unknown }).start) || 0))
 }
 
 // ── The styling vocabulary (ADR 0028) ───────────────────────────────────────
@@ -430,9 +419,7 @@ const titleOr = (v: unknown, fallback: string): string => (typeof v === 'string'
 
 function itemTitle(kind: unknown, data: A2UIData = {}): string {
   const k = String(kind || '').toLowerCase()
-  if (k === 'weatherpanel') return 'Weather view'
   if (k === 'decisionmatrix') return titleOr(data.topic, 'Decision')
-  if (k === 'newsdigest') return 'News digest'
   if (['column', 'row', 'list', 'card', 'text'].includes(k)) return titleOr(data.title, 'Interactive view')
   return 'Structured answer'
 }

@@ -2,8 +2,9 @@
   import Icon from '../Icon.svelte'
   import A2UILink from './A2UILink.svelte'
   import BasicA2UIComponent from './BasicA2UIComponent.svelte'
-  import { a2uiIconName, a2uiPresent, a2uiText, a2uiTone, a2uiValue, actionContext, bindingPath, childSlots, metricParts, rows, sparkPath, str } from '../../lib/a2ui.ts'
-  import type { A2UIAction, A2UIComponent, A2UIData, A2UIOption, NewsStory, WeatherRow } from '../../lib/a2ui.ts'
+  import WeatherBanner from './WeatherBanner.svelte'
+  import { a2uiIconName, a2uiPresent, a2uiText, a2uiTone, a2uiValue, actionContext, bindingPath, childSlots, metricParts, rows, sparkPath, str, templateStart } from '../../lib/a2ui.ts'
+  import type { A2UIAction, A2UIComponent, A2UIData, A2UIOption } from '../../lib/a2ui.ts'
 
   type Props = {
     component: A2UIComponent
@@ -36,10 +37,6 @@
 
   function child(id: unknown): A2UIComponent | undefined {
     return typeof id === 'string' ? byId.get(id) : undefined
-  }
-
-  function storySummary(story: NewsStory): string {
-    return story.summary || story.detail || story.text || ''
   }
 
   const checkboxValue = $derived(!!a2uiValue(component.value, data, scope))
@@ -128,6 +125,10 @@
   const marked = $derived(component.marker !== undefined && a2uiPresent(component.marker, data, scope))
   const markerClass = $derived(marked ? `a2ui-marker a2ui-tone-${tone}` : '')
 
+  // A ranked List numbers its rows from where the template starts in its array.
+  const ranked = $derived(component.variant === 'ranked')
+  const rankFrom = $derived(templateStart(component.children))
+
   const TEXT_VARIANTS = ['h1', 'h2', 'h3', 'h4', 'body', 'caption', 'eyebrow', 'quote', 'pill', 'badge']
   const textVariant = $derived(TEXT_VARIANTS.includes(String(component.variant ?? '')) ? String(component.variant) : '')
   const textValue = $derived(a2uiText(component, data, scope))
@@ -168,7 +169,7 @@
     {@render kids()}
   </div>
 {:else if type === 'list'}
-  <div class="a2ui-list {markerClass}" style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={grow}>
+  <div class="a2ui-list {markerClass}" class:a2ui-ranked={ranked} style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={grow} style:--a2ui-rank-from={rankFrom}>
     {@render kids()}
   </div>
 {:else if type === 'card'}
@@ -227,6 +228,30 @@
        stretches it. `contain` letterboxes against the tile's background instead, which
        is what that background colour is there for. Matches A2UI/BoxFit's own default. -->
   <img class="a2ui-image {component.variant || ''}" src={String(a2uiValue(component.url, data, scope) ?? '')} alt={String(a2uiValue(component.description, data, scope) ?? '')} style:object-fit={component.fit === 'scaleDown' ? 'scale-down' : component.fit || 'contain'} />
+{:else if type === 'figure'}
+  <!-- A lead media block: the picture cropped to fill its own box, with the
+       credit stamped in the corner. An empty url is no figure at all. -->
+  {@const url = String(a2uiValue(component.url, data, scope) ?? '')}
+  {@const caption = str(a2uiValue(component.caption, data, scope))}
+  {#if url}
+    <figure class="a2ui-figure a2ui-figure-{sizeName}" style:flex-grow={grow}>
+      <img src={url} alt={String(a2uiValue(component.description, data, scope) ?? '')} loading="lazy" />
+      {#if caption}<figcaption>{caption}</figcaption>{/if}
+    </figure>
+  {/if}
+{:else if type === 'weatherglyph'}
+  <!-- The weather drawn as a band: the condition names the scene, the app-wide
+       `animations` tier picks how richly it is drawn. -->
+  <div class="a2ui-glyph a2ui-glyph-{sizeName}" style:flex-grow={grow}>
+    {#key a2uiValue(component.condition, data, scope)}
+      <WeatherBanner
+        condition={a2uiValue(component.condition, data, scope)}
+        temperatureText={str(a2uiValue(component.temperature, data, scope))}
+        zoom={1.3}
+        flush
+      />
+    {/key}
+  </div>
 {:else if type === 'icon'}
   <span class="a2ui-icon {toneClass}" title={iconLabel}><Icon name={iconName} size={ICON_SIZE[sizeName]} /></span>
 {:else if type === 'video'}
@@ -272,46 +297,6 @@
     {#if component.label}<span>{a2uiValue(component.label, data, scope)}</span>{/if}
     <input type={component.enableDate && component.enableTime ? 'datetime-local' : component.enableDate ? 'date' : 'time'} value={component.enableDate && component.enableTime && inputText ? inputText.slice(0, 16) : inputText} min={String(a2uiValue(component.min, data, scope) ?? '') || undefined} max={String(a2uiValue(component.max, data, scope) ?? '') || undefined} onchange={setDateTime} />
   </label>
-{:else if type === 'weatherpanel'}
-  <div class="a2ui-basic-card">
-    <div class="a2ui-weather-top">
-      <div>
-        <div class="a2ui-main">{component.location || 'Requested location'}</div>
-        <div class="a2ui-sub">Forecast summary</div>
-      </div>
-      <span class="a2ui-weather-glyph"><Icon name="sun" size={22} /></span>
-    </div>
-    <div class="a2ui-grid">
-      {#each list<WeatherRow>(component.rows) as row}
-        <div class="a2ui-cell">
-          <div class="a2ui-label">{row.label}</div>
-          <div>{row.value}</div>
-        </div>
-      {/each}
-    </div>
-  </div>
-{:else if type === 'newsdigest'}
-  <div class="a2ui-basic-card">
-    <div class="a2ui-main">{component.topic || 'Latest news'}</div>
-    <div class="a2ui-list">
-      {#each list<NewsStory>(component.stories) as story}
-        <div class="a2ui-story">
-          <span><Icon name="globe" size={13} /></span>
-          <div>
-            {#if storySummary(story)}
-              <details class="a2ui-details">
-                <summary><strong>{story.title}</strong></summary>
-                <p>{storySummary(story)}</p>
-              </details>
-            {:else}
-              <strong>{story.title}</strong>
-            {/if}
-            <small>{story.meta}</small>
-          </div>
-        </div>
-      {/each}
-    </div>
-  </div>
 {:else}
   <div class="a2ui-basic-card">
     <div class="a2ui-main">{component.title || component.topic || component.component || 'Interactive view'}</div>

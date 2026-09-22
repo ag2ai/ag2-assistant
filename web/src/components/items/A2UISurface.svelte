@@ -1,13 +1,11 @@
 <script lang="ts">
   import Icon from '../Icon.svelte'
   import BasicA2UIComponent from './BasicA2UIComponent.svelte'
-  import WeatherCard from './WeatherCard.svelte'
-  import NewsWire from './NewsWire.svelte'
   import DecisionMatrix from './DecisionMatrix.svelte'
   import CodingSession from './CodingSession.svelte'
   import A2UIComposing from './A2UIComposing.svelte'
   import { a2uiComposingSurfaceId, rows, str, withA2UIValue } from '../../lib/a2ui.ts'
-  import type { A2UIAction, A2UIData, NewsStory } from '../../lib/a2ui.ts'
+  import type { A2UIAction, A2UIData } from '../../lib/a2ui.ts'
   import { a2uiAction } from '../../controller.ts'
   import { thread } from '../../store.ts'
   import type { ThreadItem } from '../../schemas/events.ts'
@@ -17,22 +15,15 @@
   const data = $derived(item.data || {})
   const components = $derived(item.components || item.component._components || [item.component])
   const type = $derived((item.component.component || 'AnswerBrief').toLowerCase())
-  const isBasicLayout = $derived(['column', 'row', 'list', 'card', 'text', 'divider', 'checkbox', 'button', 'image', 'icon', 'video', 'textfield', 'choicepicker', 'slider', 'datetimeinput'].includes(type))
+  // The layout primitives a surface can be rooted at — anything else is a Card
+  // type the renderer still knows, or an answer with no shape at all.
+  const LAYOUT = ['column', 'row', 'list', 'card', 'text', 'divider', 'checkbox', 'button', 'image', 'icon', 'video', 'textfield', 'choicepicker', 'slider', 'datetimeinput']
+  const isBasicLayout = $derived(LAYOUT.includes(type))
   // A feature Card draws its own frame and heading; the generic chrome is skipped.
   const isFeature = $derived(type === 'card' && str(item.component.variant) === 'feature')
-  const componentIcon = $derived(
-    isBasicLayout ? 'sparkles'
-      : type === 'weatherpanel' ? 'sun'
-      : type === 'newsdigest' ? 'globe'
-      : type === 'decisionmatrix' ? 'check'
-      : 'sparkles'
-  )
+  const componentIcon = $derived(type === 'decisionmatrix' ? 'check' : 'sparkles')
   const eyebrow = $derived(
-    isBasicLayout ? 'Overview'
-      : type === 'weatherpanel' ? 'Live forecast'
-      : type === 'newsdigest' ? 'News brief'
-      : type === 'decisionmatrix' ? 'Decision'
-      : 'A2UI'
+    isBasicLayout ? 'Overview' : type === 'decisionmatrix' ? 'Decision' : 'A2UI'
   )
   const displayTitle = $derived(item.title === 'Briefing' ? 'Interactive view' : item.title || eyebrow)
   const isComposingUpdate = $derived($thread.items.some(
@@ -62,16 +53,12 @@
     return rows<T>(value)
   }
 
-  function storySummary(story: NewsStory): string {
-    return story.summary || story.detail || story.text || ''
-  }
-
   function genericText(value: unknown) {
     return ['structured answer', 'structured response', 'a2ui', ''].includes(String(value || '').toLowerCase())
   }
 
   const emptyAnswerBrief = $derived(
-    !['column', 'row', 'list', 'card', 'text', 'divider', 'checkbox', 'button', 'image', 'icon', 'video', 'textfield', 'choicepicker', 'slider', 'datetimeinput', 'weatherpanel', 'newsdigest', 'decisionmatrix', 'codingsession'].includes(type) &&
+    ![...LAYOUT, 'decisionmatrix', 'codingsession'].includes(type) &&
     !list(data.sections).length &&
     genericText(data.topic) &&
     genericText(data.title) &&
@@ -84,11 +71,7 @@
 {:else if isFeature}
   <BasicA2UIComponent component={item.component} {components} data={inputData} onDataChange={setInputValue} onAction={submitAction} />
 {:else if !emptyAnswerBrief}
-{#if type === 'newsdigest' && list(data.stories).length}
-  <NewsWire {data} />
-{:else if type === 'weatherpanel'}
-  <WeatherCard {data} />
-{:else if type === 'decisionmatrix' && list(data.options).length}
+{#if type === 'decisionmatrix' && list(data.options).length}
   <DecisionMatrix {data} />
 {:else if type === 'codingsession'}
   <CodingSession {data} />
@@ -105,26 +88,6 @@
 
   {#if isBasicLayout}
     <BasicA2UIComponent component={item.component} {components} data={inputData} onDataChange={setInputValue} onAction={submitAction} />
-  {:else if type === 'newsdigest'}
-    <div class="a2ui-main">{str(data.topic) || 'Latest news'}</div>
-    <div class="a2ui-list">
-      {#each list<NewsStory>(data.stories) as story}
-        <div class="a2ui-story">
-          <span><Icon name="globe" size={13} /></span>
-          <div>
-            {#if storySummary(story)}
-              <details class="a2ui-details">
-                <summary><strong>{story.title}</strong></summary>
-                <p>{storySummary(story)}</p>
-              </details>
-            {:else}
-              <strong>{story.title}</strong>
-            {/if}
-            <small>{story.meta}</small>
-          </div>
-        </div>
-      {/each}
-    </div>
   {:else}
     <div class="a2ui-main">{str(data.topic) || item.title || 'Structured response'}</div>
     <div class="a2ui-pills">

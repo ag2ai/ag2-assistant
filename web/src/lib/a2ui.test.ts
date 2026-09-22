@@ -2,7 +2,7 @@
 // chat shows while that happens. Run: node --test src/lib
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { a2uiComposingSurfaceId, a2uiIconName, a2uiLink, a2uiPresent, a2uiText, a2uiTone, a2uiValue, actionContext, applyA2UIMessage, bindingPath, childSlots, metricParts, sparkPath, splitA2UIText, withA2UIValue } from './a2ui.ts'
+import { a2uiComposingSurfaceId, a2uiIconName, a2uiLink, a2uiPresent, a2uiText, a2uiTone, a2uiValue, actionContext, applyA2UIMessage, bindingPath, childSlots, metricParts, sparkPath, splitA2UIText, templateStart, withA2UIValue } from './a2ui.ts'
 import type { ThreadItem } from '../schemas/events.ts'
 
 const PROSE = "Here's the current tech picture on OzBargain."
@@ -272,6 +272,14 @@ test('a list whose every item is skipped draws nothing', () => {
   const data = { quotes: [{ symbol: 'NVDA' }] }
 
   assert.deepEqual(childSlots({ componentId: 'mover', path: '/quotes', start: 1 }, data), [])
+})
+
+test('a ranked list numbers from the place its template starts in the array', () => {
+  // The lead was drawn on its own, so the ranking opens at 02 rather than at 01.
+  assert.equal(templateStart({ componentId: 'story', path: '/stories', start: 1 }), 1)
+  assert.equal(templateStart({ componentId: 'story', path: '/stories' }), 0)
+  assert.equal(templateStart(['one', 'two']), 0)
+  assert.equal(templateStart({ componentId: 'story', path: '/stories', start: -4 }), 0)
 })
 
 test('a rising value is toned positive and a falling one negative, from the data', () => {

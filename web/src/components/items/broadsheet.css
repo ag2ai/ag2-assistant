@@ -1,6 +1,6 @@
 /* ============================================================
    Broadsheet shell — shared structural styles for the editorial
-   A2UI surfaces (NewsWire, WeatherCard, DecisionMatrix).
+   A2UI surfaces (DecisionMatrix, CodingSession).
    ------------------------------------------------------------
    Pairs with design/tokens/editorial.css (the day/night --ed-*
    palette). These are plain GLOBAL classes (.bs / .bs-*) so the

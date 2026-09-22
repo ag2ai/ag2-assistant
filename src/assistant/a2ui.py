@@ -51,7 +51,20 @@ SUPPORTED_BASIC_COMPONENTS = frozenset(
 
 # Primitives this renderer draws beyond the Basic Catalog: the visual atoms a Card
 # needs. A Card layout may draw them; the model never emits one directly.
-CARD_PRIMITIVES = frozenset({"Link", "Metric", "Sparkline"})
+CARD_PRIMITIVES = frozenset({"Figure", "Link", "Metric", "Sparkline", "WeatherGlyph"})
+
+# The conditions the WeatherGlyph primitive draws — its vocabulary, not any Card's.
+# The weather tool maps into it; mirrored in web/src/lib/weather/conditions.ts.
+WEATHER_CONDITIONS = [
+    "sunny",
+    "partly-cloudy",
+    "cloudy",
+    "foggy",
+    "rainy",
+    "thunderstorm",
+    "snow",
+    "windy",
+]
 
 # The vocabulary a Card's layout is composed from.
 CARD_VOCABULARY = SUPPORTED_BASIC_COMPONENTS | CARD_PRIMITIVES
@@ -98,22 +111,6 @@ class _AssistantSchemaManager:
                 self._assistant_catalog_filtered = True
 
         return FilteredSchemaManager(*args, **kwargs)
-
-
-# The dominant weather conditions a WeatherPanel can declare. Single source of truth:
-# the catalog schema's `condition` enum AND the get_weather tool's mapping both use this,
-# so the tool can never emit a value the schema rejects. (Mirrored in the Svelte
-# A2USurface `WEATHER_CONDITIONS` validator.)
-WEATHER_CONDITIONS = [
-    "sunny",
-    "partly-cloudy",
-    "cloudy",
-    "foggy",
-    "rainy",
-    "thunderstorm",
-    "snow",
-    "windy",
-]
 
 
 def _message_dict(message: Any) -> dict:
@@ -170,10 +167,6 @@ def update_data_value(data: dict, path: str, value: Any) -> dict:
 
 def _surface_title(component: dict, data: dict) -> str:
     kind = str(component.get("component") or component.get("type") or "").lower()
-    if kind == "weatherpanel":
-        return "Weather view"
-    if kind == "newsdigest":
-        return "News digest"
     if kind in {"column", "row", "list", "card", "text"}:
         title = data.get("title")
         return title if isinstance(title, str) and title else "Interactive view"
@@ -309,46 +302,6 @@ def assistant_catalog(cards: dict[str, Card] | None = None) -> dict:
     file declares; the rest are literals here.
     """
 
-    row_array = {
-        "type": "array",
-        "items": {
-            "type": "object",
-            "properties": {
-                "label": {"type": "string"},
-                "value": {"type": "string"},
-            },
-            "required": ["label", "value"],
-            "additionalProperties": False,
-        },
-    }
-    story_array = {
-        "type": "array",
-        "items": {
-            "type": "object",
-            "properties": {
-                "title": {"type": "string"},
-                "source": {"type": "string", "description": "Publisher, e.g. 'Reuters'."},
-                "published": {"type": "string", "description": "Recency, e.g. '2h ago' or a date."},
-                "category": {
-                    "type": "string",
-                    "description": "Short tag, e.g. 'Breaking', 'Markets'.",
-                },
-                "summary": {"type": "string", "description": "One or two sentences of detail."},
-                "why": {
-                    "type": "string",
-                    "description": "Why it matters — used for the lead story.",
-                },
-                "image": {
-                    "type": "string",
-                    "description": "Article image URL; omit if you don't have one.",
-                },
-                "url": {"type": "string"},
-            },
-            # First story is rendered as the lead; the rest as a ranked list.
-            "required": ["title", "source"],
-            "additionalProperties": False,
-        },
-    }
     option_array = {
         "type": "array",
         "items": {
@@ -401,29 +354,6 @@ def assistant_catalog(cards: dict[str, Card] | None = None) -> dict:
             "mixed answers, compose several with the basic A2UI layout components."
         ),
         "components": {
-            "WeatherPanel": _component_schema(
-                "WeatherPanel",
-                "Weather forecast panel with a location, a dominant weather condition, and labeled condition rows.",
-                {
-                    "location": {"type": "string"},
-                    "condition": {
-                        "type": "string",
-                        "enum": list(WEATHER_CONDITIONS),
-                        "description": "Dominant weather condition; selects the animated WeatherPanel banner.",
-                    },
-                    "rows": row_array,
-                },
-                ["location", "condition", "rows"],
-            ),
-            "NewsDigest": _component_schema(
-                "NewsDigest",
-                "Source-oriented news digest for latest headlines or recent developments.",
-                {
-                    "topic": {"type": "string"},
-                    "stories": story_array,
-                },
-                ["topic", "stories"],
-            ),
             "DecisionMatrix": _component_schema(
                 "DecisionMatrix",
                 "Side-by-side decision matrix comparing 2-4 options against criteria, with a verdict.",
@@ -466,8 +396,6 @@ Every component is fully defined by the schema and the worked examples below —
 Gather the real data with your tools BEFORE you render — each tool's own description says what it covers. Never populate a component from memory, and never invent a value to fill a field: leave it out instead.
 
 When an answer matches one of these, EMIT that component — the surface is the answer itself, not an optional garnish, so do not settle for prose alone. These are the common matches, not the whole catalog: when another component fits an answer better, render that one instead.
-- Weather or forecast -> render a WeatherPanel from the weather data you gathered.
-- Latest news, headlines, or recent developments -> render a NewsDigest.
 - Comparing concrete alternatives or recommending between options -> render a DecisionMatrix (2-4 options, short cell values; set `recommended` + `verdict` only when the evidence supports a pick).
 
 For mixed requests, compose multiple components with basic layout components: root component="Column" or "Row", with children referencing component ids from the same updateComponents.components array. Use Divider for section separation when useful.
@@ -479,19 +407,9 @@ Always emit createSurface followed by updateComponents for the same surfaceId. U
 Do not call tools to discover A2UI components or catalog contracts; use the schema and rules already provided in this prompt.
 Do not describe or print "corrected A2UI components"; emit valid A2UI messages directly.
 User-facing prose must describe the answer, not A2UI mechanics; never mention schemas, validation, properties, components, or corrected/updated UI.
-Keep surfaces concise, factual, and consistent with the prose. Put fuller NewsDigest story text in optional summary when available.
+Keep surfaces concise, factual, and consistent with the prose.
 
 Worked examples (gather real data first, then emit exactly this shape):
-
-Weather — user asks "What's the weather in Vienna?":
-{"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"__CATALOG_ID__"}}
-{"version":"v1.0","updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"WeatherPanel","location":"Vienna, Austria","condition":"sunny","rows":[{"label":"Temperature","value":"24°C (feels 22°C)"},{"label":"Wind","value":"12 km/h NW"},{"label":"Humidity","value":"45%"}]}]}}
-
-News — user asks "Latest F1 news" (the first story is the lead: give it a category, a
-summary, and a one-line `why`; later stories just need title/source/published/summary):
-{"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"__CATALOG_ID__"}}
-{"version":"v1.0","updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"NewsDigest","topic":"Formula 1","stories":[{"title":"Lead headline","source":"Reuters","published":"2h ago","category":"Breaking","summary":"One or two sentences of detail.","why":"Why this is the most important story right now.","url":"https://www.reuters.com/sport/formula1/the-article"},{"title":"Second headline","source":"BBC Sport","published":"4h ago","category":"Teams","summary":"One sentence of detail.","url":"https://www.bbc.com/sport/formula1/the-article"},{"title":"Third headline","source":"Autosport","published":"6h ago","category":"Results","summary":"One sentence of detail.","url":"https://www.autosport.com/f1/news/the-article"}]}]}}
-Always include each story's `url` (the article link) so readers can click through — never put the source links only in your prose.
 
 Decision — user asks "Should I get the MacBook Air or the ThinkPad X1 for travel?"
 (values align by index with options; mark `best` only where one option clearly wins):

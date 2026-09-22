@@ -1,5 +1,8 @@
 import json
+import re
+from pathlib import Path
 
+import yaml
 from ag2.a2ui.constants import A2UI_JSON_CLOSE_TAG, A2UI_JSON_OPEN_TAG
 from ag2.a2ui.parser import A2UIResponseParser
 from ag2.events import ModelMessage, ModelResponse
@@ -7,6 +10,7 @@ from ag2.events import ModelMessage, ModelResponse
 from assistant.a2ui import (
     CARD_VOCABULARY,
     CATALOG_ID,
+    WEATHER_CONDITIONS,
     assistant_catalog,
     bundled_cards,
     catalog_rules,
@@ -17,7 +21,9 @@ from assistant.a2ui import (
     update_data_value,
     wrap_bare_a2ui,
 )
+from assistant.cards import bundled_cards_dir, load_cards
 from assistant.events import A2UISurface
+from assistant.tools.weather import condition_for
 
 
 def test_assistant_catalog_declares_custom_components():
@@ -33,18 +39,6 @@ def test_assistant_catalog_declares_custom_components():
         "AnswerBrief",
     }
     assert "LowdownPanel" not in catalog["components"]
-    assert catalog["components"]["WeatherPanel"]["required"] == [
-        "id",
-        "component",
-        "location",
-        "condition",
-        "rows",
-    ]
-    assert (
-        "thunderstorm" in catalog["components"]["WeatherPanel"]["properties"]["condition"]["enum"]
-    )
-    story_schema = catalog["components"]["NewsDigest"]["properties"]["stories"]["items"]
-    assert "summary" in story_schema["properties"]
     assert catalog["components"]["TaskPlan"]["required"] == [
         "id",
         "component",
@@ -69,14 +63,15 @@ def test_a2ui_runtime_prompt_exposes_schema_and_custom_contracts():
     assert 'root component="Column"' in prompt
     assert "users do not need to ask for A2UI explicitly" in prompt
     assert "Prefer an A2UI component" in prompt
-    assert "optional summary" in prompt
     assert "TaskPlan" in prompt
     # Intent → COMPONENT. Which tool gathers the data is the tool's own business, so no
     # tool name appears here (see tests/test_capability_registry.py). The imperative to
     # actually EMIT the component must survive: dropping it silently cost us the
     # MarketBoard, which the model replaced with prose.
     assert "EMIT that component" in prompt
-    assert "Weather or forecast -> render a WeatherPanel" in prompt
+    # The weather and the news are files now, each routed by its own description.
+    assert "WeatherPanel — Use when the answer is the weather" in prompt
+    assert "NewsDigest — Use when the answer is the latest news" in prompt
     # MarketBoard is a file now: its own description is what routes the model to it.
     assert "MarketBoard — Use when the answer is market prices" in prompt
     assert "Gather the real data with your tools BEFORE you render" in prompt
@@ -799,3 +794,238 @@ def test_the_board_the_inbox_and_the_agenda_are_no_longer_catalog_literals():
     assert "render a TaskProgress" not in rules
     assert "render an InboxBrief" not in rules
     assert "render an AgendaCard" not in rules
+
+
+# --- The Cards with the bespoke artwork (08) ---
+
+
+def _weather_emit(rows: list[dict] | None = None) -> list[dict]:
+    return _emit(
+        {
+            "id": "root",
+            "component": "WeatherPanel",
+            "location": "Vienna, Austria",
+            "condition": "sunny",
+            "temperature": "24°",
+            "summary": "Clear and mild all day.",
+            "rows": [
+                {"label": "Temperature", "value": "24°C (feels 22°C)"},
+                {"label": "Wind", "value": "12 km/h NW"},
+            ]
+            if rows is None
+            else rows,
+        }
+    )
+
+
+def _news_emit(stories: list[dict] | None = None) -> list[dict]:
+    return _emit(
+        {
+            "id": "root",
+            "component": "NewsDigest",
+            "topic": "Formula 1",
+            "stories": [
+                {
+                    "title": "Lead headline",
+                    "source": "Reuters",
+                    "published": "2h ago",
+                    "category": "Breaking",
+                    "summary": "One or two sentences of detail.",
+                    "why": "Why this is the most important story right now.",
+                    "image": "https://example.com/lead.jpg",
+                    "url": "https://www.reuters.com/sport/formula1/the-article",
+                },
+                {"title": "Second headline", "source": "BBC Sport", "published": "4h ago"},
+            ]
+            if stories is None
+            else stories,
+        }
+    )
+
+
+def test_the_weather_and_the_news_are_offered_from_their_files():
+    runtime.cache_clear()
+    prompt = runtime().system_prompt_section
+    catalog = assistant_catalog()
+
+    for name in ("WeatherPanel", "NewsDigest"):
+        card = bundled_cards()[name]
+        assert catalog["components"][name]["description"] == card.description
+        assert catalog["components"][name]["required"] == ["id", "component", *card.required]
+        assert card.description in prompt
+        assert f'"component":"{name}"' in prompt
+
+
+def test_the_weather_and_the_news_are_drawn_from_the_vocabulary():
+    for emit, fields in (
+        (_weather_emit(), ["/location", "/condition", "/temperature", "/summary", "/rows"]),
+        (_news_emit(), ["/topic", "/stories"]),
+    ):
+        messages = expand_card_messages(emit, bundled_cards())
+        drawn = messages[1]["updateComponents"]["components"]
+
+        assert {component["component"] for component in drawn} <= CARD_VOCABULARY
+        assert [message["updateDataModel"]["path"] for message in messages[2:]] == fields
+
+
+def test_the_weather_glyph_is_a_primitive_any_card_can_draw():
+    drawn = expand_card_messages(_weather_emit(), bundled_cards())[1]["updateComponents"][
+        "components"
+    ]
+
+    glyph = next(component for component in drawn if component["component"] == "WeatherGlyph")
+    # The Card names no artwork: it binds the condition and the primitive draws it.
+    assert glyph["condition"] == {"path": "/condition"}
+    assert "WeatherGlyph" in CARD_VOCABULARY
+
+
+def test_the_condition_vocabulary_belongs_to_the_glyph_not_to_the_card(tmp_path):
+    # The bundled Card mirrors the glyph's vocabulary so a model typo is caught.
+    assert bundled_cards()["WeatherPanel"].fields["condition"]["enum"] == WEATHER_CONDITIONS
+
+    # A profile's own copy names whatever it likes — and the tool, which reads the
+    # primitive's vocabulary, still maps into the eight the glyph can draw.
+    mine = yaml.safe_load((bundled_cards_dir() / "weatherpanel.card.yaml").read_text())
+    mine["fields"]["condition"]["enum"] = ["hail"]
+    (tmp_path / "weatherpanel.card.yaml").write_text(yaml.safe_dump(mine))
+    assert load_cards(tmp_path)["WeatherPanel"].fields["condition"]["enum"] == ["hail"]
+
+    assert condition_for(113) in WEATHER_CONDITIONS
+    assert condition_for("nonsense") in WEATHER_CONDITIONS
+
+
+def test_the_two_renderers_draw_the_same_eight_conditions():
+    # The comment on each list promises the other mirrors it; this is the promise.
+    source = (Path(__file__).parents[1] / "web/src/lib/weather/conditions.ts").read_text()
+    declared = source.split("export const WEATHER_CONDITIONS = [", 1)[1].split("]", 1)[0]
+
+    assert re.findall(r"'([a-z-]+)'", declared) == WEATHER_CONDITIONS
+
+
+def test_the_news_lead_keeps_its_media_and_the_rest_keep_their_rank():
+    drawn = expand_card_messages(_news_emit(), bundled_cards())[1]["updateComponents"]["components"]
+
+    figure = next(component for component in drawn if component["component"] == "Figure")
+    assert figure["url"] == {"path": "/stories/0/image"}
+    # The lead is drawn on its own, so the ranked list starts at the second story.
+    ranked = next(
+        component
+        for component in drawn
+        if component["component"] == "List" and component.get("variant") == "ranked"
+    )
+    assert ranked["children"] == {
+        # The instance namespaces the layout id it repeats.
+        "componentId": "root__story",
+        "path": "/stories",
+        "start": 1,
+    }
+
+
+def test_a_weather_panel_stored_before_it_was_a_file_is_redrawn_on_read():
+    stored = A2UISurface(
+        "s1",
+        component={
+            "id": "root",
+            "component": "WeatherPanel",
+            "location": "Sydney",
+            "condition": "rainy",
+            "rows": [{"label": "Rain", "value": "Low"}],
+        },
+        data={
+            "location": "Sydney",
+            "condition": "rainy",
+            "rows": [{"label": "Rain", "value": "Low"}],
+        },
+        title="Weather view",
+    )
+
+    redrawn = expanded_card_surface(stored, bundled_cards())
+
+    assert redrawn.component["component"] == "Card"
+    assert redrawn.data["condition"] == "rainy"
+    assert redrawn.title == "Weather view"
+
+
+def test_a_digest_of_one_story_and_a_digest_of_twenty_are_the_same_layout():
+    def drawn(count: int) -> list:
+        stories = [{"title": f"Story {index}", "source": "Reuters"} for index in range(count)]
+        return expand_card_messages(_news_emit(stories), bundled_cards())[1]["updateComponents"][
+            "components"
+        ]
+
+    assert drawn(1) == drawn(20)
+
+
+def test_the_weather_and_the_news_are_no_longer_catalog_literals():
+    bare = assistant_catalog({})
+
+    for name in ("WeatherPanel", "NewsDigest"):
+        assert name not in bare["components"]
+    rules = catalog_rules({})
+    assert "render a WeatherPanel" not in rules
+    assert "render a NewsDigest" not in rules
+
+
+def test_a_card_nested_in_a_layout_draws_what_it_draws_on_its_own():
+    weather = _weather_emit()[1]["updateComponents"]["components"][0]
+    news = _news_emit()[1]["updateComponents"]["components"][0]
+    alone = {
+        name: [
+            component["component"]
+            for component in expand_card_messages(_emit(card), bundled_cards())[1][
+                "updateComponents"
+            ]["components"]
+        ]
+        for name, card in (("WeatherPanel", weather), ("NewsDigest", news))
+    }
+
+    composed = expand_card_messages(
+        [
+            {"version": "v1.0", "createSurface": {"surfaceId": "s1", "catalogId": CATALOG_ID}},
+            {
+                "version": "v1.0",
+                "updateComponents": {
+                    "surfaceId": "s1",
+                    "components": [
+                        {"id": "root", "component": "Column", "children": ["wx", "wire"]},
+                        {**weather, "id": "wx"},
+                        {**news, "id": "wire"},
+                    ],
+                },
+            },
+        ],
+        bundled_cards(),
+    )
+    drawn = [
+        component["component"]
+        for component in composed[1]["updateComponents"]["components"]
+        if component["id"] != "root"
+    ]
+
+    # One layout each, whether the Card is the surface or a block inside one.
+    assert drawn == alone["WeatherPanel"] + alone["NewsDigest"]
+    # Nested, each instance's fields land under its own id rather than at the root.
+    assert [message["updateDataModel"]["path"] for message in composed[2:]][0].startswith(
+        "/_cards/wx/"
+    )
+
+
+def test_a_digest_stored_before_the_byline_was_split_still_reads():
+    stored = A2UISurface(
+        "s1",
+        component={
+            "id": "root",
+            "component": "NewsDigest",
+            "topic": "Tech",
+            "stories": [{"title": "Old headline", "meta": "Reuters · 2h ago"}],
+        },
+        data={"topic": "Tech", "stories": [{"title": "Old headline", "meta": "Reuters · 2h ago"}]},
+        title="News digest",
+    )
+
+    redrawn = expanded_card_surface(stored, bundled_cards())
+    drawn = redrawn.component["_components"]
+
+    # The whole byline lived in one field before source and published were split.
+    assert {"path": "/stories/0/meta"} in [component.get("text") for component in drawn]
+    assert redrawn.data["stories"][0]["meta"] == "Reuters · 2h ago"
