@@ -46,9 +46,6 @@ export type A2UIOption = { value?: unknown; label?: unknown }
 // An action a Button component submits back to the agent.
 export type A2UIAction = { name: string; sourceComponentId?: string; context?: unknown }
 
-export type DecisionOption = { name: string; tagline?: string; price?: string }
-export type DecisionCriterion = { label: string; values: string[]; best?: string }
-
 // CodingSession is synthesized by the backend, not authored by the model.
 export type CodingPlanStep = { content: string; status: string }
 export type CodingFile = { path: string; status: string; hunks: string; added: number; removed: number }
@@ -99,12 +96,33 @@ export function childSlots(children: unknown, data: A2UIData = {}, scope = ''): 
   if (!isRecord(children)) return []
   const { componentId, path } = children as { componentId?: unknown; path?: unknown }
   if (typeof componentId !== 'string' || typeof path !== 'string') return []
-  const items = a2uiValue({ path }, data, scope)
-  if (!Array.isArray(items)) return []
-  const base = scoped(path, scope)
-  return items
-    .map((_, index) => ({ id: componentId, scope: `${base}/${index}` }))
+  return axisScopes({ path }, data, scope)
+    .map((item) => ({ id: componentId, scope: item }))
     .slice(templateStart(children))
+}
+
+/** The scopes one axis of a Table draws in: the pointer to each item of the array
+ *  the axis is bound to. Bound to nothing, or to something that is not an array,
+ *  an axis has no items and draws no column, row or cell. */
+export function axisScopes(binding: unknown, data: A2UIData = {}, scope = ''): string[] {
+  const base = bindingPath(binding, scope)
+  const items = a2uiValue(binding, data, scope)
+  if (!base || !Array.isArray(items)) return []
+  return items.map((_, index) => `${base}/${index}`)
+}
+
+/** The column a Table marks: the one whose `key` carries the value `target` names,
+ *  or -1 when nothing names it — a row with no clear winner marks no cell. */
+export function markedColumn(
+  key: unknown,
+  target: unknown,
+  data: A2UIData = {},
+  columns: readonly string[] = [],
+  scope = '',
+): number {
+  const wanted = a2uiValue(target, data, scope)
+  if (wanted == null || wanted === '' || !isRecord(key)) return -1
+  return columns.findIndex((column) => a2uiValue(key, data, column) === wanted)
 }
 
 /** How many items of the bound array a repeated template skips — so a layout that
@@ -419,7 +437,6 @@ const titleOr = (v: unknown, fallback: string): string => (typeof v === 'string'
 
 function itemTitle(kind: unknown, data: A2UIData = {}): string {
   const k = String(kind || '').toLowerCase()
-  if (k === 'decisionmatrix') return titleOr(data.topic, 'Decision')
   if (['column', 'row', 'list', 'card', 'text'].includes(k)) return titleOr(data.title, 'Interactive view')
   return 'Structured answer'
 }

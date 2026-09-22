@@ -3,7 +3,7 @@
   import A2UILink from './A2UILink.svelte'
   import BasicA2UIComponent from './BasicA2UIComponent.svelte'
   import WeatherBanner from './WeatherBanner.svelte'
-  import { a2uiIconName, a2uiPresent, a2uiText, a2uiTone, a2uiValue, actionContext, bindingPath, childSlots, metricParts, rows, sparkPath, str, templateStart } from '../../lib/a2ui.ts'
+  import { a2uiIconName, a2uiPresent, a2uiText, a2uiTone, a2uiValue, actionContext, axisScopes, bindingPath, childSlots, markedColumn, metricParts, rows, sparkPath, str, templateStart } from '../../lib/a2ui.ts'
   import type { A2UIAction, A2UIComponent, A2UIData, A2UIOption } from '../../lib/a2ui.ts'
 
   type Props = {
@@ -142,6 +142,17 @@
   const sparkBox = $derived(SPARK[sizeName])
   const spark = $derived(sparkPath(a2uiValue(component.values, data, scope), sparkBox.w, sparkBox.h))
 
+  // ── The comparison table ───────────────────────────────────────────────────
+  // Its two axes, and the column each mark falls in. A cell wins when the row's
+  // `win` carries what the column's `key` carries; `pick` marks a whole column.
+  const tableColumns = $derived(axisScopes(component.columns, data, scope))
+  const tableRows = $derived(axisScopes(component.rows, data, scope))
+  const tablePick = $derived(markedColumn(component.key, component.pick, data, tableColumns, scope))
+  const tableLead = $derived(child(component.lead))
+  const tableGrid = $derived(
+    `${tableLead ? 'minmax(118px, .9fr) ' : ''}repeat(${tableColumns.length}, minmax(94px, 1fr))`
+  )
+
   function clickButton() {
     const event = component.action?.event
     if (!event?.name) return
@@ -210,6 +221,46 @@
       <path d={spark.line} class="ln" pathLength="1" />
       <circle cx={spark.endX} cy={spark.endY} r={sparkBox.dot} class="end" />
     </svg>
+  {/if}
+{:else if type === 'table'}
+  <!-- Nothing to compare against is no table at all; the grid scrolls inside its own
+       frame rather than widening the Card it is in. -->
+  {@const head = child(component.header)}
+  {@const body = child(component.cell)}
+  {#if tableColumns.length}
+  <div class="a2ui-tablewrap" style:flex-grow={grow}>
+    <div class="a2ui-table" style:grid-template-columns={tableGrid}>
+      {#if head}
+        {#if tableLead}<div class="a2ui-th"></div>{/if}
+        {#each tableColumns as column, index}
+          <div class="a2ui-th" class:pick={index === tablePick}>
+            <BasicA2UIComponent component={head} {components} {data} {onDataChange} {onAction} scope={column} depth={depth + 1} />
+          </div>
+        {/each}
+      {/if}
+      {#each tableRows as row}
+        {@const cells = axisScopes(component.cells, data, row)}
+        {@const won = markedColumn(component.key, component.win, data, tableColumns, row)}
+        {#if tableLead}
+          <div class="a2ui-td a2ui-th-row">
+            <BasicA2UIComponent component={tableLead} {components} {data} {onDataChange} {onAction} scope={row} depth={depth + 1} />
+          </div>
+        {/if}
+        {#each tableColumns as _, index}
+          <!-- A row with fewer cells than there are columns keeps the columns it
+               does not fill, so every row still lines up under its option. -->
+          <div class="a2ui-td" class:pick={index === tablePick} class:win={index === won}>
+            {#if body && cells[index] !== undefined}
+              <BasicA2UIComponent component={body} {components} {data} {onDataChange} {onAction} scope={cells[index]} depth={depth + 1} />
+            {:else}
+              <span class="a2ui-td-none">—</span>
+            {/if}
+            {#if index === won}<span class="a2ui-td-win" role="img" aria-label="Wins this row">●</span>{/if}
+          </div>
+        {/each}
+      {/each}
+    </div>
+  </div>
   {/if}
 {:else if type === 'divider'}
   <div class="a2ui-divider" class:strong={component.emphasis === 'strong'} aria-hidden="true"></div>

@@ -17,6 +17,9 @@ itself.
 | `Column` / `Row` | Its `children` stacked or in a line. |
 | `List` | Its `children`, as a column. |
 | `Divider` | A horizontal rule. `emphasis: strong` makes it the heavy one. |
+| `Table` | The comparison grid: one column per item of `columns`, one ruled row per item of `rows`, and one cell per item of the `cells` each row names. `header` is drawn in a column's scope, `lead` in a row's, `cell` in a cell's. A row marks the column whose `key` carries the value its `win` names, and `pick` marks a whole column the same way — a row with no clear winner marks nothing. A row shorter than the columns keeps the columns it does not fill, so every row lines up under its own column; an unfilled cell is drawn as a dash. Wide content scrolls the grid rather than widening the Card, and a `columns` bound to nothing is no table at all. |
+
+`header`, `lead` and `cell` name a layout id each, the way `child` does.
 
 `children` is either a list of layout ids or one repeated template:
 `{componentId: mover, path: /quotes, start: 1}` draws `mover` once per item of `/quotes`,

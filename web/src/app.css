@@ -623,6 +623,25 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .a2ui-glyph-sm { max-height: 64px; }
 .a2ui-glyph-md { max-height: 96px; }
 .a2ui-glyph-lg { max-height: 132px; }
+/* The comparison table: one column per option, one ruled row per criterion. The
+   winning cell of a row is dotted, the picked column washed in the accent. */
+.a2ui-tablewrap { overflow-x: auto; min-width: 0; margin-inline: -2px; padding: 2px; }
+.a2ui-table { display: grid; min-width: min-content; border-top: 1.5px solid var(--a2ui-rule-strong, var(--ink)); border-left: 1px solid var(--a2ui-rule, var(--line)); }
+.a2ui-th, .a2ui-td { padding: 9px 12px; min-width: 0; border-right: 1px solid var(--a2ui-rule, var(--line)); border-bottom: 1px solid var(--a2ui-rule, var(--line)); }
+.a2ui-th, .a2ui-th-row { background: color-mix(in srgb, var(--a2ui-rule, var(--line)) 22%, transparent); }
+/* A row's leading cell breaks between words, never through one: a label too long
+   for the column widens the grid, which scrolls, rather than reading as gibberish. */
+.a2ui-th-row { display: flex; align-items: center; }
+.a2ui-th-row .a2ui-text { overflow-wrap: normal; }
+.a2ui-td { position: relative; padding-right: 24px; }
+.a2ui-td-none { color: var(--a2ui-muted, var(--muted)); font-size: 12.5px; }
+/* The mark sits on the cell's first line, so a tall row does not strand it. */
+.a2ui-td-win { position: absolute; right: 10px; top: 18px; transform: translateY(-50%); color: var(--a2ui-accent, var(--accent)); font-size: 8px; }
+.a2ui-td.win .a2ui-text { font-weight: var(--fw-semibold); }
+.a2ui-th.pick, .a2ui-td.pick { background: color-mix(in srgb, var(--a2ui-accent, var(--accent)) 7%, transparent); box-shadow: inset 3px 0 0 var(--a2ui-accent, var(--accent)); }
+@media (max-width: 640px) {
+  .a2ui-th, .a2ui-td { padding: 8px; }
+}
 .a2ui-checkbox { display: flex; align-items: center; gap: 9px; min-height: 42px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 7px; background: color-mix(in srgb, var(--surface) 70%, var(--code) 30%); color: var(--ink); font-size: 12.5px; line-height: 1.35; cursor: pointer; }
 .a2ui-checkbox input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); cursor: pointer; }
 .a2ui-checkbox:has(input:focus-visible) { outline: none; box-shadow: var(--focus-ring); }

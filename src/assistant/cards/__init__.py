@@ -35,6 +35,10 @@ EXAMPLE_BUDGET = 2000
 # is namespaced under it.
 LAYOUT_ROOT = "root"
 
+# The layout ids a component names beyond its `child` and `children`, by the component
+# that names them: a Table names the three templates it draws.
+TEMPLATE_IDS = {"Table": ("header", "lead", "cell")}
+
 
 class CardError(ValueError):
     """A Card-suffixed file that cannot be loaded."""
@@ -149,7 +153,7 @@ def _layout(raw: Any, components: frozenset[str]) -> tuple[dict[str, Any], ...]:
 
 
 def _references(node: dict[str, Any]) -> list[str]:
-    """The layout ids one component names: its child, its children, or its template."""
+    """The layout ids one component names: its child, its children, or its templates."""
     children = node.get("children")
     if isinstance(children, list):
         named = [child for child in children if isinstance(child, str)]
@@ -157,8 +161,12 @@ def _references(node: dict[str, Any]) -> list[str]:
         named = [children["componentId"]]
     else:
         named = []
-    child = node.get("child")
-    return [*named, child] if isinstance(child, str) else named
+    return [*named, *(node[key] for key in _id_keys(node) if isinstance(node.get(key), str))]
+
+
+def _id_keys(node: dict[str, Any]) -> tuple[str, ...]:
+    """The keys of one component whose value is a layout id rather than a value."""
+    return ("child", *TEMPLATE_IDS.get(str(node.get("component") or ""), ()))
 
 
 # --- drawing a Card ---------------------------------------------------------
@@ -251,9 +259,10 @@ def _escaped(part: str) -> str:
 
 def _rewritten(node: dict[str, Any], ids: dict[str, str], prefix: str) -> dict[str, Any]:
     """One layout component with its ids namespaced and its bindings re-rooted."""
+    named = _id_keys(node)
     drawn: dict[str, Any] = {}
     for key, value in node.items():
-        if key == "id" or (key == "child" and isinstance(value, str)):
+        if key == "id" or (key in named and isinstance(value, str)):
             drawn[key] = ids.get(value, value)
         elif key == "children" and isinstance(value, list):
             drawn[key] = [ids.get(item, item) if isinstance(item, str) else item for item in value]

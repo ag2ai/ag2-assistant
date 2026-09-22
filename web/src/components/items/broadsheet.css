@@ -1,12 +1,11 @@
 /* ============================================================
-   Broadsheet shell — shared structural styles for the editorial
-   A2UI surfaces (DecisionMatrix, CodingSession).
+   Broadsheet shell — the masthead, body and footer chrome of the
+   one A2UI surface still drawn by a component: CodingSession.
    ------------------------------------------------------------
    Pairs with design/tokens/editorial.css (the day/night --ed-*
-   palette). These are plain GLOBAL classes (.bs / .bs-*) so the
-   three surfaces share ONE source of truth for the masthead,
-   ticker, and footer chrome; each component keeps only its own
-   body styles in its scoped <style>. Imported once from main.ts.
+   palette). Plain GLOBAL classes (.bs / .bs-*); the component
+   keeps only its own body styles in its scoped <style>. Imported
+   once from main.ts.
 
    The palette is aliased onto .bs to short local names (--paper,
    --ink, --accent, …) so both these rules and each component's
@@ -47,15 +46,6 @@
 .bs-edition { flex: none; text-align: right; font-family: var(--code); font-size: 10px; line-height: 1.7; color: var(--ink-3); letter-spacing: .03em; }
 .bs-edition b { color: var(--ink-2); font-weight: 700; }
 
-/* ---- ticker / tape ---- */
-.bs-ticker { display: flex; align-items: stretch; border-top: 1px solid var(--rule-2); border-bottom: 1px solid var(--rule); background: var(--paper-2); }
-.bs-tag { flex: none; display: flex; align-items: center; gap: 7px; padding: 6px 12px; background: var(--ink); color: var(--paper); font-family: var(--code); font-size: 10px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; }
-.bs-viewport { overflow: hidden; flex: 1; position: relative; }
-.bs-viewport::after { content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 42px; background: linear-gradient(90deg, transparent, var(--paper-2)); }
-.bs-track { display: inline-flex; white-space: nowrap; will-change: transform; animation: bs-marquee 46s linear infinite; }
-.bs-ticker:hover .bs-track { animation-play-state: paused; }
-@keyframes bs-marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
-
 /* ---- live dot + pulse (colour via --bs-dot / --bs-glow) ---- */
 .bs-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--bs-dot); box-shadow: 0 0 0 0 rgba(var(--bs-glow), .6); animation: bs-pulse 1.6s infinite; }
 @keyframes bs-pulse {
@@ -64,10 +54,9 @@
   100% { box-shadow: 0 0 0 0 rgba(var(--bs-glow), 0); }
 }
 
-/* Animations = Off: freeze the perpetual motion (marquee + pulsing dot) — these
-   run forever and keep the compositor awake. Gated on the app-wide tier
-   (data-animations on .app; see store.animations). */
-[data-animations='off'] .bs-track { animation: none; }
+/* Animations = Off: freeze the pulsing dot — it runs forever and keeps the
+   compositor awake. Gated on the app-wide tier (data-animations on .app; see
+   store.animations). */
 [data-animations='off'] .bs-dot { animation: none; }
 
 /* ---- body + footer ---- */

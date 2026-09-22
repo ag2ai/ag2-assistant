@@ -51,7 +51,7 @@ SUPPORTED_BASIC_COMPONENTS = frozenset(
 
 # Primitives this renderer draws beyond the Basic Catalog: the visual atoms a Card
 # needs. A Card layout may draw them; the model never emits one directly.
-CARD_PRIMITIVES = frozenset({"Figure", "Link", "Metric", "Sparkline", "WeatherGlyph"})
+CARD_PRIMITIVES = frozenset({"Figure", "Link", "Metric", "Sparkline", "Table", "WeatherGlyph"})
 
 # The conditions the WeatherGlyph primitive draws — its vocabulary, not any Card's.
 # The weather tool maps into it; mirrored in web/src/lib/weather/conditions.ts.
@@ -299,48 +299,8 @@ def assistant_catalog(cards: dict[str, Card] | None = None) -> dict:
     """Custom A2UI catalog rendered by the Svelte chat/task UI.
 
     Every Card in ``cards`` is advertised — and validated — under the schema its own
-    file declares; the rest are literals here.
+    file declares.
     """
-
-    option_array = {
-        "type": "array",
-        "items": {
-            "type": "object",
-            "properties": {
-                "name": {"type": "string", "description": "Option name, e.g. 'MacBook Air 13'."},
-                "tagline": {
-                    "type": "string",
-                    "description": "One-line positioning, e.g. 'Lightest + longest battery'.",
-                },
-                "price": {
-                    "type": "string",
-                    "description": "Cost label if relevant, e.g. '$1,499'.",
-                },
-            },
-            "required": ["name"],
-            "additionalProperties": False,
-        },
-    }
-    criterion_array = {
-        "type": "array",
-        "items": {
-            "type": "object",
-            "properties": {
-                "label": {"type": "string", "description": "Criterion, e.g. 'Battery life'."},
-                "values": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "One short value per option, in the same order as `options`.",
-                },
-                "best": {
-                    "type": "string",
-                    "description": "Name of the option that wins this criterion — only when one clearly does.",
-                },
-            },
-            "required": ["label", "values"],
-            "additionalProperties": False,
-        },
-    }
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": CATALOG_ID,
@@ -354,30 +314,6 @@ def assistant_catalog(cards: dict[str, Card] | None = None) -> dict:
             "mixed answers, compose several with the basic A2UI layout components."
         ),
         "components": {
-            "DecisionMatrix": _component_schema(
-                "DecisionMatrix",
-                "Side-by-side decision matrix comparing 2-4 options against criteria, with a verdict.",
-                {
-                    "topic": {
-                        "type": "string",
-                        "description": "The decision being made, e.g. 'Travel laptop'.",
-                    },
-                    "options": option_array,
-                    "criteria": criterion_array,
-                    "recommended": {
-                        "type": "string",
-                        "description": "Name of the recommended option; must match an option name.",
-                    },
-                    "verdict": {
-                        "type": "string",
-                        "description": (
-                            "One or two sentences: why the recommendation wins, and when "
-                            "to pick another option instead."
-                        ),
-                    },
-                },
-                ["topic", "options", "criteria"],
-            ),
             **{
                 card.name: _component_schema(
                     card.name, card.description, card.fields, list(card.required)
@@ -395,8 +331,7 @@ Every component is fully defined by the schema and the worked examples below —
 
 Gather the real data with your tools BEFORE you render — each tool's own description says what it covers. Never populate a component from memory, and never invent a value to fill a field: leave it out instead.
 
-When an answer matches one of these, EMIT that component — the surface is the answer itself, not an optional garnish, so do not settle for prose alone. These are the common matches, not the whole catalog: when another component fits an answer better, render that one instead.
-- Comparing concrete alternatives or recommending between options -> render a DecisionMatrix (2-4 options, short cell values; set `recommended` + `verdict` only when the evidence supports a pick).
+When an answer matches one of the components below, EMIT that component — the surface is the answer itself, not an optional garnish, so do not settle for prose alone.
 
 For mixed requests, compose multiple components with basic layout components: root component="Column" or "Row", with children referencing component ids from the same updateComponents.components array. Use Divider for section separation when useful.
 A Column, Row or List can repeat one written component instead of listing every child: `"children":{"componentId":"run_row","path":"/runs"}` draws `run_row` once per item of the array at `/runs`. Inside that component a path opening with `./` reads the item (`{"path":"./day"}`, or `{"path":"."}` for the whole item) and an absolute path still reads the whole data model, so one written row serves three items or thirty.
@@ -410,11 +345,6 @@ User-facing prose must describe the answer, not A2UI mechanics; never mention sc
 Keep surfaces concise, factual, and consistent with the prose.
 
 Worked examples (gather real data first, then emit exactly this shape):
-
-Decision — user asks "Should I get the MacBook Air or the ThinkPad X1 for travel?"
-(values align by index with options; mark `best` only where one option clearly wins):
-{"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"__CATALOG_ID__"}}
-{"version":"v1.0","updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"DecisionMatrix","topic":"Travel laptop","options":[{"name":"MacBook Air 13","tagline":"Longest battery in class","price":"$1,499"},{"name":"ThinkPad X1 Carbon","tagline":"Best keyboard + ports","price":"$1,649"}],"criteria":[{"label":"Weight","values":["1.24 kg","1.09 kg"],"best":"ThinkPad X1 Carbon"},{"label":"Battery (real-world)","values":["~15 h","~10 h"],"best":"MacBook Air 13"},{"label":"Ports","values":["2× USB-C","2× USB-C · 2× USB-A · HDMI"],"best":"ThinkPad X1 Carbon"},{"label":"Keyboard","values":["Good","Excellent"],"best":"ThinkPad X1 Carbon"}],"recommended":"MacBook Air 13","verdict":"The Air wins on battery and weight-adjusted value for travel; pick the X1 Carbon if you need USB-A/HDMI without dongles or type all day."}]}}
 
 """
 

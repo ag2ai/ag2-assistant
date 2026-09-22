@@ -1,0 +1,108 @@
+name: DecisionMatrix
+description: Use when the answer compares concrete alternatives — 2-4 options set
+  against the criteria that decide between them, with a verdict.
+
+fields:
+  topic:
+    type: string
+    description: "The decision being made, e.g. 'Travel laptop'."
+  options:
+    type: array
+    description: The alternatives, in the order every row writes its cells.
+    items:
+      type: object
+      properties:
+        name: {type: string, description: "Option name, e.g. 'MacBook Air 13'."}
+        tagline:
+          type: string
+          description: "One-line positioning, e.g. 'Lightest + longest battery'."
+        price: {type: string, description: "Cost label if relevant, e.g. '$1,499'."}
+      required: [name]
+      additionalProperties: false
+  criteria:
+    type: array
+    description: One row each — what the decision actually turns on.
+    items:
+      type: object
+      properties:
+        label: {type: string, description: "Criterion, e.g. 'Battery life'."}
+        values:
+          type: array
+          items: {type: string}
+          description: One short value per option, in the same order as `options`.
+        best:
+          type: string
+          description: Name of the option that wins this criterion — only when one
+            clearly does.
+      required: [label, values]
+      additionalProperties: false
+  recommended:
+    type: string
+    description: Name of the recommended option; must match an option name.
+  verdict:
+    type: string
+    description: "One or two sentences: why the recommendation wins, and when to
+      pick another option instead."
+required: [topic, options, criteria]
+
+layout:
+  - {id: root, component: Card, variant: feature, child: sheet}
+  - {id: sheet, component: Column, gap: lg, children: [masthead, rule_mast, matrix, verdict_block]}
+
+  - {id: masthead, component: Column, gap: none, children: [kicker, topic]}
+  - {id: kicker, component: Text, text: The verdict, variant: eyebrow, tone: accent}
+  - {id: topic, component: Text, text: {path: /topic}, variant: h1}
+  - {id: rule_mast, component: Divider, emphasis: strong}
+
+  # One column per option, one row per criterion, one cell per value the row wrote.
+  # The winner of a row is the option its `best` names; the pick is the whole column.
+  - id: matrix
+    component: Table
+    columns: {path: /options}
+    rows: {path: /criteria}
+    cells: {path: ./values}
+    key: {path: ./name}
+    win: {path: ./best}
+    pick: {path: /recommended}
+    header: option_head
+    lead: criterion
+    cell: cell_value
+  - {id: option_head, component: Column, gap: xs, children: [option_name, option_tagline, option_price]}
+  - {id: option_name, component: Text, text: {path: ./name}, variant: h4}
+  - {id: option_tagline, component: Text, text: {path: ./tagline}, variant: caption, tone: muted}
+  - {id: option_price, component: Text, text: {path: ./price}, variant: caption, emphasis: strong}
+  - {id: criterion, component: Text, text: {path: ./label}, variant: eyebrow, tone: muted}
+  - {id: cell_value, component: Text, text: {path: .}}
+
+  - id: verdict_block
+    component: Column
+    gap: sm
+    when: [{path: /recommended}, {path: /verdict}]
+    children: [rule_verdict, pick_line, verdict_text]
+  - {id: rule_verdict, component: Divider}
+  - id: pick_line
+    component: Row
+    gap: sm
+    align: center
+    when: {path: /recommended}
+    children: [pick_label, pick_name]
+  - {id: pick_label, component: Text, text: The pick, variant: badge, tone: accent}
+  - {id: pick_name, component: Text, text: {path: /recommended}, variant: h3}
+  - {id: verdict_text, component: Text, text: {path: /verdict}, variant: quote}
+
+example:
+  topic: Travel laptop
+  options:
+    - name: MacBook Air 13
+      tagline: Longest battery in class
+      price: $1,499
+    - name: ThinkPad X1 Carbon
+      tagline: Best keyboard + ports
+      price: $1,649
+  criteria:
+    - {label: Weight, values: ['1.24 kg', '1.09 kg'], best: ThinkPad X1 Carbon}
+    - {label: Battery (real-world), values: ['~15 h', '~10 h'], best: MacBook Air 13}
+    - {label: Ports, values: ['2× USB-C', '2× USB-C · 2× USB-A · HDMI'], best: ThinkPad X1 Carbon}
+  recommended: MacBook Air 13
+  verdict: The Air wins on battery and weight-adjusted value for travel; pick the
+    X1 Carbon if you need USB-A/HDMI without dongles or type all day.

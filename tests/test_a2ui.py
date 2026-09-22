@@ -79,8 +79,8 @@ def test_a2ui_runtime_prompt_exposes_schema_and_custom_contracts():
     # The task board, the inbox and the agenda are files now, each routed by its own
     # description rather than by a bullet here.
     assert "TaskProgress — Use when the answer is the state of the user's existing tasks" in prompt
-    assert "DecisionMatrix" in prompt
-    assert "recommending between options -> render a DecisionMatrix" in prompt
+    # The comparison table is a file now, routed by its own description too.
+    assert "DecisionMatrix — Use when the answer compares concrete alternatives" in prompt
     assert "Use Divider for section separation when useful" in prompt
     assert "A canvas is an A2UI surface, not a component" in prompt
     assert "place that exact value in an Image component's required `url`" in prompt
@@ -1029,3 +1029,146 @@ def test_a_digest_stored_before_the_byline_was_split_still_reads():
     # The whole byline lived in one field before source and published were split.
     assert {"path": "/stories/0/meta"} in [component.get("text") for component in drawn]
     assert redrawn.data["stories"][0]["meta"] == "Reuters · 2h ago"
+
+
+# --- The comparison table (09) ---
+
+
+def _decision_emit(
+    options: list[dict] | None = None, criteria: list[dict] | None = None
+) -> list[dict]:
+    return _emit(
+        {
+            "id": "root",
+            "component": "DecisionMatrix",
+            "topic": "Travel laptop",
+            "options": [{"name": "MacBook Air 13"}, {"name": "ThinkPad X1 Carbon"}]
+            if options is None
+            else options,
+            "criteria": [
+                {"label": "Weight", "values": ["1.24 kg", "1.09 kg"], "best": "ThinkPad X1 Carbon"},
+                {"label": "Keyboard", "values": ["Good", "Excellent"]},
+            ]
+            if criteria is None
+            else criteria,
+        }
+    )
+
+
+def _decision_drawn(
+    options: list[dict] | None = None, criteria: list[dict] | None = None
+) -> list[dict]:
+    return expand_card_messages(_decision_emit(options, criteria), bundled_cards())[1][
+        "updateComponents"
+    ]["components"]
+
+
+def test_the_decision_matrix_is_offered_to_the_agent_from_its_file():
+    runtime.cache_clear()
+    prompt = runtime().system_prompt_section
+    card = bundled_cards()["DecisionMatrix"]
+
+    assert assistant_catalog()["components"]["DecisionMatrix"]["description"] == card.description
+    assert "DecisionMatrix — Use when the answer compares" in prompt
+    assert '"component":"DecisionMatrix"' in prompt
+
+
+def test_the_decision_matrix_is_drawn_from_the_vocabulary_not_from_a_component():
+    messages = expand_card_messages(_decision_emit(), bundled_cards())
+    drawn = messages[1]["updateComponents"]["components"]
+
+    assert {component["component"] for component in drawn} <= CARD_VOCABULARY
+    assert [message["updateDataModel"]["path"] for message in messages[2:]] == [
+        "/topic",
+        "/options",
+        "/criteria",
+    ]
+
+
+def test_the_table_is_a_primitive_any_card_can_draw():
+    drawn = _decision_drawn()
+
+    table = next(component for component in drawn if component["component"] == "Table")
+    # The Card names its two axes and the cells a row carries; nothing else aligns them.
+    assert table["columns"] == {"path": "/options"}
+    assert table["rows"] == {"path": "/criteria"}
+    assert table["cells"] == {"path": "./values"}
+    # A row names its winner, and a column says what it is called, so the table can
+    # mark the cell where the two meet.
+    assert table["key"] == {"path": "./name"}
+    assert table["win"] == {"path": "./best"}
+    assert table["pick"] == {"path": "/recommended"}
+    # Its three templates are layout ids, namespaced by the instance like any child.
+    assert {table["header"], table["lead"], table["cell"]} <= {
+        component["id"] for component in drawn
+    }
+    assert "Table" in CARD_VOCABULARY
+
+
+def test_a_table_of_two_options_and_a_table_of_four_are_the_same_layout():
+    def drawn(count: int) -> list:
+        return _decision_drawn(
+            [{"name": f"Option {index}"} for index in range(count)],
+            [{"label": "Price", "values": [f"${index}" for index in range(count)]}],
+        )
+
+    assert drawn(2) == drawn(3) == drawn(4)
+
+
+def test_the_recommendation_and_the_verdict_are_drawn_only_when_they_are_there():
+    drawn = _decision_drawn()
+
+    verdict = next(component for component in drawn if component["id"].endswith("verdict_block"))
+    assert verdict["when"] == [{"path": "/recommended"}, {"path": "/verdict"}]
+
+
+def test_a_nested_table_reads_the_instances_own_options():
+    drawn = expand_card_messages(
+        [
+            {"version": "v1.0", "createSurface": {"surfaceId": "s1", "catalogId": CATALOG_ID}},
+            {
+                "version": "v1.0",
+                "updateComponents": {
+                    "surfaceId": "s1",
+                    "components": [
+                        {"id": "root", "component": "Column", "children": ["pick"]},
+                        {**_decision_emit()[1]["updateComponents"]["components"][0], "id": "pick"},
+                    ],
+                },
+            },
+        ],
+        bundled_cards(),
+    )[1]["updateComponents"]["components"]
+
+    table = next(component for component in drawn if component["component"] == "Table")
+    assert table["columns"] == {"path": "/_cards/pick/options"}
+    assert table["pick"] == {"path": "/_cards/pick/recommended"}
+    # A cell's path reads the row the table is drawing, wherever the instance sits.
+    assert table["cells"] == {"path": "./values"}
+
+
+def test_a_decision_matrix_stored_before_it_was_a_file_is_redrawn_on_read():
+    fields = {
+        "topic": "Travel laptop",
+        "options": [{"name": "MacBook Air 13", "price": "$1,499"}],
+        "criteria": [{"label": "Weight", "values": ["1.24 kg"], "best": "MacBook Air 13"}],
+        "recommended": "MacBook Air 13",
+        "verdict": "The Air wins on battery.",
+    }
+    stored = A2UISurface(
+        "s1",
+        component={"id": "root", "component": "DecisionMatrix", **fields},
+        data=dict(fields),
+        title="Decision",
+    )
+
+    redrawn = expanded_card_surface(stored, bundled_cards())
+
+    assert redrawn.component["component"] == "Card"
+    assert redrawn.data["recommended"] == "MacBook Air 13"
+    assert redrawn.title == "Decision"
+
+
+def test_the_decision_matrix_is_no_longer_a_catalog_literal():
+    assert "DecisionMatrix" not in assistant_catalog({})["components"]
+    assert "render a DecisionMatrix" not in catalog_rules({})

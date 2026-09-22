@@ -2,7 +2,7 @@
 // chat shows while that happens. Run: node --test src/lib
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { a2uiComposingSurfaceId, a2uiIconName, a2uiLink, a2uiPresent, a2uiText, a2uiTone, a2uiValue, actionContext, applyA2UIMessage, bindingPath, childSlots, metricParts, sparkPath, splitA2UIText, templateStart, withA2UIValue } from './a2ui.ts'
+import { a2uiComposingSurfaceId, a2uiIconName, a2uiLink, a2uiPresent, a2uiText, a2uiTone, a2uiValue, actionContext, applyA2UIMessage, axisScopes, bindingPath, childSlots, markedColumn, metricParts, sparkPath, splitA2UIText, templateStart, withA2UIValue } from './a2ui.ts'
 import type { ThreadItem } from '../schemas/events.ts'
 
 const PROSE = "Here's the current tech picture on OzBargain."
@@ -485,4 +485,62 @@ test('an icon draws the mark its card names for a value', () => {
   assert.equal(a2uiIconName(icon, data, '/items/0'), 'check')
   assert.equal(a2uiIconName(icon, data, '/items/1'), 'x')
   assert.equal(a2uiIconName(icon, data, '/items/2'), 'odd')
+})
+
+// A Table draws two axes: its columns, its rows, and a row's cells. Each axis is a
+// bound array, and what a component is drawn in is the pointer to one of its items.
+const MATRIX = {
+  options: [{ name: 'Air' }, { name: 'X1' }, { name: 'XPS' }],
+  criteria: [
+    { label: 'Weight', values: ['1.24 kg', '1.09 kg', '1.31 kg'], best: 'X1' },
+    { label: 'Battery', values: ['~15 h', '~10 h'] },
+  ],
+  recommended: 'Air',
+}
+
+test('an axis draws one scope per item of the array it is bound to', () => {
+  assert.deepEqual(axisScopes({ path: '/options' }, MATRIX), ['/options/0', '/options/1', '/options/2'])
+  assert.deepEqual(axisScopes({ path: '/criteria' }, MATRIX), ['/criteria/0', '/criteria/1'])
+})
+
+test("a row's cells are bound relative to the row the table is drawing", () => {
+  assert.deepEqual(axisScopes({ path: './values' }, MATRIX, '/criteria/0'), [
+    '/criteria/0/values/0',
+    '/criteria/0/values/1',
+    '/criteria/0/values/2',
+  ])
+  // A row with fewer cells than there are columns draws fewer; the table keeps the
+  // column, so the two rows still line up.
+  assert.equal(axisScopes({ path: './values' }, MATRIX, '/criteria/1').length, 2)
+})
+
+test('an axis bound to nothing, or to something that is not an array, draws no column', () => {
+  assert.deepEqual(axisScopes({ path: '/missing' }, MATRIX), [])
+  assert.deepEqual(axisScopes({ path: '/recommended' }, MATRIX), [])
+  assert.deepEqual(axisScopes(undefined, MATRIX), [])
+  assert.deepEqual(axisScopes('/options', MATRIX), [])
+})
+
+test('a row marks the column whose key it names, and names none when it has no winner', () => {
+  const columns = axisScopes({ path: '/options' }, MATRIX)
+  const key = { path: './name' }
+  const win = { path: './best' }
+
+  assert.equal(markedColumn(key, win, MATRIX, columns, '/criteria/0'), 1)
+  assert.equal(markedColumn(key, win, MATRIX, columns, '/criteria/1'), -1)
+})
+
+test('a mark naming a column that is not there marks nothing', () => {
+  const columns = axisScopes({ path: '/options' }, MATRIX)
+  const key = { path: './name' }
+
+  assert.equal(markedColumn(key, { path: '/recommended' }, MATRIX, columns), 0)
+  assert.equal(markedColumn(key, { path: '/missing' }, MATRIX, columns), -1)
+  assert.equal(markedColumn(key, 'Gone', MATRIX, columns), -1)
+  assert.equal(markedColumn(undefined, { path: '/recommended' }, MATRIX, columns), -1)
+})
+
+test('a table with no column axis has nothing to compare, and no columns to mark', () => {
+  assert.deepEqual(axisScopes({ path: '/options' }, { options: [] }), [])
+  assert.equal(markedColumn({ path: './name' }, { path: '/recommended' }, { options: [] }, []), -1)
 })

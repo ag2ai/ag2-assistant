@@ -1,7 +1,6 @@
 <script lang="ts">
   import Icon from '../Icon.svelte'
   import BasicA2UIComponent from './BasicA2UIComponent.svelte'
-  import DecisionMatrix from './DecisionMatrix.svelte'
   import CodingSession from './CodingSession.svelte'
   import A2UIComposing from './A2UIComposing.svelte'
   import { a2uiComposingSurfaceId, rows, str, withA2UIValue } from '../../lib/a2ui.ts'
@@ -21,10 +20,7 @@
   const isBasicLayout = $derived(LAYOUT.includes(type))
   // A feature Card draws its own frame and heading; the generic chrome is skipped.
   const isFeature = $derived(type === 'card' && str(item.component.variant) === 'feature')
-  const componentIcon = $derived(type === 'decisionmatrix' ? 'check' : 'sparkles')
-  const eyebrow = $derived(
-    isBasicLayout ? 'Overview' : type === 'decisionmatrix' ? 'Decision' : 'A2UI'
-  )
+  const eyebrow = $derived(isBasicLayout ? 'Overview' : 'A2UI')
   const displayTitle = $derived(item.title === 'Briefing' ? 'Interactive view' : item.title || eyebrow)
   const isComposingUpdate = $derived($thread.items.some(
     (entry) => entry.kind === 'agent' && entry.streaming && a2uiComposingSurfaceId(entry.text) === item.surfaceId
@@ -58,7 +54,7 @@
   }
 
   const emptyAnswerBrief = $derived(
-    ![...LAYOUT, 'decisionmatrix', 'codingsession'].includes(type) &&
+    ![...LAYOUT, 'codingsession'].includes(type) &&
     !list(data.sections).length &&
     genericText(data.topic) &&
     genericText(data.title) &&
@@ -71,14 +67,12 @@
 {:else if isFeature}
   <BasicA2UIComponent component={item.component} {components} data={inputData} onDataChange={setInputValue} onAction={submitAction} />
 {:else if !emptyAnswerBrief}
-{#if type === 'decisionmatrix' && list(data.options).length}
-  <DecisionMatrix {data} />
-{:else if type === 'codingsession'}
+{#if type === 'codingsession'}
   <CodingSession {data} />
 {:else}
 <div class="a2ui">
   <div class="a2ui-head">
-    <span class="a2ui-mark"><Icon name={componentIcon} size={15} /></span>
+    <span class="a2ui-mark"><Icon name="sparkles" size={15} /></span>
     <span class="a2ui-headtext">
       <span class="a2ui-eyebrow">{eyebrow}</span>
       <span class="a2ui-title">{displayTitle}</span>
