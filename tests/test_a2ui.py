@@ -5,6 +5,7 @@ from ag2.a2ui.parser import A2UIResponseParser
 from ag2.events import ModelMessage, ModelResponse
 
 from assistant.a2ui import (
+    CARD_VOCABULARY,
     CATALOG_ID,
     assistant_catalog,
     bundled_cards,
@@ -79,7 +80,7 @@ def test_a2ui_runtime_prompt_exposes_schema_and_custom_contracts():
     # MarketBoard is a file now: its own description is what routes the model to it.
     assert "MarketBoard — Use when the answer is market prices" in prompt
     assert "Gather the real data with your tools BEFORE you render" in prompt
-    assert "Creating, scheduling, or planning a new task -> render a TaskPlan" in prompt
+    assert "TaskPlan — Use when a task is being created" in prompt
     assert "task status/history) -> render a TaskProgress" in prompt
     assert "DecisionMatrix" in prompt
     assert "recommending between options -> render a DecisionMatrix" in prompt
@@ -262,24 +263,26 @@ def test_data_model_update_ignores_a_pointer_no_row_answers_to():
 # --- Checklist is a file (ADR 0027/0028): offered from it, drawn from it ---
 
 
-def _checklist_emit() -> list[dict]:
+def _emit(root: dict) -> list[dict]:
+    """The two messages a model writes to draw one Card as the whole surface."""
     return [
         {"version": "v1.0", "createSurface": {"surfaceId": "s1", "catalogId": CATALOG_ID}},
         {
             "version": "v1.0",
-            "updateComponents": {
-                "surfaceId": "s1",
-                "components": [
-                    {
-                        "id": "root",
-                        "component": "Checklist",
-                        "title": "Ship it",
-                        "items": ["Tag the release", "Run the migration"],
-                    }
-                ],
-            },
+            "updateComponents": {"surfaceId": "s1", "components": [root]},
         },
     ]
+
+
+def _checklist_emit() -> list[dict]:
+    return _emit(
+        {
+            "id": "root",
+            "component": "Checklist",
+            "title": "Ship it",
+            "items": ["Tag the release", "Run the migration"],
+        }
+    )
 
 
 def test_the_checklist_card_is_offered_to_the_agent_from_its_file():
@@ -395,39 +398,30 @@ def test_a_card_that_is_not_there_is_not_offered_and_not_drawable():
 
 
 def _market_emit() -> list[dict]:
-    return [
-        {"version": "v1.0", "createSurface": {"surfaceId": "s1", "catalogId": CATALOG_ID}},
+    return _emit(
         {
-            "version": "v1.0",
-            "updateComponents": {
-                "surfaceId": "s1",
-                "components": [
-                    {
-                        "id": "root",
-                        "component": "MarketBoard",
-                        "title": "Technology",
-                        "currency": "USD",
-                        "quotes": [
-                            {
-                                "symbol": "NVDA",
-                                "name": "NVIDIA Corporation",
-                                "price": 193.99,
-                                "change": 1.46,
-                                "changePercent": 0.76,
-                                "spark": [12, 30, 22, 45, 100],
-                            },
-                            {
-                                "symbol": "AAPL",
-                                "name": "Apple Inc.",
-                                "price": 281.51,
-                                "changePercent": -0.8,
-                            },
-                        ],
-                    }
-                ],
-            },
-        },
-    ]
+            "id": "root",
+            "component": "MarketBoard",
+            "title": "Technology",
+            "currency": "USD",
+            "quotes": [
+                {
+                    "symbol": "NVDA",
+                    "name": "NVIDIA Corporation",
+                    "price": 193.99,
+                    "change": 1.46,
+                    "changePercent": 0.76,
+                    "spark": [12, 30, 22, 45, 100],
+                },
+                {
+                    "symbol": "AAPL",
+                    "name": "Apple Inc.",
+                    "price": 281.51,
+                    "changePercent": -0.8,
+                },
+            ],
+        }
+    )
 
 
 def test_the_market_board_is_offered_to_the_agent_from_its_file():
@@ -491,3 +485,133 @@ def test_a_board_of_two_quotes_and_a_board_of_twenty_are_the_same_layout():
         return expand_card_messages(emit, bundled_cards())[1]["updateComponents"]["components"]
 
     assert drawn(2) == drawn(20)
+
+
+# --- The Cards whose look was a branch in the surface renderer (06) ---
+
+
+def _task_plan_emit() -> list[dict]:
+    return _emit(
+        {
+            "id": "root",
+            "component": "TaskPlan",
+            "objective": "Brief me on AI news every morning",
+            "cadence": "Daily at 07:00",
+            "deliverables": ["A five-headline digest"],
+            "nextSteps": ["Confirm the time", "Pick the sources"],
+        }
+    )
+
+
+def _places_emit(results: list[dict] | None = None) -> list[dict]:
+    return _emit(
+        {
+            "id": "root",
+            "component": "RestaurantFinder",
+            "query": "Ramen near Neubau",
+            "filters": ["Open now", "Walkable"],
+            "results": [{"name": "Mochi", "detail": "Japanese \u00b7 4.6 \u00b7 5 min walk"}]
+            if results is None
+            else results,
+        }
+    )
+
+
+def _brief_emit(sections: list[str] | None = None) -> list[dict]:
+    return _emit(
+        {
+            "id": "root",
+            "component": "AnswerBrief",
+            "topic": "Rust vs Go for a CLI",
+            "sections": ["Startup time", "Binary size"] if sections is None else sections,
+        }
+    )
+
+
+def test_the_task_plan_places_and_brief_are_offered_from_their_files():
+    runtime.cache_clear()
+    prompt = runtime().system_prompt_section
+    catalog = assistant_catalog()
+
+    for name in ("TaskPlan", "RestaurantFinder", "AnswerBrief"):
+        card = bundled_cards()[name]
+        assert catalog["components"][name]["description"] == card.description
+        assert catalog["components"][name]["required"] == ["id", "component", *card.required]
+        assert card.description in prompt
+        assert f'"component":"{name}"' in prompt
+
+
+def test_the_task_plan_places_and_brief_are_drawn_from_the_vocabulary():
+    for emit, fields in (
+        (_task_plan_emit(), ["/objective", "/cadence", "/deliverables", "/nextSteps"]),
+        (_places_emit(), ["/query", "/filters", "/results"]),
+        (_brief_emit(), ["/topic", "/sections"]),
+    ):
+        messages = expand_card_messages(emit, bundled_cards())
+        drawn = messages[1]["updateComponents"]["components"]
+
+        assert {component["component"] for component in drawn} <= CARD_VOCABULARY
+        assert [message["updateDataModel"]["path"] for message in messages[2:]] == fields
+
+
+def test_a_task_plan_stored_before_it_was_a_file_is_redrawn_on_read():
+    stored = A2UISurface(
+        "s1",
+        component={
+            "id": "root",
+            "component": "TaskPlan",
+            "objective": "Old plan",
+            "cadence": "Weekly",
+            "deliverables": ["A digest"],
+            "nextSteps": ["Confirm"],
+        },
+        data={
+            "objective": "Old plan",
+            "cadence": "Weekly",
+            "deliverables": ["A digest"],
+            "nextSteps": ["Confirm"],
+        },
+        title="Task setup",
+    )
+
+    redrawn = expanded_card_surface(stored, bundled_cards())
+
+    assert redrawn.component["component"] == "Column"
+    assert redrawn.data["objective"] == "Old plan"
+    assert redrawn.title == "Task setup"
+
+
+def test_one_place_and_many_places_are_the_same_layout():
+    def drawn(count: int) -> list:
+        results = [{"name": f"Place {i}", "detail": "Open now"} for i in range(count)]
+        return expand_card_messages(_places_emit(results), bundled_cards())[1]["updateComponents"][
+            "components"
+        ]
+
+    assert drawn(1) == drawn(12)
+
+
+def test_a_brief_with_no_sections_draws_the_same_card_as_a_full_one():
+    empty = expand_card_messages(_brief_emit([]), bundled_cards())
+    full = expand_card_messages(_brief_emit(), bundled_cards())
+
+    assert empty[1]["updateComponents"]["components"] == full[1]["updateComponents"]["components"]
+    # The section pills are conditional on the data, so an empty brief is a topic
+    # with nothing standing under it.
+    sections = next(
+        component
+        for component in empty[1]["updateComponents"]["components"]
+        if component["id"] == "root__sections"
+    )
+    assert sections["when"] == {"path": "/sections"}
+
+
+def test_the_task_plan_places_and_brief_are_no_longer_catalog_literals():
+    bare = assistant_catalog({})
+
+    for name in ("TaskPlan", "RestaurantFinder", "AnswerBrief"):
+        assert name not in bare["components"]
+    rules = catalog_rules({})
+    assert "render a TaskPlan" not in rules
+    assert "render a RestaurantFinder" not in rules
+    assert "render an AnswerBrief" not in rules

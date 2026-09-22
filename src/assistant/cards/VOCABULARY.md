@@ -30,7 +30,7 @@ draw it twice.
 | `Text` | `text`, `variant`, `emphasis`, `tone`, `format`, `map`. Text that resolves to nothing draws nothing. |
 | `Metric` | A number and the movement behind it: `value`, `unit`, `label`, `delta` (absolute), `deltaPercent`, `size`, `align`, `tone`. It signs, groups and arrows the movement itself. |
 | `Sparkline` | `values` — a normalised 0–100 series — plus `size` and `tone`. Fewer than two points keep the column at `sm`/`md` and draw nothing at `lg`. |
-| `Icon`, `Image`, `Video` | As the Basic Catalog declares them. |
+| `Icon`, `Image`, `Video` | As the Basic Catalog declares them; an `Icon` also takes a `size`. |
 | `Button`, `CheckBox`, `ChoicePicker`, `TextField`, `Slider`, `DateTimeInput` | As the Basic Catalog declares them. |
 
 ## Styling words
@@ -38,10 +38,10 @@ draw it twice.
 | Word | Values | On |
 |---|---|---|
 | `tone` | `neutral`, `muted`, `accent`, `positive`, `negative` — **or a binding**: a bound number takes its tone from its sign, so a rising value is green and a falling one red without a Card naming either. | `Text`, `Metric`, `Sparkline` |
-| `variant` | `h1`, `h2`, `h3`, `h4`, `body`, `caption`, `eyebrow`, `quote` | `Text` |
+| `variant` | `h1`, `h2`, `h3`, `h4`, `body`, `caption`, `eyebrow`, `quote` — or `pill`, a chip rather than a step on the scale: a short label a Card sets beside others, taking its ink from its `tone` | `Text` |
 | `variant` | `feature` | `Card` |
 | `emphasis` | `strong` | `Text`, `Divider` |
-| `size` | `sm`, `md`, `lg` | `Metric`, `Sparkline` |
+| `size` | `sm`, `md`, `lg` | `Metric`, `Sparkline`, `Icon` |
 | `format` | `time`, `ago`, `datetime` — a timestamp written the way the rest of the app writes one | `Text` |
 | `map` | a table of value → label, so a Card prints `Market open` for a field that carries `open`. A value the table does not name prints as it is. | `Text` |
 | `gap` | `none`, `xs`, `sm`, `md`, `lg` | `Column`, `Row`, `List` |

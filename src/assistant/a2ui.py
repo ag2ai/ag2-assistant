@@ -174,10 +174,6 @@ def _surface_title(component: dict, data: dict) -> str:
         return "Weather view"
     if kind == "newsdigest":
         return "News digest"
-    if kind == "restaurantfinder":
-        return "Open places"
-    if kind == "taskplan":
-        return "Task setup"
     if kind in {"column", "row", "list", "card", "text"}:
         title = data.get("title")
         return title if isinstance(title, str) and title else "Interactive view"
@@ -313,7 +309,6 @@ def assistant_catalog(cards: dict[str, Card] | None = None) -> dict:
     file declares; the rest are literals here.
     """
 
-    string_array = {"type": "array", "items": {"type": "string"}}
     row_array = {
         "type": "array",
         "items": {
@@ -351,19 +346,6 @@ def assistant_catalog(cards: dict[str, Card] | None = None) -> dict:
             },
             # First story is rendered as the lead; the rest as a ranked list.
             "required": ["title", "source"],
-            "additionalProperties": False,
-        },
-    }
-    result_array = {
-        "type": "array",
-        "items": {
-            "type": "object",
-            "properties": {
-                "name": {"type": "string"},
-                "detail": {"type": "string"},
-                "url": {"type": "string"},
-            },
-            "required": ["name", "detail"],
             "additionalProperties": False,
         },
     }
@@ -523,27 +505,6 @@ def assistant_catalog(cards: dict[str, Card] | None = None) -> dict:
                 },
                 ["topic", "stories"],
             ),
-            "RestaurantFinder": _component_schema(
-                "RestaurantFinder",
-                "Restaurant, cafe, or bar finder with active filters and result rows.",
-                {
-                    "query": {"type": "string"},
-                    "filters": string_array,
-                    "results": result_array,
-                },
-                ["query", "filters", "results"],
-            ),
-            "TaskPlan": _component_schema(
-                "TaskPlan",
-                "Task planning panel with objective, cadence, deliverables, and next steps.",
-                {
-                    "objective": {"type": "string"},
-                    "cadence": {"type": "string"},
-                    "deliverables": string_array,
-                    "nextSteps": string_array,
-                },
-                ["objective", "cadence", "deliverables", "nextSteps"],
-            ),
             "InboxBrief": _component_schema(
                 "InboxBrief",
                 "Email inbox digest, built from the user's real mail (most important thread first).",
@@ -604,15 +565,6 @@ def assistant_catalog(cards: dict[str, Card] | None = None) -> dict:
                 },
                 ["topic", "options", "criteria"],
             ),
-            "AnswerBrief": _component_schema(
-                "AnswerBrief",
-                "Structured brief for comparisons, recommendations, tradeoffs, or research summaries.",
-                {
-                    "topic": {"type": "string"},
-                    "sections": string_array,
-                },
-                ["topic", "sections"],
-            ),
             **{
                 card.name: _component_schema(
                     card.name, card.description, card.fields, list(card.required)
@@ -633,13 +585,10 @@ Gather the real data with your tools BEFORE you render — each tool's own descr
 When an answer matches one of these, EMIT that component — the surface is the answer itself, not an optional garnish, so do not settle for prose alone. These are the common matches, not the whole catalog: when another component fits an answer better, render that one instead.
 - Weather or forecast -> render a WeatherPanel from the weather data you gathered.
 - Latest news, headlines, or recent developments -> render a NewsDigest.
-- Restaurants, cafes, bars, open-now, lunch, dinner -> render a RestaurantFinder.
 - Email, inbox, unread, "any new mail" -> render an InboxBrief from the real mail (most important thread first; copy each link into url; set needsReply only when the mail clearly asks for something).
 - Calendar, agenda, schedule, "what's on today/tomorrow" -> render an AgendaCard from the real events (mark the single next upcoming event with next:true).
-- Creating, scheduling, or planning a new task -> render a TaskPlan.
 - Reviewing existing tasks ("how are my tasks going?", task status/history) -> render a TaskProgress from the real task state.
 - Comparing concrete alternatives or recommending between options -> render a DecisionMatrix (2-4 options, short cell values; set `recommended` + `verdict` only when the evidence supports a pick).
-- Research summaries or briefs without competing options -> render an AnswerBrief.
 
 For mixed requests, compose multiple components with basic layout components: root component="Column" or "Row", with children referencing component ids from the same updateComponents.components array. Use Divider for section separation when useful.
 A Column, Row or List can repeat one written component instead of listing every child: `"children":{"componentId":"run_row","path":"/runs"}` draws `run_row` once per item of the array at `/runs`. Inside that component a path opening with `./` reads the item (`{"path":"./day"}`, or `{"path":"."}` for the whole item) and an absolute path still reads the whole data model, so one written row serves three items or thirty.

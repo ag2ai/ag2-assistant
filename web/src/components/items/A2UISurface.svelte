@@ -10,7 +10,7 @@
   import CodingSession from './CodingSession.svelte'
   import A2UIComposing from './A2UIComposing.svelte'
   import { a2uiComposingSurfaceId, rows, str, withA2UIValue } from '../../lib/a2ui.ts'
-  import type { A2UIAction, A2UIData, NewsStory, PlaceResult } from '../../lib/a2ui.ts'
+  import type { A2UIAction, A2UIData, NewsStory } from '../../lib/a2ui.ts'
   import { a2uiAction } from '../../controller.ts'
   import { thread } from '../../store.ts'
   import type { ThreadItem } from '../../schemas/events.ts'
@@ -26,25 +26,21 @@
   const componentIcon = $derived(
     isBasicLayout ? 'sparkles'
       : type === 'weatherpanel' ? 'sun'
-      : type === 'taskplan' ? 'list'
       : type === 'newsdigest' ? 'globe'
       : type === 'decisionmatrix' ? 'check'
       : type === 'taskprogress' ? 'clock'
       : type === 'agendacard' ? 'clock'
       : type === 'inboxbrief' ? 'globe'
-      : type === 'restaurantfinder' ? 'search'
       : 'sparkles'
   )
   const eyebrow = $derived(
     isBasicLayout ? 'Overview'
       : type === 'weatherpanel' ? 'Live forecast'
-      : type === 'taskplan' ? 'Task plan'
       : type === 'newsdigest' ? 'News brief'
       : type === 'decisionmatrix' ? 'Decision'
       : type === 'taskprogress' ? 'Task status'
       : type === 'agendacard' ? 'Agenda'
       : type === 'inboxbrief' ? 'Inbox'
-      : type === 'restaurantfinder' ? 'Places'
       : 'A2UI'
   )
   const displayTitle = $derived(item.title === 'Briefing' ? 'Interactive view' : item.title || eyebrow)
@@ -84,7 +80,7 @@
   }
 
   const emptyAnswerBrief = $derived(
-    !['column', 'row', 'list', 'card', 'text', 'divider', 'checkbox', 'button', 'image', 'icon', 'video', 'textfield', 'choicepicker', 'slider', 'datetimeinput', 'weatherpanel', 'taskplan', 'newsdigest', 'decisionmatrix', 'taskprogress', 'agendacard', 'inboxbrief', 'restaurantfinder', 'codingsession'].includes(type) &&
+    !['column', 'row', 'list', 'card', 'text', 'divider', 'checkbox', 'button', 'image', 'icon', 'video', 'textfield', 'choicepicker', 'slider', 'datetimeinput', 'weatherpanel', 'newsdigest', 'decisionmatrix', 'taskprogress', 'agendacard', 'inboxbrief', 'codingsession'].includes(type) &&
     !list(data.sections).length &&
     genericText(data.topic) &&
     genericText(data.title) &&
@@ -124,28 +120,6 @@
 
   {#if isBasicLayout}
     <BasicA2UIComponent component={item.component} {components} data={inputData} onDataChange={setInputValue} onAction={submitAction} />
-  {:else if type === 'taskplan'}
-    <div class="a2ui-task">
-      <div class="a2ui-main">{str(data.objective) || 'New task'}</div>
-      <div class="a2ui-meta">
-        <span><Icon name="clock" size={12} /> {str(data.cadence) || 'To be confirmed'}</span>
-        <span><Icon name="sparkles" size={12} /> Assistant plan</span>
-      </div>
-      <div class="a2ui-cols">
-        <section>
-          <div class="a2ui-label">Deliverables</div>
-          {#each list<string>(data.deliverables) as row}
-            <div class="a2ui-row"><Icon name="check" size={12} /> {row}</div>
-          {/each}
-        </section>
-        <section>
-          <div class="a2ui-label">Next</div>
-          {#each list<string>(data.nextSteps) as row}
-            <div class="a2ui-row"><Icon name="chevron-right" size={12} /> {row}</div>
-          {/each}
-        </section>
-      </div>
-    </div>
   {:else if type === 'newsdigest'}
     <div class="a2ui-main">{str(data.topic) || 'Latest news'}</div>
     <div class="a2ui-list">
@@ -166,23 +140,10 @@
         </div>
       {/each}
     </div>
-  {:else if type === 'restaurantfinder'}
-    <div class="a2ui-main">{str(data.query) || 'Restaurants'}</div>
-    <div class="a2ui-pills">
-      {#each list<string>(data.filters) as filter}<span>{filter}</span>{/each}
-    </div>
-    <div class="a2ui-list">
-      {#each list<PlaceResult>(data.results) as result}
-        <div class="a2ui-story">
-          <span><Icon name="search" size={13} /></span>
-          <div><strong>{result.name}</strong><small>{result.detail}</small></div>
-        </div>
-      {/each}
-    </div>
   {:else}
     <div class="a2ui-main">{str(data.topic) || item.title || 'Structured response'}</div>
     <div class="a2ui-pills">
-      {#each list<string>(data.sections) as section}<span>{section}</span>{/each}
+      {#each list<string>(data.sections) as section}<span class="a2ui-text a2ui-tone-muted a2ui-t-pill">{section}</span>{/each}
     </div>
   {/if}
 </div>

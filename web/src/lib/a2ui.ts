@@ -44,9 +44,6 @@ export type A2UIOption = { value?: unknown; label?: unknown }
 
 export type WeatherRow = { label: string; value: string }
 
-// Result row of a RestaurantFinder surface.
-export type PlaceResult = { name: string; detail: string; url?: string }
-
 // An action a Button component submits back to the agent.
 export type A2UIAction = { name: string; sourceComponentId?: string; context?: unknown }
 
@@ -419,8 +416,6 @@ function itemTitle(kind: unknown, data: A2UIData = {}): string {
   if (k === 'agendacard') return titleOr(data.title, 'Agenda')
   if (k === 'inboxbrief') return titleOr(data.title, 'Inbox brief')
   if (k === 'newsdigest') return 'News digest'
-  if (k === 'restaurantfinder') return 'Open places'
-  if (k === 'taskplan') return 'Task setup'
   if (['column', 'row', 'list', 'card', 'text'].includes(k)) return titleOr(data.title, 'Interactive view')
   return 'Structured answer'
 }

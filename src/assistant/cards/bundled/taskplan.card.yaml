@@ -1,0 +1,62 @@
+name: TaskPlan
+description: Use when a task is being created, scheduled or planned — its objective,
+  how often it runs, what it will deliver and what happens next.
+
+fields:
+  objective:
+    type: string
+    description: What the task is for, in one line.
+  cadence:
+    type: string
+    description: How often it runs, e.g. 'Daily at 07:00' or 'One-off'.
+  deliverables:
+    type: array
+    items:
+      type: string
+    description: One short line per thing the task produces.
+  nextSteps:
+    type: array
+    items:
+      type: string
+    description: One short line per thing that happens next.
+required: [objective, cadence, deliverables, nextSteps]
+
+layout:
+  - {id: root, component: Column, children: [objective, meta, columns]}
+  - {id: objective, component: Text, text: {path: /objective}, variant: h4}
+
+  - {id: meta, component: Row, gap: sm, children: [cadence, author]}
+  - {id: cadence, component: Text, text: {path: /cadence}, variant: pill, tone: muted}
+  - {id: author, component: Text, text: Assistant plan, variant: pill, tone: muted}
+
+  # Each column stands only over a list that has something in it.
+  - id: columns
+    component: Row
+    align: stretch
+    when: [{path: /deliverables}, {path: /nextSteps}]
+    children: [deliverables_box, next_box]
+
+  - {id: deliverables_box, component: Card, grow: true, when: {path: /deliverables}, child: deliverables_body}
+  - {id: deliverables_body, component: Column, gap: sm, children: [deliverables_label, deliverables_list]}
+  - {id: deliverables_label, component: Text, text: Deliverables, variant: eyebrow, tone: muted}
+  - {id: deliverables_list, component: List, children: {componentId: deliverable, path: /deliverables}}
+  - {id: deliverable, component: Row, gap: sm, align: start, children: [deliverable_mark, deliverable_text]}
+  - {id: deliverable_mark, component: Icon, name: check, size: sm}
+  - {id: deliverable_text, component: Text, text: {path: .}, grow: true}
+
+  - {id: next_box, component: Card, grow: true, when: {path: /nextSteps}, child: next_body}
+  - {id: next_body, component: Column, gap: sm, children: [next_label, next_list]}
+  - {id: next_label, component: Text, text: Next, variant: eyebrow, tone: muted}
+  - {id: next_list, component: List, children: {componentId: next_step, path: /nextSteps}}
+  - {id: next_step, component: Row, gap: sm, align: start, children: [next_mark, next_text]}
+  - {id: next_mark, component: Icon, name: chevron-right, size: sm}
+  - {id: next_text, component: Text, text: {path: .}, grow: true}
+
+example:
+  objective: Brief me on AI news every morning
+  cadence: Daily at 07:00
+  deliverables:
+    - A five-headline digest with sources
+  nextSteps:
+    - Confirm the delivery time
+    - Say which sources to follow

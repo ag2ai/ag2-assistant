@@ -60,6 +60,8 @@
   const ICONS: Record<string, string | undefined> = { accountCircle: 'users', add: 'plus', arrowBack: 'chevron-left', arrowForward: 'chevron-right', attachFile: 'paperclip', calendarToday: 'clock', close: 'x', delete: 'trash', event: 'clock', favorite: 'thumbs-up', folder: 'folder', play: 'send', refresh: 'rotate-cw', send: 'send', settings: 'settings', stop: 'square', warning: 'alert-triangle' }
   const iconKey = $derived(String(a2uiValue(component.name, data, scope) ?? ''))
   const iconName = $derived(ICONS[iconKey] || iconKey)
+  // An icon's size is the same word a Metric and a Sparkline take, in pixels.
+  const ICON_SIZE: Record<string, number> = { sm: 14, md: 22, lg: 28 }
   const videoUrl = $derived(String(a2uiValue(component.url, data, scope) ?? ''))
   const youtubeEmbed = $derived(youtubeUrl(videoUrl))
 
@@ -117,7 +119,7 @@
   // Whether a component conditional on its data is drawn at all.
   const present = $derived(a2uiPresent(component.when, data, scope))
 
-  const TEXT_VARIANTS = ['h1', 'h2', 'h3', 'h4', 'body', 'caption', 'eyebrow', 'quote']
+  const TEXT_VARIANTS = ['h1', 'h2', 'h3', 'h4', 'body', 'caption', 'eyebrow', 'quote', 'pill']
   const textVariant = $derived(TEXT_VARIANTS.includes(String(component.variant ?? '')) ? String(component.variant) : '')
   const textValue = $derived(a2uiText(component, data, scope))
 
@@ -162,7 +164,7 @@
   </div>
 {:else if type === 'card'}
   {@const kid = child(component.child)}
-  <div class="a2ui-basic-card" class:a2ui-feature={component.variant === 'feature'}>
+  <div class="a2ui-basic-card" class:a2ui-feature={component.variant === 'feature'} style:flex-grow={grow}>
     {#if kid}<BasicA2UIComponent component={kid} {components} {data} {onDataChange} {onAction} {scope} depth={depth + 1} />{/if}
   </div>
 {:else if type === 'text'}
@@ -212,7 +214,7 @@
        is what that background colour is there for. Matches A2UI/BoxFit's own default. -->
   <img class="a2ui-image {component.variant || ''}" src={String(a2uiValue(component.url, data, scope) ?? '')} alt={String(a2uiValue(component.description, data, scope) ?? '')} style:object-fit={component.fit === 'scaleDown' ? 'scale-down' : component.fit || 'contain'} />
 {:else if type === 'icon'}
-  <span class="a2ui-icon" title={String(a2uiValue(component.name, data, scope) || '')}><Icon name={iconName} size={22} /></span>
+  <span class="a2ui-icon" title={String(a2uiValue(component.name, data, scope) || '')}><Icon name={iconName} size={ICON_SIZE[sizeName]} /></span>
 {:else if type === 'video'}
   {#if youtubeEmbed}
     <iframe class="a2ui-video" src={youtubeEmbed} title="Video" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
