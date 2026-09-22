@@ -243,6 +243,26 @@ test('a card drawn as primitives is titled by the data model that arrives after 
   assert.equal(a2uiValue({ path: '/title' }, surface.data), 'Ship it')
 })
 
+test('a surface the renderer has never seen is titled and filled like any other', () => {
+  // The renderer knows no component by name, so one it cannot draw is still a surface:
+  // its fields are its data model, and that model names it.
+  const items: ThreadItem[] = []
+  applyA2UIMessage(items, {
+    version: 'v1.0',
+    updateComponents: { surfaceId: 's1', components: [{ id: 'root', component: 'Unheard', topic: 'Tea' }] },
+  })
+  const surface = items[0] as Extract<ThreadItem, { kind: 'a2ui' }>
+
+  assert.equal(surface.title, 'Interactive view')
+  assert.deepEqual(surface.data, { topic: 'Tea' })
+
+  applyA2UIMessage(items, {
+    version: 'v1.0',
+    updateDataModel: { surfaceId: 's1', path: '/title', value: 'Tea, ranked' },
+  })
+  assert.equal(surface.title, 'Tea, ranked')
+})
+
 test('two instances of one card read their own rows, not each other\'s', () => {
   // Nested instances are namespaced by their own id, so one card's template repeats
   // over its own array.

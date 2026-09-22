@@ -21,7 +21,7 @@ from assistant.a2ui import (
     update_data_value,
     wrap_bare_a2ui,
 )
-from assistant.cards import bundled_cards_dir, load_cards
+from assistant.cards import bundled_cards_dir, expand_components, load_cards
 from assistant.coding.diff import FileDiff
 from assistant.coding.surface import card_fields
 from assistant.events import A2UISurface
@@ -1263,3 +1263,97 @@ def test_a_coding_session_stored_before_it_was_a_file_is_redrawn_on_read():
     assert redrawn.component["component"] == "Card"
     assert redrawn.data["status"] == "done"
     assert redrawn.title == "Coding session"
+
+
+# --- The renderer forgets Card types (11) ---
+
+
+def test_the_front_end_knows_no_card_by_name():
+    # Every Card is a file the server draws into primitives, so no Card's name is on
+    # the wire and the renderer has nothing to branch on.
+    web = Path(__file__).parents[1] / "web/src"
+    sources = [
+        path for path in web.rglob("*") if path.is_file() and not path.name.endswith(".test.ts")
+    ]
+    named = {
+        name: sorted(
+            str(path.relative_to(web))
+            for path in sources
+            if re.search(rf"\b{name}\b", path.read_text(errors="ignore"))
+        )
+        for name in bundled_cards()
+    }
+
+    assert {name: hits for name, hits in named.items() if hits} == {}
+
+
+def test_every_bundled_card_draws_only_primitives_whole_or_nested():
+    # What reaches the browser is the vocabulary and nothing else — the property the
+    # renderer's ignorance of Cards rests on.
+    for name, card in bundled_cards().items():
+        instance = {"id": "root", "component": name, **card.example}
+
+        alone, _ = expand_components([instance], bundled_cards())
+        nested, _ = expand_components(
+            [
+                {"id": "root", "component": "Column", "children": ["one"]},
+                {**instance, "id": "one"},
+            ],
+            bundled_cards(),
+        )
+
+        for drawn in (alone, nested):
+            kinds = {component["component"] for component in drawn}
+            assert kinds <= CARD_VOCABULARY, (name, kinds - CARD_VOCABULARY)
+
+
+def test_a_surface_is_titled_by_its_data_model_not_by_what_it_draws():
+    titled = durable_surfaces_from_messages(
+        _emit({"id": "root", "component": "Checklist", "title": "Ship it", "items": ["Tag it"]})
+    )
+    plain = durable_surfaces_from_messages(
+        _emit({"id": "root", "component": "Column", "children": ["one"]})
+    )
+
+    assert titled[0].title == "Ship it"
+    assert plain[0].title == "Interactive view"
+
+
+def test_the_renderer_draws_every_primitive_a_card_may_name():
+    # What a Card file is allowed to draw and what the browser can draw are one list.
+    # A Card nobody has seen before renders because of this, not because of its name.
+    source = (
+        Path(__file__).parents[1] / "web/src/components/items/BasicA2UIComponent.svelte"
+    ).read_text()
+    drawn = set(re.findall(r"""type === ['"]([a-z]+)['"]""", source))
+
+    assert drawn == {name.lower() for name in CARD_VOCABULARY}
+
+
+def test_a_card_nobody_has_seen_before_is_drawn_from_its_layout(tmp_path):
+    (tmp_path / "sighting.card.yaml").write_text(
+        """
+name: Sighting
+description: A bird nobody has logged before.
+fields:
+  bird: {type: string}
+  notes: {type: array, items: {type: string}}
+required: [bird]
+layout:
+  - {id: root, component: Column, children: [name, notes]}
+  - {id: name, component: Text, text: {path: /bird}, variant: h4}
+  - {id: notes, component: List, children: {componentId: note, path: /notes}}
+  - {id: note, component: Text, text: {path: .}}
+example:
+  bird: Superb fairywren
+"""
+    )
+    cards = load_cards(tmp_path, components=CARD_VOCABULARY)
+
+    drawn = expand_card_messages(
+        _emit({"id": "root", "component": "Sighting", "bird": "Kea", "notes": ["Alpine"]}), cards
+    )
+    components = drawn[1]["updateComponents"]["components"]
+
+    assert {component["component"] for component in components} <= CARD_VOCABULARY
+    assert [message["updateDataModel"]["value"] for message in drawn[2:]] == ["Kea", ["Alpine"]]

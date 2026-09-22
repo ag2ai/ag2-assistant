@@ -511,7 +511,6 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .a2ui-skeleton { display: flex; flex-direction: column; gap: 9px; }
 .a2ui-skeleton span { height: 10px; border-radius: var(--radius-pill); background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 8%, var(--code)) 0%, color-mix(in srgb, var(--accent) 22%, var(--code)) 50%, color-mix(in srgb, var(--accent) 8%, var(--code)) 100%); background-size: 220% 100%; animation: ag2-shimmer 1.6s var(--ease-in-out) infinite; }
 .a2ui-main { font-size: 14.5px; font-weight: var(--fw-semibold); line-height: 1.35; color: var(--ink); overflow-wrap: anywhere; }
-.a2ui-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
 /* min-width: 0 so a nested layout shrinks with the row it is in rather than
    forcing it to wrap around its longest line. */
 .a2ui-basic-col { display: flex; flex-direction: column; gap: 10px; min-width: 0; }

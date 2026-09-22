@@ -2,7 +2,7 @@
   import Icon from '../Icon.svelte'
   import BasicA2UIComponent from './BasicA2UIComponent.svelte'
   import A2UIComposing from './A2UIComposing.svelte'
-  import { a2uiComposingSurfaceId, rows, str, withA2UIValue } from '../../lib/a2ui.ts'
+  import { a2uiComposingSurfaceId, str, withA2UIValue, SURFACE_TITLE } from '../../lib/a2ui.ts'
   import type { A2UIAction, A2UIData } from '../../lib/a2ui.ts'
   import { a2uiAction } from '../../controller.ts'
   import { thread } from '../../store.ts'
@@ -12,15 +12,12 @@
   let { item }: Props = $props()
   const data = $derived(item.data || {})
   const components = $derived(item.components || item.component._components || [item.component])
-  const type = $derived((item.component.component || 'AnswerBrief').toLowerCase())
-  // The layout primitives a surface can be rooted at — anything else is a Card
-  // type the renderer still knows, or an answer with no shape at all.
-  const LAYOUT = ['column', 'row', 'list', 'card', 'text', 'divider', 'checkbox', 'button', 'image', 'icon', 'video', 'textfield', 'choicepicker', 'slider', 'datetimeinput']
-  const isBasicLayout = $derived(LAYOUT.includes(type))
+  const rootKind = $derived(str(item.component.component).toLowerCase())
+  // A surface with no layout has nothing to draw — a record that carried data alone.
+  const hasLayout = $derived(!!rootKind)
   // A feature Card draws its own frame and heading; the generic chrome is skipped.
-  const isFeature = $derived(type === 'card' && str(item.component.variant) === 'feature')
-  const eyebrow = $derived(isBasicLayout ? 'Overview' : 'A2UI')
-  const displayTitle = $derived(item.title === 'Briefing' ? 'Interactive view' : item.title || eyebrow)
+  const isFeature = $derived(rootKind === 'card' && str(item.component.variant) === 'feature')
+  const title = $derived(item.title || SURFACE_TITLE)
   const isComposingUpdate = $derived($thread.items.some(
     (entry) => entry.kind === 'agent' && entry.streaming && a2uiComposingSurfaceId(entry.text) === item.surfaceId
   ))
@@ -43,47 +40,24 @@
       action: { ...action, surfaceId: item.surfaceId, timestamp: new Date().toISOString() },
     })
   }
-
-  function list<T>(value: unknown): T[] {
-    return rows<T>(value)
-  }
-
-  function genericText(value: unknown) {
-    return ['structured answer', 'structured response', 'a2ui', ''].includes(String(value || '').toLowerCase())
-  }
-
-  const emptyAnswerBrief = $derived(
-    !LAYOUT.includes(type) &&
-    !list(data.sections).length &&
-    genericText(data.topic) &&
-    genericText(data.title) &&
-    genericText(item.title)
-  )
 </script>
 
 {#if isComposingUpdate}
   <A2UIComposing />
 {:else if isFeature}
   <BasicA2UIComponent component={item.component} {components} data={inputData} onDataChange={setInputValue} onAction={submitAction} />
-{:else if !emptyAnswerBrief}
+{:else if hasLayout}
 <div class="a2ui">
   <div class="a2ui-head">
     <span class="a2ui-mark"><Icon name="sparkles" size={15} /></span>
     <span class="a2ui-headtext">
-      <span class="a2ui-eyebrow">{eyebrow}</span>
-      <span class="a2ui-title">{displayTitle}</span>
+      <span class="a2ui-eyebrow">Overview</span>
+      <span class="a2ui-title">{title}</span>
     </span>
     <span class="a2ui-catalog" title={item.catalogId}>AG2 catalog</span>
   </div>
 
-  {#if isBasicLayout}
-    <BasicA2UIComponent component={item.component} {components} data={inputData} onDataChange={setInputValue} onAction={submitAction} />
-  {:else}
-    <div class="a2ui-main">{str(data.topic) || item.title || 'Structured response'}</div>
-    <div class="a2ui-pills">
-      {#each list<string>(data.sections) as section}<span class="a2ui-text a2ui-tone-muted a2ui-t-pill">{section}</span>{/each}
-    </div>
-  {/if}
+  <BasicA2UIComponent component={item.component} {components} data={inputData} onDataChange={setInputValue} onAction={submitAction} />
 </div>
 {/if}
 {#if actionPending}

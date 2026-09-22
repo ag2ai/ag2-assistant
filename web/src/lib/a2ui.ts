@@ -451,26 +451,20 @@ export function a2uiComposingSurfaceId(text: string | null | undefined): string 
   return match?.[1] || null
 }
 
-function componentKind(component: A2UIData = {}): unknown {
-  return component.component || 'AnswerBrief'
-}
+// What an untitled surface is called.
+export const SURFACE_TITLE = 'Interactive view'
 
-// A title lifted from the data model, falling back when it isn't usable text.
-const titleOr = (v: unknown, fallback: string): string => (typeof v === 'string' && v ? v : fallback)
-
-function itemTitle(kind: unknown, data: A2UIData = {}): string {
-  const k = String(kind || '').toLowerCase()
-  if (['column', 'row', 'list', 'card', 'text'].includes(k)) return titleOr(data.title, 'Interactive view')
-  return 'Structured answer'
+// A surface is named by its own data model — whatever it draws, and whichever Card
+// file the server drew it from.
+function itemTitle(data: A2UIData = {}): string {
+  return typeof data.title === 'string' && data.title ? data.title : SURFACE_TITLE
 }
 
 function dataFromComponent(component: A2UIData = {}, existing: A2UIData = {}): A2UIData {
-  const kind = componentKind(component)
   const data: A2UIData = { ...existing }
   for (const [key, value] of Object.entries(component)) {
     if (!['id', 'component', 'accessibility', '_components'].includes(key)) data[key] = value
   }
-  if (!data.sections && String(kind).toLowerCase() === 'answerbrief') data.sections = []
   return data
 }
 
@@ -488,7 +482,7 @@ function ensureSurface(
       version: version || 'v1.0',
       catalogId: catalogId || BETA_CATALOG_ID,
       surfaceId,
-      title: 'Interactive view',
+      title: SURFACE_TITLE,
       intent: '',
       component: {},
       data: {},
@@ -517,7 +511,7 @@ export function applyA2UIMessage(items: ThreadItem[], message: unknown): A2UIIte
     const root = asComponent(found)
     item.component = root
     item.data = dataFromComponent(root, item.data)
-    item.title = itemTitle(componentKind(root), item.data)
+    item.title = itemTitle(item.data)
     record(item).push(message)
     return item
   }
@@ -528,7 +522,7 @@ export function applyA2UIMessage(items: ThreadItem[], message: unknown): A2UIIte
     if (!path || path === '/') item.data = isRecord(u.value) ? u.value : { value: u.value }
     else item.data = withA2UIValue(item.data, path, u.value)
     // A surface titled by its data model is retitled when that data arrives.
-    if (item.component.component) item.title = itemTitle(componentKind(item.component), item.data)
+    item.title = itemTitle(item.data)
     record(item).push(message)
     return item
   }

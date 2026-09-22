@@ -323,8 +323,13 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
       item.catalogId = d.catalog_id
       item.title = d.title
       item.intent = d.intent
-      item.component = asComponent(d.component)
-      item.components = asComponents(Array.isArray(nested) ? nested : d.components)
+      const root = asComponent(d.component)
+      const tree = asComponents(Array.isArray(nested) ? nested : d.components)
+      // A later record carrying data alone leaves the tree it was drawn with standing.
+      if (root.component || tree.length) {
+        item.component = root
+        item.components = tree
+      }
       item.data = d.data ?? {}
       break
     }

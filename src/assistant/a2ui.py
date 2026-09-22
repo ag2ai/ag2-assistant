@@ -167,12 +167,10 @@ def update_data_value(data: dict, path: str, value: Any) -> dict:
     return result
 
 
-def _surface_title(component: dict, data: dict) -> str:
-    kind = str(component.get("component") or component.get("type") or "").lower()
-    if kind in {"column", "row", "list", "card", "text"}:
-        title = data.get("title")
-        return title if isinstance(title, str) and title else "Interactive view"
-    return "Structured answer"
+def _surface_title(data: dict) -> str:
+    """A surface is named by its own data model, whatever its layout draws."""
+    title = data.get("title")
+    return title if isinstance(title, str) and title else "Interactive view"
 
 
 def durable_surfaces_from_messages(messages: list[Any]) -> list[A2UISurface]:
@@ -263,19 +261,12 @@ def durable_surfaces_from_messages(messages: list[Any]) -> list[A2UISurface]:
             version=state.get("version") or "v1.0",
             component=state.get("component") or {},
             data=state.get("data") or {},
-            title=(
-                _surface_title(state["component"], state.get("data") or {})
-                if state.get("component")
-                else "A2UI"
-            ),
+            title=_surface_title(state.get("data") or {}),
             intent="generated-ui",
         )
         for sid in order
-        # Keep any surface that carries a renderable payload. The frontend renders
-        # a data-only surface (createSurface + updateDataModel, no component tree)
-        # via its generic branch, so dropping those on `component` alone would make
-        # replayed history lose UI the live turn showed. A surface with neither a
-        # component nor data has nothing to render and is still dropped.
+        # A record with data and no tree carries a later turn's write to a surface an
+        # earlier one drew. Neither a component nor data is nothing to keep.
         if (state := states.get(sid)) and (state.get("component") or state.get("data"))
     ]
 

@@ -357,7 +357,7 @@
     <input type={component.enableDate && component.enableTime ? 'datetime-local' : component.enableDate ? 'date' : 'time'} value={component.enableDate && component.enableTime && inputText ? inputText.slice(0, 16) : inputText} min={String(a2uiValue(component.min, data, scope) ?? '') || undefined} max={String(a2uiValue(component.max, data, scope) ?? '') || undefined} onchange={setDateTime} />
   </label>
 {:else}
-  <div class="a2ui-basic-card">
-    <div class="a2ui-main">{component.title || component.topic || component.component || 'Interactive view'}</div>
-  </div>
+  <!-- Every surface arrives as these primitives, so a name that is none of them is a
+       Card whose file would not draw. Say so rather than leaving an empty frame. -->
+  <div class="a2ui-text a2ui-tone-muted">This view could not be drawn.</div>
 {/if}
