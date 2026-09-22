@@ -81,7 +81,9 @@ def test_a2ui_runtime_prompt_exposes_schema_and_custom_contracts():
     assert "MarketBoard — Use when the answer is market prices" in prompt
     assert "Gather the real data with your tools BEFORE you render" in prompt
     assert "TaskPlan — Use when a task is being created" in prompt
-    assert "task status/history) -> render a TaskProgress" in prompt
+    # The task board, the inbox and the agenda are files now, each routed by its own
+    # description rather than by a bullet here.
+    assert "TaskProgress — Use when the answer is the state of the user's existing tasks" in prompt
     assert "DecisionMatrix" in prompt
     assert "recommending between options -> render a DecisionMatrix" in prompt
     assert "Use Divider for section separation when useful" in prompt
@@ -615,3 +617,185 @@ def test_the_task_plan_places_and_brief_are_no_longer_catalog_literals():
     assert "render a TaskPlan" not in rules
     assert "render a RestaurantFinder" not in rules
     assert "render an AnswerBrief" not in rules
+
+
+# --- The Cards that link to the app's own things (07) ---
+
+
+def _task_board_emit(tasks: list[dict] | None = None) -> list[dict]:
+    return _emit(
+        {
+            "id": "root",
+            "component": "TaskProgress",
+            "title": "Your scheduled tasks",
+            "tasks": [
+                {
+                    "id": "t_a1b2c3",
+                    "title": "Daily AI news briefing",
+                    "status": "active",
+                    "schedule": "daily 07:00",
+                    "deliverables": [{"description": "Morning digest", "status": "done"}],
+                },
+                {"id": "t_d4e5f6", "title": "Weekly scan", "status": "failed", "error": "Quota"},
+            ]
+            if tasks is None
+            else tasks,
+        }
+    )
+
+
+def _inbox_emit() -> list[dict]:
+    return _emit(
+        {
+            "id": "root",
+            "component": "InboxBrief",
+            "title": "Inbox this morning",
+            "summary": "3 new since yesterday.",
+            "threads": [
+                {
+                    "from": "Priya Nair",
+                    "subject": "Q3 roadmap review",
+                    "unread": True,
+                    "needsReply": True,
+                    "url": "https://mail.google.com/mail/u/0/#all/19",
+                }
+            ],
+        }
+    )
+
+
+def _agenda_emit(events: list[dict] | None = None) -> list[dict]:
+    return _emit(
+        {
+            "id": "root",
+            "component": "AgendaCard",
+            "title": "Today",
+            "date": "Tue 8 July",
+            "events": [
+                {"title": "Home", "allDay": True},
+                {
+                    "title": "Sync on Merlin EKS",
+                    "start": "8:15 AM",
+                    "next": True,
+                    "url": "https://www.google.com/calendar/event?eid=abc",
+                },
+            ]
+            if events is None
+            else events,
+            "note": "Free after 2:30 PM.",
+        }
+    )
+
+
+def test_the_board_the_inbox_and_the_agenda_are_offered_from_their_files():
+    runtime.cache_clear()
+    prompt = runtime().system_prompt_section
+    catalog = assistant_catalog()
+
+    for name in ("TaskProgress", "InboxBrief", "AgendaCard"):
+        card = bundled_cards()[name]
+        assert catalog["components"][name]["description"] == card.description
+        assert catalog["components"][name]["required"] == ["id", "component", *card.required]
+        assert card.description in prompt
+        assert f'"component":"{name}"' in prompt
+
+
+def test_the_board_the_inbox_and_the_agenda_are_drawn_from_the_vocabulary():
+    for emit, fields in (
+        (_task_board_emit(), ["/title", "/tasks"]),
+        (_inbox_emit(), ["/title", "/summary", "/threads"]),
+        (_agenda_emit(), ["/title", "/date", "/events", "/note"]),
+    ):
+        messages = expand_card_messages(emit, bundled_cards())
+        drawn = messages[1]["updateComponents"]["components"]
+
+        assert {component["component"] for component in drawn} <= CARD_VOCABULARY
+        assert [message["updateDataModel"]["path"] for message in messages[2:]] == fields
+
+
+def test_a_row_points_at_the_task_it_describes():
+    drawn = expand_card_messages(_task_board_emit(), bundled_cards())[1]["updateComponents"][
+        "components"
+    ]
+
+    link = next(component for component in drawn if component["component"] == "Link")
+    # The id is read off the row the link is drawn in, so one written row serves
+    # every task on the board.
+    assert link["task"] == {"path": "./id"}
+
+
+def test_a_card_links_to_a_mail_thread_and_a_meeting_by_its_url():
+    inbox = expand_card_messages(_inbox_emit(), bundled_cards())[1]["updateComponents"][
+        "components"
+    ]
+    agenda = expand_card_messages(_agenda_emit(), bundled_cards())[1]["updateComponents"][
+        "components"
+    ]
+
+    assert {"path": "./url"} in [component.get("url") for component in inbox]
+    assert {"path": "./url"} in [component.get("url") for component in agenda]
+    # A meeting link stands only over an event that has one; the subject line is
+    # drawn whether or not the mail carried a URL.
+    join = next(component for component in agenda if component.get("url") == {"path": "./joinUrl"})
+    assert join["when"] == {"path": "./joinUrl"}
+
+
+def test_a_task_board_stored_before_it_was_a_file_is_redrawn_on_read():
+    stored = A2UISurface(
+        "s1",
+        component={
+            "id": "root",
+            "component": "TaskProgress",
+            "title": "Old board",
+            "tasks": [{"id": "t_1", "title": "A task", "status": "active"}],
+        },
+        data={
+            "title": "Old board",
+            "tasks": [{"id": "t_1", "title": "A task", "status": "active"}],
+        },
+        title="Task status",
+    )
+
+    redrawn = expanded_card_surface(stored, bundled_cards())
+
+    assert redrawn.component["component"] == "Card"
+    assert redrawn.data["tasks"][0]["id"] == "t_1"
+    assert redrawn.title == "Task status"
+
+
+def test_a_day_of_one_event_and_a_day_of_twenty_are_the_same_layout():
+    def drawn(count: int) -> list:
+        events = [{"title": f"Event {index}", "start": "9:00 AM"} for index in range(count)]
+        return expand_card_messages(_agenda_emit(events), bundled_cards())[1]["updateComponents"][
+            "components"
+        ]
+
+    assert drawn(1) == drawn(20)
+
+
+def test_a_status_mark_takes_its_colour_from_the_field_it_prints():
+    drawn = expand_card_messages(_task_board_emit(), bundled_cards())[1]["updateComponents"][
+        "components"
+    ]
+
+    badge = next(component for component in drawn if component.get("variant") == "badge")
+    # The Card names tones, never colours: the status field picks which one.
+    assert badge["tone"]["path"] == "./status"
+    assert set(badge["tone"]["map"].values()) <= {
+        "neutral",
+        "muted",
+        "accent",
+        "positive",
+        "negative",
+    }
+
+
+def test_the_board_the_inbox_and_the_agenda_are_no_longer_catalog_literals():
+    bare = assistant_catalog({})
+
+    for name in ("TaskProgress", "InboxBrief", "AgendaCard"):
+        assert name not in bare["components"]
+    rules = catalog_rules({})
+    assert "render a TaskProgress" not in rules
+    assert "render an InboxBrief" not in rules
+    assert "render an AgendaCard" not in rules

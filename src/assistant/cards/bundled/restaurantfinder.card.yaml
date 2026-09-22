@@ -36,7 +36,8 @@ layout:
   - {id: result, component: Card, child: result_row}
   - {id: result_row, component: Row, gap: sm, align: start, children: [result_mark, result_text]}
   - {id: result_mark, component: Icon, name: search, size: sm}
-  - {id: result_text, component: Column, gap: none, grow: true, children: [result_name, result_detail]}
+  - {id: result_text, component: Column, gap: none, grow: true, children: [result_link, result_detail]}
+  - {id: result_link, component: Link, url: {path: ./url}, child: result_name}
   - {id: result_name, component: Text, text: {path: ./name}, emphasis: strong}
   - {id: result_detail, component: Text, text: {path: ./detail}, variant: caption, tone: muted}
 

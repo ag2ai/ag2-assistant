@@ -51,7 +51,7 @@ SUPPORTED_BASIC_COMPONENTS = frozenset(
 
 # Primitives this renderer draws beyond the Basic Catalog: the visual atoms a Card
 # needs. A Card layout may draw them; the model never emits one directly.
-CARD_PRIMITIVES = frozenset({"Metric", "Sparkline"})
+CARD_PRIMITIVES = frozenset({"Link", "Metric", "Sparkline"})
 
 # The vocabulary a Card's layout is composed from.
 CARD_VOCABULARY = SUPPORTED_BASIC_COMPONENTS | CARD_PRIMITIVES
@@ -388,87 +388,6 @@ def assistant_catalog(cards: dict[str, Card] | None = None) -> dict:
             "additionalProperties": False,
         },
     }
-    thread_array = {
-        "type": "array",
-        "items": {
-            "type": "object",
-            "properties": {
-                "from": {"type": "string", "description": "Sender name, e.g. 'Priya Nair'."},
-                "subject": {"type": "string"},
-                "when": {"type": "string", "description": "e.g. '2h ago' or 'Mon'."},
-                "gist": {"type": "string", "description": "One honest line on the content."},
-                "unread": {"type": "boolean"},
-                "needsReply": {
-                    "type": "boolean",
-                    "description": "Only when the mail clearly asks the user for something.",
-                },
-                "url": {"type": "string", "description": "The link= URL from the tool."},
-            },
-            "required": ["from", "subject"],
-            "additionalProperties": False,
-        },
-    }
-    event_array = {
-        "type": "array",
-        "items": {
-            "type": "object",
-            "properties": {
-                "title": {"type": "string"},
-                "start": {"type": "string", "description": "e.g. '8:15 AM'. Omit for all-day."},
-                "end": {"type": "string", "description": "e.g. '8:45 AM'."},
-                "location": {"type": "string"},
-                "allDay": {"type": "boolean"},
-                "next": {
-                    "type": "boolean",
-                    "description": "True on the single next upcoming event.",
-                },
-                "url": {"type": "string", "description": "The event's link= URL from the tool."},
-                "joinUrl": {"type": "string", "description": "The join= meeting URL, if any."},
-            },
-            "required": ["title"],
-            "additionalProperties": False,
-        },
-    }
-    task_array = {
-        "type": "array",
-        "items": {
-            "type": "object",
-            "properties": {
-                "id": {
-                    "type": "string",
-                    "description": "The task id from list_tasks — links the row to the task page.",
-                },
-                "title": {"type": "string"},
-                "status": {
-                    "type": "string",
-                    "description": "One of: active, scheduled, completed, stopped, failed.",
-                },
-                "schedule": {"type": "string", "description": "e.g. 'daily 07:00' or 'one-off'."},
-                "nextRun": {"type": "string", "description": "e.g. 'Wed 07:00'."},
-                "objective": {"type": "string"},
-                "progress": {"type": "string", "description": "Latest progress message."},
-                "deliverables": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "description": {"type": "string"},
-                            "status": {
-                                "type": "string",
-                                "description": "done, pending, or failed.",
-                            },
-                        },
-                        "required": ["description", "status"],
-                        "additionalProperties": False,
-                    },
-                },
-                "error": {"type": "string", "description": "Only when the task is failing."},
-            },
-            "required": ["title", "status"],
-            "additionalProperties": False,
-        },
-    }
-
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": CATALOG_ID,
@@ -504,42 +423,6 @@ def assistant_catalog(cards: dict[str, Card] | None = None) -> dict:
                     "stories": story_array,
                 },
                 ["topic", "stories"],
-            ),
-            "InboxBrief": _component_schema(
-                "InboxBrief",
-                "Email inbox digest, built from the user's real mail (most important thread first).",
-                {
-                    "title": {"type": "string", "description": "e.g. 'Inbox this morning'."},
-                    "summary": {
-                        "type": "string",
-                        "description": "One honest line, e.g. '3 unread, 1 needs a reply.'",
-                    },
-                    "threads": thread_array,
-                },
-                ["title", "threads"],
-            ),
-            "AgendaCard": _component_schema(
-                "AgendaCard",
-                "Calendar agenda for one day, built from the user's real events.",
-                {
-                    "title": {"type": "string", "description": "e.g. 'Today'."},
-                    "date": {"type": "string", "description": "Human date, e.g. 'Tue 8 July'."},
-                    "events": event_array,
-                    "note": {
-                        "type": "string",
-                        "description": "One honest line, e.g. 'Free after 3 PM.'",
-                    },
-                },
-                ["title", "events"],
-            ),
-            "TaskProgress": _component_schema(
-                "TaskProgress",
-                "Status board built from the real state of existing scheduled/background tasks.",
-                {
-                    "title": {"type": "string", "description": "Board heading, e.g. 'Your tasks'."},
-                    "tasks": task_array,
-                },
-                ["title", "tasks"],
             ),
             "DecisionMatrix": _component_schema(
                 "DecisionMatrix",
@@ -585,9 +468,6 @@ Gather the real data with your tools BEFORE you render — each tool's own descr
 When an answer matches one of these, EMIT that component — the surface is the answer itself, not an optional garnish, so do not settle for prose alone. These are the common matches, not the whole catalog: when another component fits an answer better, render that one instead.
 - Weather or forecast -> render a WeatherPanel from the weather data you gathered.
 - Latest news, headlines, or recent developments -> render a NewsDigest.
-- Email, inbox, unread, "any new mail" -> render an InboxBrief from the real mail (most important thread first; copy each link into url; set needsReply only when the mail clearly asks for something).
-- Calendar, agenda, schedule, "what's on today/tomorrow" -> render an AgendaCard from the real events (mark the single next upcoming event with next:true).
-- Reviewing existing tasks ("how are my tasks going?", task status/history) -> render a TaskProgress from the real task state.
 - Comparing concrete alternatives or recommending between options -> render a DecisionMatrix (2-4 options, short cell values; set `recommended` + `verdict` only when the evidence supports a pick).
 
 For mixed requests, compose multiple components with basic layout components: root component="Column" or "Row", with children referencing component ids from the same updateComponents.components array. Use Divider for section separation when useful.
@@ -612,18 +492,6 @@ summary, and a one-line `why`; later stories just need title/source/published/su
 {"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"__CATALOG_ID__"}}
 {"version":"v1.0","updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"NewsDigest","topic":"Formula 1","stories":[{"title":"Lead headline","source":"Reuters","published":"2h ago","category":"Breaking","summary":"One or two sentences of detail.","why":"Why this is the most important story right now.","url":"https://www.reuters.com/sport/formula1/the-article"},{"title":"Second headline","source":"BBC Sport","published":"4h ago","category":"Teams","summary":"One sentence of detail.","url":"https://www.bbc.com/sport/formula1/the-article"},{"title":"Third headline","source":"Autosport","published":"6h ago","category":"Results","summary":"One sentence of detail.","url":"https://www.autosport.com/f1/news/the-article"}]}]}}
 Always include each story's `url` (the article link) so readers can click through — never put the source links only in your prose.
-
-Inbox — user asks "Anything new in my email?" (fetch the real mail first; copy each link into url):
-{"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"__CATALOG_ID__"}}
-{"version":"v1.0","updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"InboxBrief","title":"Inbox this morning","summary":"3 new since yesterday — one needs a reply.","threads":[{"from":"Priya Nair","subject":"Q3 roadmap review — your slot","when":"2h ago","gist":"Asks you to confirm Thursday 10 AM for the review.","unread":true,"needsReply":true,"url":"https://mail.google.com/mail/u/0/#all/19..."},{"from":"GitHub","subject":"PR #42 merged","when":"5h ago","gist":"Your fix landed on main.","unread":true,"url":"https://mail.google.com/mail/u/0/#all/19..."}]}]}}
-
-Agenda — user asks "What's on today?" (fetch the real events first; times in the user's timezone):
-{"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"__CATALOG_ID__"}}
-{"version":"v1.0","updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"AgendaCard","title":"Today","date":"Tue 8 July","events":[{"title":"Home","allDay":true},{"title":"Sync on Merlin EKS","start":"8:15 AM","end":"8:45 AM","next":true,"url":"https://www.google.com/calendar/event?eid=...","joinUrl":"https://meet.google.com/abc-defg-hij"},{"title":"1:1 with Sam","start":"2:00 PM","end":"2:30 PM","location":"Meet"}],"note":"Free after 2:30 PM."}]}}
-
-Task status — user asks "How are my tasks going?" (read the real task state first, then mirror it):
-{"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"__CATALOG_ID__"}}
-{"version":"v1.0","updateComponents":{"surfaceId":"s1","components":[{"id":"root","component":"TaskProgress","title":"Your scheduled tasks","tasks":[{"id":"t_a1b2c3","title":"Daily AI news briefing","status":"active","schedule":"daily 07:00","nextRun":"Wed 07:00","progress":"Delivered today's briefing","deliverables":[{"description":"Morning digest","status":"done"}]},{"id":"t_d4e5f6","title":"Weekly competitor scan","status":"failed","schedule":"Mondays 09:00","error":"Search quota exhausted on last run"}]}]}}
 
 Decision — user asks "Should I get the MacBook Air or the ThinkPad X1 for travel?"
 (values align by index with options; mark `best` only where one option clearly wins):

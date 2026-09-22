@@ -183,9 +183,10 @@ _Avoid_: component catalog (the A2UI protocol's own name for the Basic Catalog),
 design system (the app's own, which the vocabulary draws tokens from)
 
 **Card link**:
-A Card pointing at one of the app's own things — a **Task**, a **Chat**, a file —
-so a row in a rendered Card opens the page for it. Open to every Card, whatever its
-layer.
+A Card pointing at one of the app's own things — a **Task**, a **Chat**, a file, a
+folder — so a row in a rendered Card opens the page for it, or at a page on the web.
+Open to every Card, whatever its layer. A target that is no longer there is drawn as
+the plain text it wraps.
 _Avoid_: **File reference** (the `@`-pointer into a message), **Mentioned in** (the
 backlink from a file to the conversations touching it)
 

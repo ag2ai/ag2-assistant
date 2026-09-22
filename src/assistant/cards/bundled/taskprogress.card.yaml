@@ -1,0 +1,117 @@
+name: TaskProgress
+description: Use when the answer is the state of the user's existing tasks — what is
+  running or scheduled, how it is going, and what it has delivered.
+
+fields:
+  title:
+    type: string
+    description: Board heading, e.g. 'Your tasks'.
+  tasks:
+    type: array
+    description: Most important first.
+    items:
+      type: object
+      properties:
+        id:
+          type: string
+          description: The task's own id — links the row to its page.
+        title: {type: string}
+        status:
+          type: string
+          description: "One of: active, scheduled, completed, stopped, failed."
+        schedule: {type: string, description: "e.g. 'daily 07:00' or 'one-off'."}
+        nextRun: {type: string, description: "e.g. 'Wed 07:00'."}
+        objective: {type: string}
+        progress: {type: string, description: Latest progress message.}
+        deliverables:
+          type: array
+          items:
+            type: object
+            properties:
+              description: {type: string}
+              status: {type: string, description: "done, pending, or failed."}
+            required: [description, status]
+            additionalProperties: false
+        error: {type: string, description: Only when the task is failing.}
+      required: [title, status]
+      additionalProperties: false
+required: [title, tasks]
+
+layout:
+  - {id: root, component: Card, variant: feature, child: docket}
+  - {id: docket, component: Column, gap: lg, children: [masthead, rule_mast, tasks]}
+
+  - {id: masthead, component: Column, gap: none, children: [kicker, board_title]}
+  - {id: kicker, component: Text, text: Tasks, variant: eyebrow, tone: accent}
+  - {id: board_title, component: Text, text: {path: /title}, variant: h1}
+  - {id: rule_mast, component: Divider, emphasis: strong}
+
+  - {id: tasks, component: List, gap: none, children: {componentId: task, path: /tasks}}
+  - id: task
+    component: Column
+    gap: sm
+    children: [task_head, task_objective, task_deliverables, task_progress, task_error, task_rule]
+
+  # The status mark takes both its word and its colour from the same field.
+  - {id: task_head, component: Row, gap: md, align: center, children: [task_status, task_title, task_when]}
+  - id: task_status
+    component: Text
+    text: {path: ./status}
+    map: {active: Active, scheduled: Scheduled, completed: Completed, stopped: Stopped, failed: Failing}
+    variant: badge
+    tone:
+      path: ./status
+      map: {active: positive, scheduled: muted, completed: neutral, stopped: muted, failed: negative}
+  - {id: task_title, component: Link, task: {path: ./id}, grow: true, child: task_title_text}
+  - {id: task_title_text, component: Text, text: {path: ./title}, variant: h3}
+  - {id: task_when, component: Row, gap: sm, align: center, children: [task_schedule, task_next_label, task_next]}
+  - {id: task_schedule, component: Text, text: {path: ./schedule}, variant: caption, tone: muted}
+  - {id: task_next_label, component: Text, text: next, variant: caption, tone: muted, when: {path: ./nextRun}}
+  - {id: task_next, component: Text, text: {path: ./nextRun}, variant: caption, emphasis: strong}
+
+  - {id: task_objective, component: Text, text: {path: ./objective}, tone: muted}
+
+  - id: task_deliverables
+    component: List
+    gap: xs
+    when: {path: ./deliverables}
+    children: {componentId: deliverable, path: ./deliverables}
+  - {id: deliverable, component: Row, gap: sm, align: center, children: [deliverable_mark, deliverable_text]}
+  - id: deliverable_mark
+    component: Icon
+    name: {path: ./status}
+    map: {done: check, failed: x, pending: clock}
+    size: sm
+    tone: {path: ./status, map: {done: positive, failed: negative, pending: muted}}
+  - {id: deliverable_text, component: Text, text: {path: ./description}, grow: true}
+
+  - {id: task_progress, component: Text, text: {path: ./progress}, variant: caption, tone: muted}
+
+  - id: task_error
+    component: Column
+    gap: xs
+    marker: start
+    tone: negative
+    when: {path: ./error}
+    children: [task_error_label, task_error_text]
+  - {id: task_error_label, component: Text, text: Needs attention, variant: badge, tone: negative}
+  - {id: task_error_text, component: Text, text: {path: ./error}}
+
+  - {id: task_rule, component: Divider}
+
+example:
+  title: Your scheduled tasks
+  tasks:
+    - id: t_a1b2c3
+      title: Daily AI news briefing
+      status: active
+      schedule: daily 07:00
+      nextRun: Wed 07:00
+      progress: Delivered today's briefing
+      deliverables:
+        - {description: Morning digest, status: done}
+    - id: t_d4e5f6
+      title: Weekly competitor scan
+      status: failed
+      schedule: Mondays 09:00
+      error: Search quota exhausted on last run

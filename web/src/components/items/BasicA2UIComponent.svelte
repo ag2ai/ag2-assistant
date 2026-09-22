@@ -1,7 +1,8 @@
 <script lang="ts">
   import Icon from '../Icon.svelte'
+  import A2UILink from './A2UILink.svelte'
   import BasicA2UIComponent from './BasicA2UIComponent.svelte'
-  import { a2uiPresent, a2uiText, a2uiTone, a2uiValue, actionContext, bindingPath, childSlots, metricParts, rows, sparkPath, str } from '../../lib/a2ui.ts'
+  import { a2uiIconName, a2uiPresent, a2uiText, a2uiTone, a2uiValue, actionContext, bindingPath, childSlots, metricParts, rows, sparkPath, str } from '../../lib/a2ui.ts'
   import type { A2UIAction, A2UIComponent, A2UIData, A2UIOption, NewsStory, WeatherRow } from '../../lib/a2ui.ts'
 
   type Props = {
@@ -58,8 +59,10 @@
   // A missing bound stays absent so the attribute is omitted rather than NaN.
   const numOr = (v: unknown): number | undefined => (v == null || v === '' ? undefined : Number(v))
   const ICONS: Record<string, string | undefined> = { accountCircle: 'users', add: 'plus', arrowBack: 'chevron-left', arrowForward: 'chevron-right', attachFile: 'paperclip', calendarToday: 'clock', close: 'x', delete: 'trash', event: 'clock', favorite: 'thumbs-up', folder: 'folder', play: 'send', refresh: 'rotate-cw', send: 'send', settings: 'settings', stop: 'square', warning: 'alert-triangle' }
-  const iconKey = $derived(String(a2uiValue(component.name, data, scope) ?? ''))
+  // The glyph is what the Card's map names; the label is the word it stands for.
+  const iconKey = $derived(a2uiIconName(component, data, scope))
   const iconName = $derived(ICONS[iconKey] || iconKey)
+  const iconLabel = $derived(str(a2uiValue(component.name, data, scope)))
   // An icon's size is the same word a Metric and a Sparkline take, in pixels.
   const ICON_SIZE: Record<string, number> = { sm: 14, md: 22, lg: 28 }
   const videoUrl = $derived(String(a2uiValue(component.url, data, scope) ?? ''))
@@ -116,10 +119,16 @@
   // A component that takes the room its row has left over.
   const grow = $derived(component.grow === true ? 1 : undefined)
   const tone = $derived(a2uiTone(component.tone, data, scope))
+  // A component that says nothing about its tone keeps the class it already had.
+  const toneClass = $derived(component.tone === undefined ? '' : `a2ui-tone-${tone}`)
   // Whether a component conditional on its data is drawn at all.
   const present = $derived(a2uiPresent(component.when, data, scope))
+  // A rule down a layout's leading edge, in its own tone. A bound marker marks
+  // only the rows its value is there for — the one event that is up next.
+  const marked = $derived(component.marker !== undefined && a2uiPresent(component.marker, data, scope))
+  const markerClass = $derived(marked ? `a2ui-marker a2ui-tone-${tone}` : '')
 
-  const TEXT_VARIANTS = ['h1', 'h2', 'h3', 'h4', 'body', 'caption', 'eyebrow', 'quote', 'pill']
+  const TEXT_VARIANTS = ['h1', 'h2', 'h3', 'h4', 'body', 'caption', 'eyebrow', 'quote', 'pill', 'badge']
   const textVariant = $derived(TEXT_VARIANTS.includes(String(component.variant ?? '')) ? String(component.variant) : '')
   const textValue = $derived(a2uiText(component, data, scope))
 
@@ -151,22 +160,27 @@
 {:else if !present}
   <!-- the data this component is conditional on is not there -->
 {:else if type === 'column'}
-  <div class="a2ui-basic-col" style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={grow}>
+  <div class="a2ui-basic-col {markerClass}" style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={grow}>
     {@render kids()}
   </div>
 {:else if type === 'row'}
-  <div class="a2ui-basic-row" style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={grow}>
+  <div class="a2ui-basic-row {markerClass}" style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={grow}>
     {@render kids()}
   </div>
 {:else if type === 'list'}
-  <div class="a2ui-list" style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={grow}>
+  <div class="a2ui-list {markerClass}" style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={grow}>
     {@render kids()}
   </div>
 {:else if type === 'card'}
   {@const kid = child(component.child)}
-  <div class="a2ui-basic-card" class:a2ui-feature={component.variant === 'feature'} style:flex-grow={grow}>
+  <div class="a2ui-basic-card {markerClass}" class:a2ui-feature={component.variant === 'feature'} style:flex-grow={grow}>
     {#if kid}<BasicA2UIComponent component={kid} {components} {data} {onDataChange} {onAction} {scope} depth={depth + 1} />{/if}
   </div>
+{:else if type === 'link'}
+  {@const kid = child(component.child)}
+  <A2UILink {component} {data} {scope} {grow}>
+    {#if kid}<BasicA2UIComponent component={kid} {components} {data} {onDataChange} {onAction} {scope} depth={depth + 1} />{/if}
+  </A2UILink>
 {:else if type === 'text'}
   <!-- Text that resolves to nothing draws nothing, so an optional field a Card
        binds leaves no blank line behind. -->
@@ -214,7 +228,7 @@
        is what that background colour is there for. Matches A2UI/BoxFit's own default. -->
   <img class="a2ui-image {component.variant || ''}" src={String(a2uiValue(component.url, data, scope) ?? '')} alt={String(a2uiValue(component.description, data, scope) ?? '')} style:object-fit={component.fit === 'scaleDown' ? 'scale-down' : component.fit || 'contain'} />
 {:else if type === 'icon'}
-  <span class="a2ui-icon" title={String(a2uiValue(component.name, data, scope) || '')}><Icon name={iconName} size={ICON_SIZE[sizeName]} /></span>
+  <span class="a2ui-icon {toneClass}" title={iconLabel}><Icon name={iconName} size={ICON_SIZE[sizeName]} /></span>
 {:else if type === 'video'}
   {#if youtubeEmbed}
     <iframe class="a2ui-video" src={youtubeEmbed} title="Video" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>

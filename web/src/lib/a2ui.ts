@@ -1,6 +1,7 @@
 import { nextItemId } from './ids.ts'
 import { fmtAgo, fmtClock, fmtDateTime } from './time.ts'
 import type { TimeValue } from './time.ts'
+import { safeUrl } from './url.ts'
 import type { ThreadItem } from '../schemas/events.ts'
 
 // An A2UI payload is an untyped dictionary — the catalog, not this module, gives
@@ -64,40 +65,6 @@ export type NewsStory = {
 
 export type DecisionOption = { name: string; tagline?: string; price?: string }
 export type DecisionCriterion = { label: string; values: string[]; best?: string }
-
-export type InboxThread = {
-  from: string
-  subject: string
-  when?: string
-  gist?: string
-  unread?: boolean
-  needsReply?: boolean
-  url?: string
-}
-
-export type AgendaEvent = {
-  title: string
-  start?: string
-  end?: string
-  location?: string
-  allDay?: boolean
-  next?: boolean
-  url?: string
-  joinUrl?: string
-}
-
-export type TaskDeliverable = { description: string; status: string }
-export type TaskRow = {
-  title: string
-  status: string
-  id?: string
-  schedule?: string
-  nextRun?: string
-  objective?: string
-  progress?: string
-  deliverables?: TaskDeliverable[]
-  error?: string
-}
 
 // CodingSession is synthesized by the backend, not authored by the model.
 export type CodingPlanStep = { content: string; status: string }
@@ -165,10 +132,19 @@ export type A2UITone = 'neutral' | 'muted' | 'accent' | 'positive' | 'negative'
 
 const TONES: readonly string[] = ['neutral', 'muted', 'accent', 'positive', 'negative']
 
+// A bound value put through the Card's own table of value → name. A value the
+// table does not name is left as it is.
+function named(raw: unknown, map: unknown): unknown {
+  const label = isRecord(map) ? map[String(raw)] : undefined
+  return label === undefined ? raw : label
+}
+
 /** The tone a component is drawn in: a word from the vocabulary, or a binding —
- *  a bound number takes its tone from its sign. */
+ *  a bound number takes its tone from its sign, and a bound word carrying a `map`
+ *  takes the tone that table names for it. */
 export function a2uiTone(tone: unknown, data: A2UIData = {}, scope = ''): A2UITone {
-  const value = a2uiValue(tone, data, scope)
+  const bound = a2uiValue(tone, data, scope)
+  const value = isRecord(tone) ? named(bound, tone.map) : bound
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value > 0 ? 'positive' : value < 0 ? 'negative' : 'neutral'
   }
@@ -200,9 +176,53 @@ export function a2uiText(component: A2UIComponent, data: A2UIData = {}, scope = 
   const raw = a2uiValue(component.text, data, scope)
   const format = FORMATS[str(component.format)]
   if (format) return format(raw as TimeValue)
-  const named = isRecord(component.map) ? component.map[String(raw)] : undefined
-  const value = named === undefined ? raw : named
+  const value = named(raw, component.map)
   return value == null || value === '' ? '' : String(value)
+}
+
+/** One Icon's glyph name: its bound value, put through the Card's own map — so a
+ *  row's status field can pick the mark that stands for it. */
+export function a2uiIconName(component: A2UIComponent, data: A2UIData = {}, scope = ''): string {
+  return str(named(a2uiValue(component.name, data, scope), component.map))
+}
+
+// ── Card links (ADR 0008) ───────────────────────────────────────────────────
+// A Card names one of the app's own things, or an external page; the shell opens it.
+
+export type A2UILinkKind = 'task' | 'chat' | 'file' | 'folder' | 'url'
+export type A2UILink = { kind: A2UILinkKind; value: string }
+
+// The Task and Chat ids the shell has listed; null for a list it has not polled yet.
+export type A2UIKnown = { tasks: readonly string[] | null; chats: readonly string[] | null }
+
+// The order a Link's targets are read in; the first one it names is the one it opens.
+const LINK_KINDS: readonly A2UILinkKind[] = ['task', 'chat', 'file', 'folder', 'url']
+
+// Whether a named id is gone: a list the shell holds and this is not in it.
+const missing = (known: readonly string[] | null, id: string): boolean =>
+  known !== null && !known.includes(id)
+
+/** The thing one Link points at, or null when it points at nothing that is there —
+ *  a deleted Task, a Chat that is gone, a scheme we will not follow. */
+export function a2uiLink(
+  component: A2UIComponent,
+  data: A2UIData = {},
+  scope = '',
+  known: A2UIKnown = { tasks: null, chats: null },
+): A2UILink | null {
+  for (const kind of LINK_KINDS) {
+    const value = str(a2uiValue(component[kind], data, scope))
+    if (!value) continue
+    if (kind === 'task') return missing(known.tasks, value) ? null : { kind, value }
+    if (kind === 'chat') return missing(known.chats, value) ? null : { kind, value }
+    if (kind === 'url') {
+      const safe = safeUrl(value)
+      return safe ? { kind, value: safe } : null
+    }
+    // A path is taken as given: the Files rail reports a file that has gone itself.
+    return { kind, value }
+  }
+  return null
 }
 
 export type A2UISpark = { line: string; area: string; endX: string; endY: string }
@@ -412,9 +432,6 @@ function itemTitle(kind: unknown, data: A2UIData = {}): string {
   const k = String(kind || '').toLowerCase()
   if (k === 'weatherpanel') return 'Weather view'
   if (k === 'decisionmatrix') return titleOr(data.topic, 'Decision')
-  if (k === 'taskprogress') return titleOr(data.title, 'Task status')
-  if (k === 'agendacard') return titleOr(data.title, 'Agenda')
-  if (k === 'inboxbrief') return titleOr(data.title, 'Inbox brief')
   if (k === 'newsdigest') return 'News digest'
   if (['column', 'row', 'list', 'card', 'text'].includes(k)) return titleOr(data.title, 'Interactive view')
   return 'Structured answer'

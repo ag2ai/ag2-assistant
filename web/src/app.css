@@ -518,10 +518,13 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .a2ui-cell { border: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 70%, var(--code) 30%); border-radius: 7px; padding: 10px; min-width: 0; font-size: 12.5px; line-height: 1.35; }
 .a2ui-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 6px; }
 .a2ui-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
-.a2ui-basic-col { display: flex; flex-direction: column; gap: 10px; }
-.a2ui-basic-row { display: flex; flex-wrap: wrap; gap: 10px; }
+/* min-width: 0 so a nested layout shrinks with the row it is in rather than
+   forcing it to wrap around its longest line. */
+.a2ui-basic-col { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.a2ui-basic-row { display: flex; flex-wrap: wrap; gap: 10px; min-width: 0; }
 .a2ui-basic-card { border: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 70%, var(--code) 30%); border-radius: 7px; padding: 10px; min-width: 0; }
 .a2ui-text { font-size: 12.5px; line-height: 1.4; color: var(--a2ui-ink, var(--ink)); overflow-wrap: anywhere; min-width: 0; }
+.a2ui-icon { display: inline-flex; color: var(--a2ui-muted, var(--muted)); }
 .a2ui-divider { height: 1px; background: var(--a2ui-rule, var(--line)); margin: 2px 0; align-self: stretch; }
 .a2ui-divider.strong { height: 2px; background: var(--a2ui-rule-strong, var(--ink)); }
 
@@ -561,7 +564,20 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 /* A pill is a chip rather than a step on the type scale: a short label a Card
    sets beside others — a filter, a section, a cadence. Its ink is its tone's. */
 .a2ui-t-pill { display: inline-flex; align-items: center; flex: none; align-self: flex-start; border: 1px solid var(--line); background: var(--surface); border-radius: var(--radius-pill); padding: 3px 9px; font-size: 11.5px; line-height: 1.35; }
+/* A badge is a status mark: one short word a Card sets against a row, outlined in
+   its own tone rather than in the surface's rule colour. */
+.a2ui-t-badge { display: inline-flex; align-items: center; flex: none; align-self: flex-start; border: 1px solid currentColor; border-radius: var(--radius-sm); padding: 1px 7px; font-family: var(--font-mono); font-size: 9px; font-weight: var(--fw-bold); letter-spacing: .14em; line-height: 1.6; text-transform: uppercase; }
 .a2ui-strong { font-weight: var(--fw-bold); }
+
+/* A marker: a rule down a layout's leading edge, in its own tone — the mark a Card
+   sets on the one row that matters. */
+.a2ui-marker { padding: 4px 8px 4px 12px; border-left: 2px solid currentColor; background: color-mix(in srgb, currentColor 6%, transparent); }
+
+/* A Card link: the row opens one of the app's own pages, or an external one. It
+   carries the ink of whatever it wraps until it is hovered. */
+.a2ui-link { display: inline-flex; align-items: center; gap: 5px; min-width: 0; margin: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; text-decoration: none; cursor: pointer; }
+.a2ui-link:hover :where(.a2ui-text, .a2ui-metric) { color: var(--a2ui-accent, var(--accent)); text-decoration: underline; text-decoration-color: currentColor; text-underline-offset: 3px; }
+.a2ui-link:focus-visible { outline: none; border-radius: var(--radius-sm); box-shadow: var(--focus-ring); }
 
 /* A metric: a value, optionally a unit, and the movement behind it. */
 .a2ui-metric { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-family: var(--font-mono); }
@@ -602,7 +618,6 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .a2ui-button:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .a2ui-image { display: block; width: 100%; max-height: 360px; border-radius: 7px; background: var(--code); }
 .a2ui-image.icon, .a2ui-image.avatar { width: 48px; height: 48px; }
-.a2ui-icon { display: inline-flex; color: var(--muted); }
 .a2ui-video { width: 100%; min-height: 220px; border: 0; border-radius: 7px; background: #000; }
 .a2ui-field { display: flex; flex-direction: column; gap: 6px; color: var(--ink); font-size: 12.5px; }
 .a2ui-field input, .a2ui-field textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 7px; padding: 8px 9px; background: var(--code); color: var(--ink); font: inherit; }

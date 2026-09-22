@@ -4,9 +4,6 @@
   import WeatherCard from './WeatherCard.svelte'
   import NewsWire from './NewsWire.svelte'
   import DecisionMatrix from './DecisionMatrix.svelte'
-  import TaskProgress from './TaskProgress.svelte'
-  import AgendaCard from './AgendaCard.svelte'
-  import InboxBrief from './InboxBrief.svelte'
   import CodingSession from './CodingSession.svelte'
   import A2UIComposing from './A2UIComposing.svelte'
   import { a2uiComposingSurfaceId, rows, str, withA2UIValue } from '../../lib/a2ui.ts'
@@ -28,9 +25,6 @@
       : type === 'weatherpanel' ? 'sun'
       : type === 'newsdigest' ? 'globe'
       : type === 'decisionmatrix' ? 'check'
-      : type === 'taskprogress' ? 'clock'
-      : type === 'agendacard' ? 'clock'
-      : type === 'inboxbrief' ? 'globe'
       : 'sparkles'
   )
   const eyebrow = $derived(
@@ -38,9 +32,6 @@
       : type === 'weatherpanel' ? 'Live forecast'
       : type === 'newsdigest' ? 'News brief'
       : type === 'decisionmatrix' ? 'Decision'
-      : type === 'taskprogress' ? 'Task status'
-      : type === 'agendacard' ? 'Agenda'
-      : type === 'inboxbrief' ? 'Inbox'
       : 'A2UI'
   )
   const displayTitle = $derived(item.title === 'Briefing' ? 'Interactive view' : item.title || eyebrow)
@@ -80,7 +71,7 @@
   }
 
   const emptyAnswerBrief = $derived(
-    !['column', 'row', 'list', 'card', 'text', 'divider', 'checkbox', 'button', 'image', 'icon', 'video', 'textfield', 'choicepicker', 'slider', 'datetimeinput', 'weatherpanel', 'newsdigest', 'decisionmatrix', 'taskprogress', 'agendacard', 'inboxbrief', 'codingsession'].includes(type) &&
+    !['column', 'row', 'list', 'card', 'text', 'divider', 'checkbox', 'button', 'image', 'icon', 'video', 'textfield', 'choicepicker', 'slider', 'datetimeinput', 'weatherpanel', 'newsdigest', 'decisionmatrix', 'codingsession'].includes(type) &&
     !list(data.sections).length &&
     genericText(data.topic) &&
     genericText(data.title) &&
@@ -99,12 +90,6 @@
   <WeatherCard {data} />
 {:else if type === 'decisionmatrix' && list(data.options).length}
   <DecisionMatrix {data} />
-{:else if type === 'taskprogress' && list(data.tasks).length}
-  <TaskProgress {data} />
-{:else if type === 'agendacard'}
-  <AgendaCard {data} />
-{:else if type === 'inboxbrief' && list(data.threads).length}
-  <InboxBrief {data} />
 {:else if type === 'codingsession'}
   <CodingSession {data} />
 {:else}

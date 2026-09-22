@@ -2,7 +2,7 @@
 // chat shows while that happens. Run: node --test src/lib
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { a2uiComposingSurfaceId, a2uiPresent, a2uiText, a2uiTone, a2uiValue, actionContext, applyA2UIMessage, bindingPath, childSlots, metricParts, sparkPath, splitA2UIText, withA2UIValue } from './a2ui.ts'
+import { a2uiComposingSurfaceId, a2uiIconName, a2uiLink, a2uiPresent, a2uiText, a2uiTone, a2uiValue, actionContext, applyA2UIMessage, bindingPath, childSlots, metricParts, sparkPath, splitA2UIText, withA2UIValue } from './a2ui.ts'
 import type { ThreadItem } from '../schemas/events.ts'
 
 const PROSE = "Here's the current tech picture on OzBargain."
@@ -399,4 +399,82 @@ test('a condition can name alternatives, and any one of them is enough', () => {
   assert.equal(a2uiPresent([{ path: '/source' }, { path: '/asOf' }], { asOf: '2026-01-01' }), true)
   assert.equal(a2uiPresent([{ path: '/source' }, { path: '/asOf' }], { source: 'Yahoo' }), true)
   assert.equal(a2uiPresent([{ path: '/source' }, { path: '/asOf' }], {}), false)
+})
+
+// ── Card links (ticket 07) ──────────────────────────────────────────────────
+
+const KNOWN = { tasks: ['t_a1b2c3'], chats: ['web-7f3a'] }
+
+test('a row names the task it describes, read off the row it is drawn in', () => {
+  const data = { tasks: [{ id: 't_a1b2c3' }] }
+
+  assert.deepEqual(a2uiLink({ component: 'Link', task: { path: './id' } }, data, '/tasks/0', KNOWN), {
+    kind: 'task',
+    value: 't_a1b2c3',
+  })
+})
+
+test('a link to a task or a chat that is no longer there is no link at all', () => {
+  assert.equal(a2uiLink({ component: 'Link', task: 't_gone' }, {}, '', KNOWN), null)
+  assert.equal(a2uiLink({ component: 'Link', chat: 'web-gone' }, {}, '', KNOWN), null)
+  assert.deepEqual(a2uiLink({ component: 'Link', chat: 'web-7f3a' }, {}, '', KNOWN), {
+    kind: 'chat',
+    value: 'web-7f3a',
+  })
+})
+
+test('a link waits for the lists rather than reading "not polled yet" as gone', () => {
+  const cold = { tasks: null, chats: null }
+
+  assert.deepEqual(a2uiLink({ component: 'Link', task: 't_a1b2c3' }, {}, '', cold), {
+    kind: 'task',
+    value: 't_a1b2c3',
+  })
+})
+
+test('a file and a folder are linked by path, which the shell does not list', () => {
+  assert.deepEqual(a2uiLink({ component: 'Link', file: 'reports/q3.md' }, {}, '', KNOWN), {
+    kind: 'file',
+    value: 'reports/q3.md',
+  })
+  assert.deepEqual(a2uiLink({ component: 'Link', folder: 'reports' }, {}, '', KNOWN), {
+    kind: 'folder',
+    value: 'reports',
+  })
+})
+
+test('an external link is followed only on http(s)', () => {
+  const url = (value: string) => a2uiLink({ component: 'Link', url: value }, {}, '', KNOWN)
+
+  assert.deepEqual(url('https://mail.google.com/mail/u/0/#all/19'), {
+    kind: 'url',
+    value: 'https://mail.google.com/mail/u/0/#all/19',
+  })
+  assert.equal(url('javascript:alert(1)'), null)
+  assert.equal(url('data:text/html,<script>'), null)
+})
+
+test('a link whose target is not in the data points at nothing', () => {
+  const layout = { component: 'Link', url: { path: './joinUrl' } }
+
+  assert.equal(a2uiLink(layout, { events: [{ title: 'Sync' }] }, '/events/0', KNOWN), null)
+})
+
+test('a status word picks the tone its card names for it', () => {
+  const tone = { path: './status', map: { active: 'positive', failed: 'negative' } }
+  const data = { tasks: [{ status: 'active' }, { status: 'failed' }, { status: 'retired' }] }
+
+  assert.equal(a2uiTone(tone, data, '/tasks/0'), 'positive')
+  assert.equal(a2uiTone(tone, data, '/tasks/1'), 'negative')
+  // A status the table does not name is not a tone either — it stays neutral.
+  assert.equal(a2uiTone(tone, data, '/tasks/2'), 'neutral')
+})
+
+test('an icon draws the mark its card names for a value', () => {
+  const icon = { component: 'Icon', name: { path: './status' }, map: { done: 'check', failed: 'x' } }
+  const data = { items: [{ status: 'done' }, { status: 'failed' }, { status: 'odd' }] }
+
+  assert.equal(a2uiIconName(icon, data, '/items/0'), 'check')
+  assert.equal(a2uiIconName(icon, data, '/items/1'), 'x')
+  assert.equal(a2uiIconName(icon, data, '/items/2'), 'odd')
 })
