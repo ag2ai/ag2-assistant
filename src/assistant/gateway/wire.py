@@ -9,8 +9,8 @@ resolves the class by its fully-qualified name (dynamic import).
 Audio events travel as raw binary frames, not JSON — `is_binary_event` flags them.
 
 What is *persisted* is `to_wire(event)`; what is *sent to a client* is
-`to_wire(as_drawn(event))`, so a Card instance is stored as the fields its author
-filled in and drawn from the Card file on every read.
+`to_wire(as_drawn(event))`, so a surface holding a Card instance — the server-filled
+coding session, or one stored before that Card was a file — is drawn on every read.
 """
 
 from ag2.events._serialization import qualified_name

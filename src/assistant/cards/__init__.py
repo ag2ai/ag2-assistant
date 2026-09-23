@@ -208,7 +208,7 @@ def expand_components(
     layout declares, plus the ``(pointer, value)`` writes the instances' fields make."""
     if not cards:
         return list(components), []
-    root = _root_id(components)
+    root = root_component(components).get("id")
     expanded: list[Any] = []
     writes: list[tuple[str, Any]] = []
     for component in components:
@@ -226,10 +226,11 @@ def _kind(component: Any) -> str:
     return str(component.get("component") or "") if isinstance(component, dict) else ""
 
 
-def _root_id(components: list[Any]) -> str | None:
-    """The component the surface is rooted at — the same one every renderer picks."""
-    ids = [component.get("id") for component in components if isinstance(component, dict)]
-    return "root" if "root" in ids else (ids[0] if ids else None)
+def root_component(components: list[Any]) -> dict[str, Any]:
+    """The component a surface is rooted at — the same one every renderer picks."""
+    nodes = [component for component in components if isinstance(component, dict)]
+    rooted = next((node for node in nodes if node.get("id") == LAYOUT_ROOT), None)
+    return rooted or (nodes[0] if nodes else {})
 
 
 def _draw(

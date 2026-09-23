@@ -1307,6 +1307,27 @@ def test_every_bundled_card_draws_only_primitives_whole_or_nested():
             assert kinds <= CARD_VOCABULARY, (name, kinds - CARD_VOCABULARY)
 
 
+def test_a_drawn_card_persists_its_fields_and_none_of_its_layout():
+    # The data model is what the Card's author filled in. A layout property — the
+    # primitive's variant, the id of its child — is structure and must not land there.
+    cards = bundled_cards()
+    for name, card in cards.items():
+        drawn = expand_card_messages(
+            _emit({"id": "root", "component": name, **card.example}), cards
+        )
+        data = durable_surfaces_from_messages(drawn)[0].data
+
+        assert data == card.example, name
+
+
+def test_a_plain_layout_root_contributes_no_data():
+    surface = durable_surfaces_from_messages(
+        _emit({"id": "root", "component": "Column", "children": ["one"]})
+    )[0]
+
+    assert surface.data == {}
+
+
 def test_a_surface_is_titled_by_its_data_model_not_by_what_it_draws():
     titled = durable_surfaces_from_messages(
         _emit({"id": "root", "component": "Checklist", "title": "Ship it", "items": ["Tag it"]})

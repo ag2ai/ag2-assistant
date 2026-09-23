@@ -26,10 +26,8 @@ from pathlib import Path
 
 from assistant.permissions import _lock_exclusive, _unlock
 
-# A layer (ADR 0016 glossary). Bundled ships with the app (read-only); Global is
-# user-installed at the Root and shared by every profile; Profile belongs to one
-# profile and is visible to it alone. Named here so the strings live in one place,
-# the way Folders name their modes (folders.READ).
+# A layer (ADR 0016 glossary): Bundled ships with the app read-only, Global is
+# installed at the Root for every profile, Profile belongs to one profile alone.
 ORIGIN_BUNDLED = "bundled"
 ORIGIN_GLOBAL = "global"
 ORIGIN_PROFILE = "profile"

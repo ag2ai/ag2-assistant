@@ -15,6 +15,7 @@ from assistant.cards import (
     expand_card_messages,
     expand_components,
     load_cards,
+    root_component,
 )
 from assistant.events import A2UISurface
 
@@ -124,7 +125,11 @@ def _message_dict(message: Any) -> dict:
 
 
 def _component_data(component: dict, existing: dict | None = None) -> dict:
+    """A Card instance's fields as the surface's data model. A primitive root draws
+    layout rather than holding data, so it contributes none."""
     data = dict(existing or {})
+    if component.get("component") in CARD_VOCABULARY:
+        return data
     for key, value in component.items():
         if key not in {"id", "component", "type", "accessibility"}:
             data[key] = value
@@ -220,10 +225,7 @@ def durable_surfaces_from_messages(messages: list[Any]) -> list[A2UISurface]:
                 }
                 order.append(surface_id)
             components = update.get("components") or []
-            root = next(
-                (c for c in components if c.get("id") == "root"),
-                components[0] if components else {},
-            )
+            root = root_component(components)
             if root:
                 states[surface_id]["component"] = {**root, "_components": components}
                 states[surface_id]["components"] = components
@@ -409,7 +411,7 @@ def expanded_card_surface(surface: A2UISurface, cards: dict[str, Card]) -> A2UIS
     data = surface.data
     for path, value in writes:
         data = update_data_value(data, path, value)
-    root = next((c for c in expanded if c.get("id") == "root"), expanded[0] if expanded else {})
+    root = root_component(expanded)
     return A2UISurface(
         surface.surface_id,
         catalog_id=surface.catalog_id,

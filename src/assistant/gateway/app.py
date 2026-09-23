@@ -3629,9 +3629,8 @@ def create_app(
                         )
                         continue
                     if action is None:
-                        # AG2's standard fallback for an undeclared Button action is
-                        # an agent turn. Persist the data model the client holds for
-                        # this instance, then describe the click to the agent.
+                        # An undeclared Button action falls back to an agent turn:
+                        # persist the model the client holds, then describe the click.
                         model = _clicked_instance_model(data.get("state"), click.surface_id)
                         if model is not None and _oversized_model(model):
                             await websocket.send_json(
