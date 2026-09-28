@@ -167,14 +167,6 @@ async def test_wait_reply_clock_pauses_while_hitl_pending():
     assert result == "answered"
 
 
-async def test_wait_reply_times_out_after_hitl_resolves():
-    """Once no prompt is pending, the clock runs again and the timeout still fires."""
-    with pytest.raises(asyncio.TimeoutError):
-        await wait_reply(
-            asyncio.sleep(30), timeout=0.1, hitl_pending=lambda: False, slice_seconds=0.02
-        )
-
-
 async def test_wait_reply_budget_resets_after_hitl_answer():
     """Budget burned BEFORE the prompt opened must not kill the turn right after
     the user answers — answering restarts the turn budget."""

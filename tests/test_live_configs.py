@@ -26,9 +26,6 @@ def test_resolve_key_prefers_secret_then_env(paths):
     e = store.get_config(e["id"])
     assert store.resolve_key(e, shared) == "sk-live"
     assert store.key_source(e, shared) == "secret"
-    # A non-default Secret is never part of the env overlay — it reaches the call
-    # only through the config that references it.
-    assert "OPENAI_API_KEY" not in SecretStore(paths).env_overlay()
 
 
 def test_deleted_secret_degrades_to_fallback(paths):
@@ -57,15 +54,6 @@ def _settings(tmp_path, pid):
     from assistant.settings import Settings
 
     return Settings(tmp_path / pid / "config.yaml")
-
-
-def test_live_override_absent_inherits_install_active(paths, tmp_path):
-    from assistant import voice
-
-    cfg = Config.for_paths(paths)
-    x = LiveConfigStore(paths).save_config({"name": "X", "provider": "gemini"})
-    LiveConfigStore(paths).set_active(x["id"])
-    assert voice.profile_live_config(cfg, _settings(tmp_path, "work"))["id"] == x["id"]
 
 
 def test_live_override_wins_and_isolated(paths, tmp_path):

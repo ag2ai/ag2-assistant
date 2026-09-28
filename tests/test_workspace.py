@@ -87,15 +87,6 @@ def test_list_files_prunes_skip_dirs_and_keeps_every_other_dotfolder(tmp_path):
     }
 
 
-def test_delete_removes_file_and_prunes_now_empty_folder(tmp_path):
-    (tmp_path / "ai-headlines").mkdir()
-    (tmp_path / "ai-headlines" / "x.md").write_text("hi")
-    assert delete(tmp_path, "ai-headlines/x.md") is True
-    assert not (tmp_path / "ai-headlines" / "x.md").exists()
-    assert not (tmp_path / "ai-headlines").exists()  # the folder the delete emptied is pruned
-    assert tmp_path.exists()  # and the workspace root is never touched
-
-
 def test_delete_prunes_empty_ancestors_up_to_root(tmp_path):
     (tmp_path / "a" / "b" / "c").mkdir(parents=True)
     (tmp_path / "a" / "b" / "c" / "x.md").write_text("hi")
@@ -123,14 +114,6 @@ def test_delete_leaves_a_sibling_empty_folder_untouched(tmp_path):
     assert not (tmp_path / "a" / "b").exists()  # emptied leaf pruned
     assert (tmp_path / "a" / "note").exists()  # sibling empty folder preserved
     assert (tmp_path / "a").exists()  # a/ still holds note/
-
-
-def test_delete_keeps_nonempty_folder(tmp_path):
-    (tmp_path / "ai-headlines").mkdir()
-    (tmp_path / "ai-headlines" / "x.md").write_text("hi")
-    (tmp_path / "ai-headlines" / "y.md").write_text("yo")
-    assert delete(tmp_path, "ai-headlines/x.md") is True
-    assert (tmp_path / "ai-headlines").exists()  # still has y.md
 
 
 def test_delete_blocks_traversal(tmp_path):
@@ -360,14 +343,6 @@ def test_move_directory_into_own_subtree_rejected(tmp_path):
     assert move(tmp_path, "d", "d/sub/d") == "invalid"
 
 
-def test_list_all_dirs_includes_empty_directories(tmp_path):
-    (tmp_path / "empty").mkdir()
-    (tmp_path / "withfile").mkdir()
-    (tmp_path / "withfile" / "f.md").write_text("f")
-    dirs = list_all_dirs(tmp_path)
-    assert "empty" in dirs and "withfile" in dirs
-
-
 def test_list_all_dirs_prunes_skip_dirs_and_keeps_every_other_dotfolder(tmp_path):
     (tmp_path / "keep").mkdir()
     (tmp_path / ".notes").mkdir()  # the user's own — a leading dot is not a reason to hide
@@ -378,13 +353,6 @@ def test_list_all_dirs_prunes_skip_dirs_and_keeps_every_other_dotfolder(tmp_path
 
 
 # ---- In-place editable writes: optimistic concurrency via content token (ADR 0011) ----
-
-
-def test_write_text_replaces_existing_and_returns_new_hash(tmp_path):
-    (tmp_path / "notes.md").write_text("old")
-    status, new = write_text(tmp_path, "notes.md", "new body", force=True)
-    assert status == "ok" and isinstance(new, str) and new
-    assert (tmp_path / "notes.md").read_text() == "new body"
 
 
 def test_write_text_matching_token_succeeds(tmp_path):

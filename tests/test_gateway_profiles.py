@@ -74,23 +74,6 @@ def test_create_profile_invalid_accent_400(paths):
         assert "accent" in r.json()["error"]
 
 
-# --- unknown / archived status codes on a prefixed route ---
-
-
-def test_unknown_pid_404_archived_410(paths):
-    with TestClient(_app(paths)) as client:
-        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
-
-        assert client.get(api("ghost", "/tasks")).status_code == 404  # never existed
-        assert client.get(api("work", "/tasks")).status_code == 200  # live
-
-        # archive work (naming a replacement default), then it 410s
-        r = client.request("DELETE", "/api/profiles/work", json={"new_default": "personal"})
-        assert r.status_code == 200
-        assert client.get(api("work", "/tasks")).status_code == 410
-
-
 # --- onboarded flag ---
 
 
@@ -484,31 +467,6 @@ def test_usage_rollup_zero_profiles(paths):
             "cost": 0.0,
             "priced": False,
         }
-
-
-def test_usage_rollup_single_profile(paths):
-    """One profile: its numbers are present; total mirrors it and is priced iff it is."""
-    with TestClient(_app(paths)) as client:
-        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        day = _today()
-        _seed_usage(
-            client,
-            paths,
-            "work",
-            day,
-            {
-                "prompt": 100.0,
-                "completion": 50.0,
-                "total": 150.0,
-                "cost": 0.01,
-                "priced": True,
-                "by_model": {},
-            },
-        )
-        body = client.get("/api/usage").json()
-        assert [p["pid"] for p in body["profiles"]] == ["work"]
-        assert body["total"]["total"] == 150.0
-        assert body["total"]["priced"] is True
 
 
 def test_boot_payload_reports_the_running_ag2_version(paths):

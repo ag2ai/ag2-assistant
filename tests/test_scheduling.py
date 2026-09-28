@@ -1,13 +1,5 @@
-"""Task scheduling — cron recurrence parsing utilities.
-
-Note: the old `validate_schedule`/`first_occurrence` helpers and the
-create(status=..., scheduled_for=...)-shaped `TaskStore`/`TaskStatus` this file
-used to also exercise were removed by the TaskService v2 rewrite (schedules are
-now validated via `normalize_schedule`/`ValueError`, and the `Scheduler`
-poll-loop is covered against the new Task model in test_task_scheduling.py).
-The cron-parsing utilities below (`normalize_cron`, `describe_cron`, `is_due`,
-`next_occurrence`) are unchanged, so their tests stay as-is.
-"""
+"""Cron recurrence parsing: ``normalize_cron``, ``describe_cron``, ``is_due`` and
+``next_occurrence``."""
 
 from datetime import datetime, timedelta
 

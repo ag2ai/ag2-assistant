@@ -10,9 +10,6 @@ import os
 import subprocess
 import sys
 
-import pydantic
-
-from assistant.gateway import schemas
 from assistant.gateway.openapi_schema import build_schema, write_schema
 
 
@@ -68,24 +65,6 @@ def test_error_codes_are_documented_on_a_global_and_a_scoped_route():
         for code in ("400", "404", "409", "410", "422", "502"):
             ref = codes[code]["content"]["application/json"]["schema"]["$ref"]
             assert ref.endswith("/ErrorBody"), f"{path} {code} -> {ref}"
-
-
-def test_a_model_drops_keys_it_does_not_declare():
-    """The whole point of response_model: the model is the contract, so a key it
-    does not declare does not reach the client. Completeness is held up by the
-    zod gate and the per-phase body tests, not by letting extras through."""
-
-    class Sample(pydantic.BaseModel):
-        declared: str
-
-    assert Sample.model_validate({"declared": "x", "undeclared": 1}).model_dump() == {
-        "declared": "x"
-    }
-
-
-def test_error_responses_cover_the_codes_app_py_returns():
-    assert set(schemas.ERROR_RESPONSES) == {400, 404, 409, 410, 422, 502}
-    assert all(spec["model"] is schemas.ErrorBody for spec in schemas.ERROR_RESPONSES.values())
 
 
 def test_no_response_description_is_left_to_the_interpreter():

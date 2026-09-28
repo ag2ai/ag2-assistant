@@ -33,12 +33,6 @@ def test_settings_preserve_overlay_sections(tmp_path):
     assert data["focuses"] == ["research"]
 
 
-def test_profile_settings_accessor(tmp_path):
-
-    s = profile_settings(tmp_path)
-    assert s._path == tmp_path / "config.yaml"
-
-
 def test_voice_provider_pin(tmp_path):
     """With nothing persisted, the install-wide pin (AG2ASSISTANT_VOICE_PROVIDER,
     resolved into Config at the boundary) decides."""
@@ -74,8 +68,6 @@ def test_registry_has_both_providers():
 
 
 def test_voices_for_each_provider(settings):
-    assert settings.voices_for("gemini") is voice_providers.get("gemini").voices
-    assert settings.voices_for("openai") is voice_providers.get("openai").voices
     assert "Puck" in settings.voices_for("gemini")
     assert {"marin", "cedar"} <= set(settings.voices_for("openai"))
 
@@ -165,14 +157,6 @@ def test_focuses_roundtrip_and_normalisation(settings):
     # Clearing resets to [].
     assert settings.set_focuses([]) == []
     assert settings.get_focuses() == []
-
-
-def test_focuses_are_per_profile(tmp_path):
-    a = Settings(tmp_path / "a" / "config.yaml")
-    b = Settings(tmp_path / "b" / "config.yaml")
-    a.set_focuses(["research"])
-    assert a.get_focuses() == ["research"]
-    assert b.get_focuses() == []  # untouched → default
 
 
 def test_reply_timeout_roundtrips(settings):

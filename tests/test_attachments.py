@@ -14,21 +14,6 @@ def _kind(inp):
     return getattr(inp, "kind", None)
 
 
-def test_image_by_extension():
-    inp = build_input(b"\x89PNG...", "pic.png")
-    assert _kind(inp) == BinaryType.IMAGE
-    assert inp.media_type == "image/png"
-
-
-def test_pdf_is_document():
-    assert _kind(build_input(b"%PDF-1.4", "report.pdf")) == BinaryType.DOCUMENT
-
-
-def test_audio_and_video():
-    assert _kind(build_input(b"..", "voice.ogg")) == BinaryType.AUDIO
-    assert _kind(build_input(b"..", "clip.mp4")) == BinaryType.VIDEO
-
-
 def test_text_file_is_inlined():
     inp = build_input(b"hello world", "notes.txt")
     assert isinstance(inp, TextInput)

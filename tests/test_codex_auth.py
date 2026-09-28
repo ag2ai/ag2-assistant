@@ -211,30 +211,6 @@ def test_default_headers_omits_missing():
 # --- model_config wiring ---------------------------------------------------- #
 
 
-def test_model_config_subscription_routes_to_backend(auth, paths):
-    auth._store_tokens(
-        {
-            "access_token": "ACCESS",
-            "refresh_token": "R",
-            "id_token": _fake_jwt({"chatgpt_account_id": "acc"}),
-            "expires_in": 3600,
-        }
-    )
-    cfg = resolve_config(
-        {"AG2ASSISTANT_LLM_PROVIDER": "openai", "AG2ASSISTANT_OPENAI_AUTH_MODE": "subscription"},
-        paths,
-    )
-    mc = agent.model_config(cfg)
-    assert type(mc).__name__ == "OpenAIResponsesConfig"
-    assert mc.base_url == codex_auth.BACKEND_BASE
-    assert mc.api_key == "ACCESS"  # SDK sends this as Authorization: Bearer
-    assert mc.default_headers["chatgpt-account-id"] == "acc"
-    # ChatGPT backend requires store=false (rejects server-side response storage)
-    # and streaming (rejects non-streaming requests) — both forced, both its rules.
-    assert mc.store is False
-    assert mc.streaming is True
-
-
 def test_model_config_subscription_merges_advanced_options(auth, paths):
     """The Advanced (JSON) options of a subscription config still apply — but the
     fields the subscription owns (endpoint, token, headers, streaming, store) are
@@ -261,9 +237,12 @@ def test_model_config_subscription_merges_advanced_options(auth, paths):
         "store": True,  # forced back off (backend rejects it)
     }
     mc = agent.model_config(cfg)
+    assert type(mc).__name__ == "OpenAIResponsesConfig"
     assert mc.max_output_tokens == 2048
     assert mc.base_url == codex_auth.BACKEND_BASE
-    assert mc.api_key == "ACCESS"
+    assert mc.api_key == "ACCESS"  # SDK sends this as Authorization: Bearer
+    assert mc.default_headers["chatgpt-account-id"] == "acc"
+    # ChatGPT backend requires store=false and streaming — both forced, both its rules.
     assert mc.streaming is True
     assert mc.store is False
 

@@ -151,7 +151,7 @@ def test_remember_tool_universal_scope_shared(root, paths):
         b_ctx = universal_memory_guidance(b_cfg)
         assert "Name is TestUser" in a_ctx
         assert "Name is TestUser" in b_ctx
-        assert "shared across all profiles" in a_ctx.lower() or "shared across" in a_ctx
+        assert "shared across all profiles" in a_ctx
 
         # The persona note is NOT in the universal layer, nor in B's context
         assert "A prefers bullet points" not in client.get("/api/memory").json()["text"]
@@ -289,13 +289,6 @@ def test_skills_dir_isolated(registry, paths):
         assert a_cfg.skills_dir == registry.profile_dir(a) / "skills"
         assert b_cfg.skills_dir == registry.profile_dir(b) / "skills"
         assert a_cfg.skills_dir != b_cfg.skills_dir
-
-        # "install" a skill into A via config.skills_dir
-        a_cfg.skills_dir.mkdir(parents=True, exist_ok=True)
-        (a_cfg.skills_dir / "SKILL.md").write_text("# a-only skill")
-
-        assert (a_cfg.skills_dir / "SKILL.md").exists()
-        assert not (b_cfg.skills_dir / "SKILL.md").exists()
 
 
 # --- e2. skills: a Suppression in A is invisible to B; install-wide Disable hits both ---

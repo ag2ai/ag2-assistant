@@ -22,6 +22,8 @@ from assistant.acp.serve_ws import (
 from assistant.profiles import ProfileRegistry
 from tests.support.fakes import fake_agent_factory
 
+CREDENTIALED = {"GEMINI_API_KEY": "test-key"}
+
 
 def _free_port() -> int:
     """A loopback port nothing is listening on yet — released before the caller binds it."""
@@ -49,12 +51,22 @@ async def _wait_listening(host: str, port: int, timeout: float = 5.0) -> None:
 
 
 @contextlib.asynccontextmanager
-async def _running_server(paths, *, profile=None, host="127.0.0.1", token="", agent_factory=None):
+async def _running_server(
+    paths, *, profile=None, host="127.0.0.1", token="", agent_factory=None, env=None
+):
     """Run ``serve_ws`` as a background task on a fresh ephemeral port; cancel + drain
     it on exit, mirroring how a supervisor would stop one listener."""
     port = _free_port()
     task = asyncio.create_task(
-        serve_ws(profile, paths, host=host, port=port, token=token, agent_factory=agent_factory)
+        serve_ws(
+            profile,
+            paths,
+            host=host,
+            port=port,
+            token=token,
+            agent_factory=agent_factory,
+            env=env,
+        )
     )
     try:
         await _wait_listening(host, port)
@@ -65,19 +77,19 @@ async def _running_server(paths, *, profile=None, host="127.0.0.1", token="", ag
             await task
 
 
-async def test_ag2_remote_config_drives_the_served_agent_over_websocket(paths, monkeypatch):
+async def test_ag2_remote_config_drives_the_served_agent_over_websocket(paths):
     """End-to-end: ag2's own ``ACPRemoteConfig`` (the client this door is proven
     against) dials in over a real WebSocket with the shared token and gets the
     scripted reply back from a served, TestConfig-backed Agent."""
     ProfileRegistry(paths).create_profile("ws-test", "#336699")
-    # fixture profile has no real key; it stands in for a credentialed install
-    monkeypatch.setattr("assistant.acp.auth.profile_has_credentials", lambda config, env: True)
     scripted = fake_agent_factory(
         agent=lambda config, **kwargs: Ag2Agent(name="acp-ws-test", config=TestConfig("pong")),
     )
     token = "s3cret-listener-token"  # noqa: S105 - test fixture, not a real credential
 
-    async with _running_server(paths, token=token, agent_factory=scripted) as port:
+    async with _running_server(
+        paths, token=token, agent_factory=scripted, env=CREDENTIALED
+    ) as port:
         remote = ACPRemoteConfig(
             url=f"ws://127.0.0.1:{port}/acp",
             headers={"Authorization": f"Bearer {token}"},
@@ -174,20 +186,21 @@ async def test_ws_door_installs_owner_side_approvals(paths):
         assert _OwnerApprovalMiddleware in classes
 
 
-async def test_client_disconnect_closes_the_sessions_and_clears_live(paths, monkeypatch):
+async def test_client_disconnect_closes_the_sessions_and_clears_live(paths):
     """A client that simply quits must not leave its session (and the chat's live
     badge) alive forever: the SDK only clears its own registry on disconnect, so
     the guard aclose()s the connection's SessionStore when the socket closes."""
     from assistant.acp.chats import LIVE_SESSIONS
 
     ProfileRegistry(paths).create_profile("ws-drop", "#336699")
-    monkeypatch.setattr("assistant.acp.auth.profile_has_credentials", lambda config, env: True)
     scripted = fake_agent_factory(
         agent=lambda config, **kwargs: Ag2Agent(name="acp-ws-drop", config=TestConfig("ok")),
     )
     token = "s3cret-listener-token"  # noqa: S105 - test fixture, not a real credential
 
-    async with _running_server(paths, token=token, agent_factory=scripted) as port:
+    async with _running_server(
+        paths, token=token, agent_factory=scripted, env=CREDENTIALED
+    ) as port:
         remote = ACPRemoteConfig(
             url=f"ws://127.0.0.1:{port}/acp",
             headers={"Authorization": f"Bearer {token}"},

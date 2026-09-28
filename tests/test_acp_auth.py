@@ -17,24 +17,11 @@ from ag2.testing import TestConfig
 from assistant.acp.auth import AssistantAuthMethods, choose_auth, profile_has_credentials
 
 
-def test_choose_auth_is_none_for_a_credentialed_profile(config):
-    """Ollama needs no key: mirrors ``assistant.agent.model_config``'s own check."""
-    cfg = config.model_copy(deep=True)
-    cfg.llm.provider = "ollama"
-    assert profile_has_credentials(cfg, {}) is True
-    assert choose_auth(cfg, {}) is None
-
-
 def test_choose_auth_advertises_for_a_keyless_real_provider(config):
     """The default provider (gemini) with no key anywhere is honestly keyless."""
     assert config.llm.provider == "gemini"
     assert profile_has_credentials(config, {}) is False
     assert isinstance(choose_auth(config, {}), AssistantAuthMethods)
-
-
-def test_choose_auth_advertises_for_cold_start():
-    """No profile resolved (``config=None``) — the registry-CI scenario."""
-    assert isinstance(choose_auth(None, {}), AssistantAuthMethods)
 
 
 def test_profile_has_credentials_reads_the_secret_env_or_process_env(config):

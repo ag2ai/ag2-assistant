@@ -129,11 +129,8 @@ def build_self_tools(config, settings) -> list:
             lines.append(f"Voice: {settings.get_voice(provider)} ({provider})")
         except Exception:
             pass
-        try:
-            focuses = settings.get_focuses()
-            lines.append(f"Focus areas: {', '.join(focuses) if focuses else 'none set'}")
-        except Exception:
-            pass
+        focuses = settings.get_focuses()
+        lines.append(f"Focus areas: {', '.join(focuses) if focuses else 'none set'}")
 
         lines.append(f"Shell/code sandbox: {config.tools.sandbox}")
         lines.append(

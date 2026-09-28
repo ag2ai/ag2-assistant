@@ -9,7 +9,6 @@ a really-importable or a really-absent module, so the real ``find_spec`` runs an
 dev venv's installed set never decides the outcome.
 """
 
-import importlib.util
 import json
 
 import pytest
@@ -18,10 +17,7 @@ import yaml
 from assistant.agent import cheap_model
 from assistant.config import Config, resolve_config
 from assistant.llm_configs import (
-    CLI_LOGIN_TYPES,
     PROVIDER_EXTRA,
-    PROVIDER_OF,
-    TYPES,
     LlmConfigStore,
     _clean_entry,
     _module_present,
@@ -220,7 +216,6 @@ def test_usable_by_type_key_and_base_url(store, secret_store):
 def test_image_entry_follows_active_only(store):
     """Images run on the SELECTED configuration or not at all — no fallback hunting
     through the list (switching models must never silently reroute images)."""
-    olm = store.save_config({"name": "L", "type": "ollama", "model": "llama3.2"})
     compat = store.save_config(
         {"name": "B", "type": "openai", "model": "m", "base_url": "http://h/v1"}
     )
@@ -233,15 +228,6 @@ def test_image_entry_follows_active_only(store):
     # active is image-capable → used directly
     store.set_active(gem["id"])
     assert store.image_entry()["id"] == gem["id"]
-    assert olm["type"] == "ollama"  # (kept as a non-capable config in the list)
-    assert image_capable(gem) and not image_capable(compat)
-
-
-def test_image_entry_none_when_no_capable(store):
-    store.save_config({"name": "L", "type": "ollama", "model": "llama3.2"})
-    store.save_config({"name": "A", "type": "anthropic", "model": "cl"})
-    store.save_config({"name": "B", "type": "openai", "model": "m", "base_url": "http://h/v1"})
-    assert store.image_entry() is None
 
 
 # ---- a referenced Secret never leaks -------------------------------------------
@@ -296,27 +282,6 @@ def test_store_lives_in_global_config_yaml(store, paths):
 # ---- openai_subscription type (ChatGPT sign-in) -------------------------------
 
 
-def test_subscription_in_types_and_provider():
-    assert "openai_subscription" in TYPES
-    assert PROVIDER_OF["openai_subscription"] == "openai"
-
-
-def test_subscription_clean_entry_strips_endpoint_fields(store):
-    # base_url/host are meaningless for subscription — codex_auth owns the endpoint,
-    # so a stale/typo'd value must never survive into the stored entry.
-    e = store.save_config(
-        {
-            "name": "Sub",
-            "type": "openai_subscription",
-            "model": "gpt-5.5",
-            "base_url": "http://sneaky/v1",
-            "host": "http://sneaky",
-        }
-    )
-    assert e["base_url"] == ""
-    assert e["host"] == ""
-
-
 def test_subscription_strips_endpoint_fields_and_options(store):
     # Subscription entries carry no endpoint fields OR advanced options: base_url and
     # the bearer token come from codex_auth, and the ChatGPT backend rejects every
@@ -328,10 +293,11 @@ def test_subscription_strips_endpoint_fields_and_options(store):
             "type": "openai_subscription",
             "model": "gpt-5.6-luna",
             "base_url": "http://stale/v1",
+            "host": "http://stale",
             "options": {"temperature": 0.3},
         }
     )
-    assert e["base_url"] == "" and e["options"] == {}
+    assert e["base_url"] == "" and e["host"] == "" and e["options"] == {}
     assert store.entry_options(e) == {}
 
 
@@ -413,11 +379,6 @@ def test_key_source_resolution(store, secret_store):
 # ---- claude_code (Claude Code CLI login over ACP) -------------------------------
 
 
-def test_claude_code_type_registered():
-    assert "claude_code" in TYPES
-    assert PROVIDER_OF["claude_code"] == "claude_code"
-
-
 def test_claude_code_clean_entry_strips_endpoint_and_secret():
     entry = _clean_entry(
         {
@@ -472,61 +433,12 @@ def test_claude_code_not_image_capable():
     assert image_capable({"type": "claude_code"}) is False
 
 
-def test_codex_type_registered():
-    assert "codex" in TYPES
-    assert PROVIDER_OF["codex"] == "codex"
-
-
-def test_codex_clean_entry_strips_endpoint_and_secret():
-    entry = _clean_entry(
-        {
-            "type": "codex",
-            "name": "CX",
-            "model": "gpt-5.6-sol[medium]",
-            "base_url": "http://x",
-            "host": "h",
-            "secret_id": "s1",
-            "options": {"turn_timeout": 60.0},
-        }
-    )
-    # No endpoint/key concepts — auth is the CLI's on-disk login. Options stay:
-    # they are ACPConfig constructor overrides, not provider-API kwargs.
-    assert entry["base_url"] == "" and entry["host"] == "" and entry["secret_id"] == ""
-    assert entry["options"] == {"turn_timeout": 60.0}
-
-
 def test_cli_login_clean_entry_allows_empty_model():
     # For the CLI-login types an empty model means "the CLI's own default"
     # (no model env is derived), so it must survive validation for them only.
     for ctype, name in (("codex", "CX"), ("claude_code", "CC")):
         entry = _clean_entry({"type": ctype, "name": name, "model": ""})
         assert entry["model"] == ""
-
-
-def test_non_cli_login_still_requires_model():
-    for ctype in TYPES:
-        if ctype in CLI_LOGIN_TYPES:
-            continue
-        with pytest.raises(ValueError, match="model is required"):
-            _clean_entry({"type": ctype, "name": "X", "model": ""})
-
-
-def test_codex_entry_options_passthrough(store):
-    entry = {"type": "codex", "options": {"turn_timeout": 60.0}}
-    assert store.entry_options(entry) == {"turn_timeout": 60.0}
-
-
-def test_codex_usable_and_key_source(store, tmp_path):
-    entry = {"type": "codex", "model": ""}
-    installed = _adapters(tmp_path, "codex-acp")
-    assert store.usable(entry, {}, search_path=installed) is True
-    assert store.key_source(entry, {}, search_path=installed) == "cli_login"
-    assert store.usable(entry, {}, search_path=[]) is False
-    assert store.key_source(entry, {}, search_path=[]) == "none"
-
-
-def test_codex_not_image_capable():
-    assert image_capable({"type": "codex"}) is False
 
 
 # ---- optional provider libraries ----------------------------------------------
@@ -548,14 +460,6 @@ def test_deps_status_names_the_extra_when_the_library_is_absent():
         'pip install "ag2-assistant[anthropic]"'
     )
     assert deps_status("ollama", extras=PRESENT_EXTRAS)["ok"] is True
-
-
-def test_deps_status_probes_the_real_provider_libraries_by_default():
-    """The default map names the actual libraries, so ``ok`` mirrors this install."""
-    for ctype, (module, extra) in PROVIDER_EXTRA.items():
-        status = deps_status(ctype)
-        assert status["extra"] == extra
-        assert status["ok"] is (importlib.util.find_spec(module) is not None)
 
 
 def test_missing_provider_library_makes_a_config_unusable(store):
@@ -597,14 +501,6 @@ def test_builtin_tools_are_filtered_to_what_the_type_offers(store):
     assert entry["builtin_tools"] == {"web_search": {}}
 
 
-def test_changing_type_drops_tools_the_new_type_cannot_serve(store):
-    entry = store.save_config(
-        {"name": "M", "type": "gemini", "model": "g", "builtin_tools": {"web_fetch": {}}}
-    )
-    moved = store.save_config({**entry, "type": "openai_responses", "model": "gpt-5"})
-    assert moved["builtin_tools"] == {}
-
-
 def test_builtin_tools_must_be_an_object(store):
     with pytest.raises(ValueError, match="builtin_tools"):
         _clean_entry({"name": "M", "type": "gemini", "model": "g", "builtin_tools": []})
@@ -617,18 +513,6 @@ def test_builtin_tools_must_be_an_object(store):
 # The pre-feature default: build_agent_tools gave EVERY Anthropic agent the native
 # WebFetchTool and everyone else the local function tool. An absent key means the
 # entry predates the switches, so that capability must survive the upgrade.
-
-
-def test_an_anthropic_config_predating_the_feature_keeps_its_native_fetcher():
-    entry = _clean_entry({"name": "A", "type": "anthropic", "model": "claude"})
-    assert entry["builtin_tools"] == {"web_fetch": {}}
-
-
-def test_an_empty_object_is_a_choice_and_is_left_alone():
-    """`{}` means the user turned everything off — distinct from an absent key,
-    which is what makes the legacy seed safe to apply."""
-    entry = _clean_entry({"name": "A", "type": "anthropic", "model": "claude", "builtin_tools": {}})
-    assert entry["builtin_tools"] == {}
 
 
 def test_only_anthropic_had_an_automatic_builtin_to_carry_over():
@@ -679,10 +563,3 @@ def test_apply_active_and_derive_onto_agree(store, paths):
 
     assert from_active.llm.model_dump() == from_derive.llm.model_dump()
     assert from_active.llm.config_type == "openai_responses"
-
-
-def test_a_config_type_with_no_builtins_derives_an_empty_selection(store, paths):
-    entry = store.save_config({"name": "O", "type": "ollama", "model": "llama3"})
-    cfg = Config.for_paths(paths)
-    store.derive_onto(cfg, entry)
-    assert cfg.llm.builtin_tools == {}

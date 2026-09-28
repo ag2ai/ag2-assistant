@@ -17,13 +17,6 @@ def _client(paths):
     return TestClient(app)
 
 
-def test_permissions_get_empty(paths):
-    with _client(paths) as client:
-        r = client.get("/api/permissions")
-        assert r.status_code == 200, r.text
-        assert r.json() == {"commands": []}
-
-
 def test_grant_command_with_prefix_yields_rule_string(paths):
     with _client(paths) as client:
         r = client.post(

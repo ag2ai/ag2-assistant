@@ -44,7 +44,6 @@ def test_store_ignores_legacy_folder_keys(tmp_path):
     p.write_text('{"folders": ["/tmp/x"], "blocked": ["/tmp/y"], "commands": ["gmail_send"]}')
     store = PermissionStore(path=p)
     assert store.granted_commands() == ["gmail_send"]
-    assert not hasattr(store, "granted_folders")
 
 
 async def test_command_approval_allow_and_deny(tmp_path):

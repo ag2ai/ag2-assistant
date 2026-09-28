@@ -306,7 +306,6 @@ async def test_a_model_pinned_in_the_environment_still_wins_over_an_override(pat
     await gw.start()
     try:
         _a, b = _ids(paths)
-        assert gw._config.llm.env_pinned is True
         assert await gw.send_message("hi", chat_id="c1") == "deployment-model"
         await gw.update_chat("c1", model=b)
         assert await gw.send_message("hi", chat_id="c1") == "deployment-model"

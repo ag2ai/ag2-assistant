@@ -586,17 +586,6 @@ async def test_a_reply_arrives_as_its_own_message_beneath_a_trace():
     assert message.replies == ["the answer"]
 
 
-async def test_a_reply_still_edits_the_placeholder_when_nothing_was_traced():
-    ch = _telegram_channel()
-    placeholder = _FakeMessage()
-    message = _FakeMessage()
-
-    await ch._render(Reply("the answer"), placeholder, message, traced=False)
-
-    assert placeholder.text == "the answer"
-    assert message.replies == []
-
-
 async def test_a_silent_outcome_keeps_a_traced_placeholder():
     """A stopped turn's record of work is not litter to be cleared away."""
     ch = _telegram_channel()

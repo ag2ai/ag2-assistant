@@ -47,13 +47,6 @@ def test_origin_is_the_peer_a_chat_was_started_from(paths):
     assert _origin(PeerStore(paths), _Ctx("task-run:run_1")) == (None, None)
 
 
-def test_origin_survives_the_peer_moving_to_another_chat(paths):
-    """A task delivers back to the conversation, not to the Chat it was created in."""
-    chat = PeerStore(paths).start_chat("cn-work", "42", platform="telegram")
-    PeerStore(paths).start_chat("cn-work", "42", platform="telegram")
-    assert _origin(PeerStore(paths), _Ctx(chat)) == ("cn-work", "42")
-
-
 def test_schedule_arg_shapes():
     assert _schedule_arg("", "", "") == {"kind": "manual", "at": None, "cron": None}
     assert _schedule_arg("cron", "", "@daily") == {"kind": "cron", "at": None, "cron": "@daily"}

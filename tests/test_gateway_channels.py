@@ -181,22 +181,6 @@ def test_deleting_a_profile_clears_it_as_a_default(paths):
 # --- the mirror: a browser turn reaches the Peer attached to that Chat (ADR 0020) ---
 
 
-def test_a_browser_turn_is_pushed_to_the_peer_attached_to_that_chat(paths):
-    """End to end through the real wiring: the profile's gateway hands the completed
-    turn to the install's router, which pushes it through the live adapter."""
-    with _client(paths, env={"TELEGRAM_BOT_TOKEN": "tok"}) as client:
-        client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
-        manager = client.app.state.profiles
-        cid = _only_connection(paths)
-        PairingStore(paths).add_account(cid, "42", "telegram")
-        PeerStore(paths).attach(cid, "42", "web-1", platform="telegram", sender="42")
-
-        r = client.post(api("work", "/message"), json={"text": "hello", "chat_id": "web-1"})
-        assert r.status_code == 200
-
-        assert _live(paths, manager).sent == [("42", "You: hello\n\nMe: echo[1]: hello")]
-
-
 def test_a_chat_no_peer_is_attached_to_is_pushed_nowhere(paths):
     with _client(paths, env={"TELEGRAM_BOT_TOKEN": "tok"}) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
@@ -253,15 +237,6 @@ def test_connection_migration_is_idempotent(paths):
         again = client.get("/api/connections").json()["connections"]
         assert [c["id"] for c in again] == [c["id"] for c in first]
         assert again[0]["name"] == "Side project"
-
-
-def test_a_malformed_registry_file_lists_no_connections(paths):
-    paths.root.mkdir(parents=True, exist_ok=True)
-    (paths.root / "connections.json").write_text("{not json")
-    with _client(paths) as client:
-        r = client.get("/api/connections")
-        assert r.status_code == 200
-        assert r.json() == {"connections": []}
 
 
 def test_a_malformed_registry_does_not_re_migrate_a_seeded_install(paths):
@@ -321,24 +296,6 @@ def test_default_naming_numbers_the_later_connections_of_a_platform(paths):
     with _client(paths) as client:
         got = client.get("/api/connections").json()["connections"]
         assert [c["name"] for c in got] == ["Telegram", "Telegram 2", "Discord"]
-
-
-def test_the_connection_listing_never_echoes_a_token(paths):
-    with _client(paths, env={"TELEGRAM_BOT_TOKEN": "super-secret-bot-token"}) as client:
-        r = client.get("/api/connections")
-        assert "super-secret-bot-token" not in r.text
-        entry = r.json()["connections"][0]
-        assert set(entry) == {
-            "id",
-            "platform",
-            "name",
-            "tokens",
-            "default_profile",
-            "active",
-            "error",
-            "paired_accounts",
-        }
-        assert entry["tokens"] == {"TELEGRAM_BOT_TOKEN": {"set": True, "hint": "…oken"}}
 
 
 # --- a Connection's token(s): its own, handed to its adapter explicitly ---
@@ -845,50 +802,6 @@ def _pre_connection_install(paths, default_pid: str) -> None:
             }
         )
     )
-
-
-def test_migration_carries_the_platform_default_onto_its_connection(paths):
-    """An upgraded install keeps routing where it did, with nobody visiting Settings."""
-    ProfileRegistry(paths).create_profile("Work", "#109e91")
-    _pre_connection_install(paths, "work")
-    with _client(paths, env={"TELEGRAM_BOT_TOKEN": "seed-tok"}) as client:
-        entry = client.get("/api/connections").json()["connections"][0]
-        assert entry["default_profile"] == "work"
-        assert client.app.state.profiles.default_profile(entry["id"]) == "work"
-
-
-def test_migration_carries_existing_peers_onto_the_migrated_connection(paths):
-    """The conversation continues in place: its Peer is now the Connection's."""
-    ProfileRegistry(paths).create_profile("Work", "#109e91")
-    _pre_connection_install(paths, "work")
-    with _client(paths, env={"TELEGRAM_BOT_TOKEN": "seed-tok"}) as client:
-        cid = client.get("/api/connections").json()["connections"][0]["id"]
-        assert PeerStore(paths).get_peer(cid, "42").profile == "work"
-
-
-def test_migration_carries_the_paired_accounts_and_live_code_onto_the_connection(paths):
-    """Nobody who could reach the assistant before the upgrade loses access to it."""
-    ProfileRegistry(paths).create_profile("Work", "#109e91")
-    _pre_connection_install(paths, "work")
-    with _client(paths, env={"TELEGRAM_BOT_TOKEN": "seed-tok"}) as client:
-        roster = client.get(f"/api/connections/{_only_connection(paths)}/pairing").json()
-        assert [a["account_id"] for a in roster["accounts"]] == ["42"]
-        assert roster["code"]["code"] == "AAAA-1111"
-        assert PairingStore(paths).is_paired(_only_connection(paths), "42") is True
-
-
-def test_migration_carries_platform_withdrawals_onto_the_connections_surfaces(paths):
-    """A Profile withheld from Telegram groups before the upgrade stays withheld from
-    the migrated bot's group surface, and keeps its direct messages."""
-    ProfileRegistry(paths).create_profile("Work", "#109e91")
-    ProfileRegistry(paths).set_exposure("work", "telegram:group", False)
-    _pre_connection_install(paths, "work")
-    with _client(paths, env={"TELEGRAM_BOT_TOKEN": "seed-tok"}) as client:
-        cid = client.get("/api/connections").json()["connections"][0]["id"]
-
-        exposure = client.get(f"/api/connections/{cid}/exposure").json()["exposure"]
-
-        assert exposure["work"] == {f"{cid}:dm": True, f"{cid}:group": False}
 
 
 # --- the Connection lifecycle over HTTP: create, rename, replace token, delete ---

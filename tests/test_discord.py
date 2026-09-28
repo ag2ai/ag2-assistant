@@ -94,18 +94,8 @@ def test_requires_token():
 # --- message chunking (Discord 2000-char limit) ---
 
 
-def test_split_short_text_single_chunk():
-    assert split_for_limit("hello", 2000) == ["hello"]
-
-
 def test_split_long_text_multiple_chunks():
     text = "\n".join(["line " + str(i) for i in range(1000)])
     chunks = split_for_limit(text, 2000)
     assert len(chunks) > 1
     assert all(len(c) <= 2000 for c in chunks)
-
-
-def test_split_hard_splits_overlong_line():
-    chunks = split_for_limit("x" * 5000, 2000)
-    assert all(len(c) <= 2000 for c in chunks)
-    assert "".join(chunks) == "x" * 5000

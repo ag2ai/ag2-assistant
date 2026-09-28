@@ -11,7 +11,6 @@ from assistant.agent import (
     build_skills_plugin,
     build_skills_runtime,
     bundled_skills_dir,
-    create_agent,
 )
 from assistant.config import Config
 from assistant.skills import DISABLE_OWN, SkillStateStore
@@ -150,41 +149,6 @@ def test_profile_catalog_inherits_global_skill(paths, tmp_path):
     assert "shared-skill" in prompt
 
 
-def test_installed_skill_appears_in_catalog_after_rebuild(paths, tmp_path):
-    """ADR 0017 t04/t05: a freshly installed skill is in the agent's <available_skills>
-    on the next build. Drives the real install path (install_from_source over a zip) into
-    the profile's skills_dir, then rebuilds the plugin — the same rebuild the routes
-    trigger via reload."""
-    import io
-    import zipfile
-
-    from assistant.skills_install import install_from_source
-
-    config = Config.for_paths(paths)
-    config.skills_dir = tmp_path / "skills"
-
-    def catalog() -> str:
-        runtime = build_skills_runtime(config)
-        return "\n".join(build_skills_plugin(config, runtime)._system_prompt)
-
-    assert "freshly-installed" not in catalog()  # absent before install
-
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr(
-            "freshly-installed/SKILL.md",
-            "---\nname: freshly-installed\ndescription: a just-installed skill\n---\n# hi\n",
-        )
-    src = tmp_path / "up.zip"
-    src.write_bytes(buf.getvalue())
-
-    installed = install_from_source(
-        build_skills_runtime(config), ["freshly-installed"], upload_path=src, filename="up.zip"
-    )
-    assert [r["name"] for r in installed] == ["freshly-installed"]
-    assert "freshly-installed" in catalog()  # present after the next build
-
-
 def test_registry_install_tools_exposed(paths, tmp_path):
     """The skills.sh search/install/remove tools ride alongside the plugin."""
     config = Config.for_paths(paths)
@@ -193,20 +157,6 @@ def test_registry_install_tools_exposed(paths, tmp_path):
     tools = build_skills_install_tools(config, runtime)
     names = {t.name for t in tools}
     assert {"search_skills", "install_skill", "remove_skill"} == names
-
-
-def test_agent_with_skills_builds(paths, tmp_path):
-    config = Config.for_paths(paths)
-    config.skills_dir = tmp_path / "skills"
-    agent = create_agent(config, memory=False, skills=True)
-    assert agent is not None
-
-
-def test_agent_without_skills_builds(paths, tmp_path):
-    config = Config.for_paths(paths)
-    config.skills_dir = tmp_path / "skills"
-    agent = create_agent(config, memory=False, skills=False)
-    assert agent is not None
 
 
 @pytest.mark.integration

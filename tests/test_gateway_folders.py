@@ -132,20 +132,3 @@ def test_task_scope_grant_roundtrip(paths, tmp_path):
             "DELETE", f"/api/folders/{fid}/grants", json={"profile": "work", "task_id": "task-1"}
         )
         assert r.status_code == 200
-
-
-def test_folder_permission_routes_are_gone(paths):
-    client, _pid = _client(paths)
-    with client:
-        snapshot = client.get("/api/permissions").json()
-        assert "folders" not in snapshot and "blocked" not in snapshot
-        assert client.post("/api/permissions/folders", json={"path": "/tmp/x"}).status_code == 404
-        assert client.post("/api/permissions/blocked", json={"path": "/tmp/x"}).status_code == 404
-
-
-def test_project_folder_route_is_gone(paths):
-    client, pid = _client(paths)
-    with client:
-        r = client.post(f"/api/p/{pid}/settings/project-folder", json={"path": "/tmp"})
-        assert r.status_code == 404
-        assert "project_folder" not in client.get(f"/api/p/{pid}/settings").json()

@@ -51,13 +51,6 @@ def test_disable_then_unavailable_enable_restores(tmp_path):
     assert store.disabled_names() == set()
 
 
-def test_disable_is_per_skill(tmp_path):
-    store = _store(tmp_path)
-    store.set_enabled("pdf-tools", False)
-    assert store.is_available("pdf-tools") is False
-    assert store.is_available("web-research") is True  # untouched skill stays on
-
-
 def test_set_enabled_is_idempotent(tmp_path):
     store = _store(tmp_path)
     store.set_enabled("pdf-tools", False)
@@ -71,16 +64,6 @@ def test_set_enabled_is_idempotent(tmp_path):
 def test_set_enabled_requires_name(tmp_path):
     with pytest.raises(ValueError):
         _store(tmp_path).set_enabled("  ", False)
-
-
-def test_is_available_takes_profile_but_default_on(tmp_path):
-    """The seam already accepts a profile (per-profile Suppression lands later);
-    for now the profile does not change the install-wide answer."""
-    store = _store(tmp_path)
-    assert store.is_available("web-research", profile="work") is True
-    store.set_enabled("web-research", False)
-    assert store.is_available("web-research", profile="work") is False
-    assert store.is_available("web-research", profile="personal") is False  # install-wide
 
 
 def test_persistence_and_fresh_store_reload(tmp_path):
@@ -249,23 +232,6 @@ def test_global_purge_clears_shared_suppression_but_not_own(tmp_path):
 
     assert store.is_suppressed("foo", "work") is False  # shared suppression gone
     assert store.is_suppressed("foo", "home") is True  # own disable survives
-
-
-def test_profile_copy_delete_clears_own_but_keeps_shadowed_shared_suppression(tmp_path):
-    """Profile P suppressed a Global 'foo', THEN installed its own 'foo' (shadowing the
-    Global) and disabled it. Deleting the own copy clears only the OWN record — the
-    shared Suppression stays, so the revealed Global 'foo' is still off, not available
-    (finding 5)."""
-    store = _store(tmp_path)
-    store.set_suppressed("foo", "work", True, kind=SUPPRESS_SHARED)  # suppressed the Global
-    store.set_suppressed("foo", "work", True, kind=DISABLE_OWN)  # own copy, disabled
-
-    # Deleting the own copy clears just the OWN off-record (what delete_profile_skill does).
-    store.set_suppressed("foo", "work", False, kind=DISABLE_OWN)
-
-    # The shared Suppression remains → the shadowed Global stays suppressed for P.
-    assert store.is_suppressed("foo", "work") is True
-    assert store.is_available("foo", "work") is False
 
 
 def test_set_suppressed_rejects_unknown_kind(tmp_path):

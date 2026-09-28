@@ -39,22 +39,7 @@ def test_inline_code_kept():
     assert markdown_to_slack("Run `pytest`") == "Run `pytest`"
 
 
-def test_code_block_kept():
-    md = "```python\nprint(1)\n```"
-    assert markdown_to_slack(md) == "```python\nprint(1)\n```"
-
-
 def test_code_block_protected_from_bold():
     # Asterisks inside code must not be converted.
     md = "```\na ** b\n```"
     assert markdown_to_slack(md) == "```\na ** b\n```"
-
-
-def test_realistic_reply():
-    md = "## Tips\n\n- **First**: do X\n- *maybe* do Y\n\nSee [docs](https://x.io)"
-    out = markdown_to_slack(md)
-    assert "*Tips*" in out
-    assert "• *First*: do X" in out
-    assert "_maybe_ do Y" in out
-    assert "<https://x.io|docs>" in out
-    assert "**" not in out

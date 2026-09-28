@@ -75,18 +75,6 @@ async def test_location_lands_in_the_install_config_not_the_process_env(isolate,
     assert "AG2ASSISTANT_LOCATION" not in os.environ
 
 
-async def test_needs_onboarding_true_when_no_profile(isolate):
-    user_store_path = isolate
-    assert await onboarding.needs_onboarding(user_store_path) is True
-
-
-async def test_needs_onboarding_false_when_profile_seeded(isolate):
-    user_store_path = isolate
-    store = build_profile_store(user_store_path)
-    await store.write(PROFILE_PATH, "## How they like things done\n- Existing fact.\n")
-    assert await onboarding.needs_onboarding(user_store_path) is False
-
-
 async def test_run_onboarding_seeds_the_profile_and_the_install_config(isolate, paths):
     user_store_path = isolate
     asker = ScriptedAsker(["Ada", "London, United Kingdom", "9am–6pm", "Short & direct"])

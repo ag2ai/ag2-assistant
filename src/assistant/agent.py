@@ -448,10 +448,7 @@ def universal_memory_guidance(config: Config) -> str:
     ``focuses_guidance``'s read-settings-per-turn pattern) so an edit or a
     remember(scope="universal") shows up on the next turn without a reload — and so
     EVERY profile's agent injects the same identity facts. Empty doc → no section."""
-    try:
-        doc = read_profile_sync(config.root_dir / "user.db")
-    except Exception:
-        return ""
+    doc = read_profile_sync(config.root_dir / "user.db")
     if not doc.strip():
         return ""
     return "Who the user is (shared across all profiles):\n" + doc.strip()
@@ -464,10 +461,7 @@ def focuses_guidance(config: Config) -> str:
     persisted to that profile's ``config.yaml``. Read here (mirroring core.py's
     ``profile_settings(config.data_dir)`` pattern) so a reference-swap reload picks up
     changes on the next turn. Empty focuses → no line at all."""
-    try:
-        focuses = profile_settings(config.data_dir).get_focuses()
-    except Exception:
-        return ""
+    focuses = profile_settings(config.data_dir).get_focuses()
     if not focuses:
         return ""
     return "The user's focus areas for this profile: " + ", ".join(focuses) + "."

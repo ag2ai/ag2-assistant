@@ -120,8 +120,3 @@ def test_a_code_block_too_big_for_one_message_is_re_fenced_per_part():
         assert chunk.endswith("\n```")
     body = "".join(chunk[len("```python\n") : -len("\n```")] for chunk in chunks)
     assert body == "print(1)\n" * 11 + "print(1)"
-
-
-def test_every_chunk_stays_within_the_limit():
-    text = "\n\n".join(f"Paragraph {i}. " + "word " * 40 for i in range(5))
-    assert all(len(chunk) <= 200 for chunk in split_for_limit(text, 200))

@@ -152,7 +152,6 @@ async def test_recall_keeps_a_settled_run_that_has_no_summary(paths, tmp_path):
 
 
 async def test_recall_budget_drops_oldest_and_says_how_many(paths, tmp_path):
-    from assistant.gateway import tasks_service as ts
     from assistant.tasks.model import RunStatus
 
     gw = FakeGateway()
@@ -162,17 +161,12 @@ async def test_recall_budget_drops_oldest_and_says_how_many(paths, tmp_path):
     for i in range(6):
         r = await svc._store.create_run(t["id"])
         await svc._store.set_run_status(
-            r.id, RunStatus.COMPLETED, summary=f"outcome {i} " + "x" * 80
+            r.id, RunStatus.COMPLETED, summary=f"outcome {i} " + "x" * 5_000
         )
         ids.append(r.id)
 
-    monkey = ts._RECALL_BUDGET
-    ts._RECALL_BUDGET = 300  # room for a couple of rows, not six
-    try:
-        await svc.start_run(t["id"])
-        await asyncio.wait_for(svc._jobs_done(), 5)
-    finally:
-        ts._RECALL_BUDGET = monkey
+    await svc.start_run(t["id"])  # six 5k summaries overrun the 16k surface budget
+    await asyncio.wait_for(svc._jobs_done(), 5)
     surface = gw.sent[0]["surface"]
     assert ids[-1] in surface and ids[0] not in surface  # newest kept, oldest dropped
     assert "older runs — get_task lists every one" in surface
@@ -308,8 +302,8 @@ async def test_migration_grant_failure_does_not_drop_later_tasks(paths, tmp_path
 
 
 async def test_delete_task_drops_task_scope_folder_grants(paths, tmp_path):
-    """delete_task best-effort drops the deleted task's task-scope folder grants,
-    and survives a folders store that raises (dropping grants is best-effort)."""
+    """delete_task drops the task's task-scope folder grants; if that fails, the
+    error surfaces and the task stays, so the delete can be retried."""
     from assistant.folders import READ_WRITE, FolderStore
 
     folders = FolderStore(path=tmp_path / "folders.json")
@@ -325,14 +319,15 @@ async def test_delete_task_drops_task_scope_folder_grants(paths, tmp_path):
     assert await svc.delete_task(t["id"]) is True
     assert folders.mode_for(wd, profile, task_id=t["id"]) is None
 
-    # a folders store that throws must not sink delete_task
     class _BoomFolders:
         def drop_task(self, task_id):
-            raise RuntimeError("boom")
+            raise OSError("folders.json is read-only")
 
     gw.folders = _BoomFolders()
     t2 = await svc.create_task(name="D2", prompt="p")
-    assert await svc.delete_task(t2["id"]) is True
+    with pytest.raises(OSError):
+        await svc.delete_task(t2["id"])
+    assert await svc.get_task(t2["id"]) is not None
 
 
 async def test_stop_run_cancels_the_turn(paths, tmp_path):
@@ -410,7 +405,7 @@ async def test_delete_task_purges_runs_and_streams(paths, tmp_path):
 
 
 async def test_delete_task_drops_task_scoped_permissions(paths, tmp_path):
-    """delete_task best-effort drops the deleted task's task-scoped command grants —
+    """delete_task drops the deleted task's task-scoped command grants —
     they'd otherwise be an orphaned, unreachable JSON entry (Task 4)."""
     from assistant.permissions import PermissionStore
 
@@ -423,14 +418,6 @@ async def test_delete_task_drops_task_scoped_permissions(paths, tmp_path):
 
     assert await svc.delete_task(t["id"]) is True
     assert perms.granted_commands(task_id=t["id"]) == []
-
-
-async def test_delete_task_tolerates_gateway_without_permissions(paths, tmp_path):
-    """A gateway stub with no `.permissions` (plain FakeGateway, as most tests use)
-    must not break delete_task — dropping task rules is best-effort."""
-    svc = await _svc(paths, tmp_path, FakeGateway())
-    t = await svc.create_task(name="D2", prompt="p")
-    assert await svc.delete_task(t["id"]) is True
 
 
 async def test_list_tasks_carries_last_run_and_unread(paths, tmp_path):

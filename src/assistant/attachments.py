@@ -143,10 +143,7 @@ def build_input(data: bytes, filename: str, media_type: str | None = None):
         return DocumentInput(data=data, media_type=_DOC[suffix])
 
     if suffix in _TEXT_SUFFIXES or mime.startswith("text/"):
-        try:
-            text = data.decode("utf-8", errors="replace")[:_MAX_TEXT_CHARS]
-        except Exception:
-            text = ""
+        text = data.decode("utf-8", errors="replace")[:_MAX_TEXT_CHARS]
         return TextInput(f"Attached file {filename!r}:\n\n{text}")
 
     # A nameless pasted/dropped file carries a media type but no ".ext".

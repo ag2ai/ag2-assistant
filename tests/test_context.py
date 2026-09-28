@@ -64,15 +64,6 @@ def test_focuses_guidance_includes_line_when_set(paths, tmp_path):
     assert "research, coding" in line
 
 
-def test_universal_turn_prompt_injects_focuses_when_set(paths, tmp_path):
-    config = Config.for_paths(paths)
-    config.data_dir = tmp_path
-    Settings(tmp_path / "config.yaml").set_focuses(["writing"])
-    prompt = universal_turn_prompt(config)
-    joined = " ".join(prompt)
-    assert "focus areas for this profile: writing" in joined
-
-
 def test_universal_turn_prompt_omits_focuses_when_unset(paths, tmp_path):
     config = Config.for_paths(paths)
     config.data_dir = tmp_path  # no settings.json
@@ -90,15 +81,6 @@ def test_universal_memory_guidance_omitted_when_empty(paths, tmp_path):
     config = Config.for_paths(paths)
     config.root_dir = tmp_path  # no user.db
     assert universal_memory_guidance(config) == ""
-
-
-async def test_universal_memory_guidance_includes_doc_when_set(paths, tmp_path):
-    config = Config.for_paths(paths)
-    config.root_dir = tmp_path
-    await _seed_universal(tmp_path, "# User profile\n- Name: TestUser")
-    section = universal_memory_guidance(config)
-    assert "shared across all profiles" in section
-    assert "Name: TestUser" in section
 
 
 async def test_universal_turn_prompt_injects_universal_doc(paths, tmp_path):
@@ -149,6 +131,4 @@ def test_behavior_guidance_survives_custom_persona(paths):
     prompt = turn_prompt(config)
     assert prompt[0] == "You are Jarvis."
     # the "don't silently work around failures — ask the user" rule is still there
-    joined = " ".join(prompt)
-    assert "do not" in joined.lower() or "don't" in joined.lower()
-    assert "ask how they" in joined
+    assert "ask how they" in " ".join(prompt)

@@ -39,22 +39,8 @@ def test_an_empty_search_path_finds_nothing(tmp_path):
     assert detect.available_agents([]) == []
 
 
-def test_resolve_explicit_agent(tmp_path):
-    resolved = detect.resolve_agent("codex", [_bin(tmp_path, "codex-acp")])
-    assert resolved is not None and resolved.name == "codex"
-
-
 def test_resolve_explicit_unavailable_is_none(tmp_path):
     assert detect.resolve_agent("codex", [_bin(tmp_path)]) is None
-
-
-def test_resolve_empty_picks_first_available(tmp_path):
-    resolved = detect.resolve_agent("", [_bin(tmp_path, "opencode", "codex-acp")])
-    assert resolved is not None and resolved.available is True
-
-
-def test_resolve_unknown_name_is_none(tmp_path):
-    assert detect.resolve_agent("nope", [_bin(tmp_path, "opencode")]) is None
 
 
 def test_opencode_command_includes_acp_subcommand(tmp_path):

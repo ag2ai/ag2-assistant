@@ -13,7 +13,6 @@ session reads its config fresh at connect, so the change lands on the next call.
 from collections.abc import Callable
 from pathlib import Path
 
-from ag2.config import OllamaConfig
 from ag2.context import ConversationContext
 from ag2.stream import MemoryStream
 from fastapi import APIRouter, Depends
@@ -85,13 +84,6 @@ def runtime_settings(runtime: ProfileRuntime):
     return profile_settings(cfg.data_dir, voice_provider=cfg.voice_provider)
 
 
-def _ollama_installed() -> bool:
-    try:
-        return type(OllamaConfig).__module__ != "unittest.mock"
-    except Exception:
-        return False
-
-
 async def _mcp_health(server: dict) -> dict:
     tools = build_mcp_tools([server])
     if not tools:
@@ -140,7 +132,7 @@ def build_profile_router(
         availability is per-config now and lives in the named LLM configs store."""
         st = d.secret_store.status(secret_env())
         avail = {prov: st[prov]["set"] for prov in ("openai", "gemini", "anthropic")}
-        avail["ollama"] = _ollama_installed()
+        avail["ollama"] = True
         return avail
 
     @r.get(

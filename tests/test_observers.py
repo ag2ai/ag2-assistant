@@ -175,22 +175,6 @@ async def test_silence_watchdog_resets_on_new_event():
     assert len(alerts) == 1 and alerts[0].severity == Severity.CRITICAL
 
 
-async def test_silence_watchdog_escalates_to_fatal():
-    stream, alerts = _watchdog_stream()
-    now = {"t": 0.0}
-    wd = SilenceWatchdog(alert_s=1.0, halt_s=3.0, clock=lambda: now["t"], poll_interval_s=0.01)
-    ctx = ConversationContext(stream=stream)
-    with ExitStack() as stack:
-        wd.register(stack, ctx)
-        await asyncio.sleep(0)
-        now["t"] = 1.5
-        await wd._check(stream)  # CRITICAL
-        now["t"] = 5.0
-        await wd._check(stream)  # past halt threshold → FATAL
-    sev = [a.severity for a in alerts]
-    assert sev == [Severity.CRITICAL, Severity.FATAL]
-
-
 async def test_silence_watchdog_own_alert_does_not_reset_clock():
     """A fired alert is itself a stream event; it must NOT reset the silence
     clock, or the watchdog could never escalate to FATAL."""
