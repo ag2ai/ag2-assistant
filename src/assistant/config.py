@@ -17,9 +17,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from assistant.paths import Paths
+from assistant.secrets import KEY_ENV
 from assistant.yamlio import read_yaml, write_yaml
 
 if TYPE_CHECKING:
@@ -34,6 +35,15 @@ _ENV_PREFIX = "AG2ASSISTANT_"
 # The file whose presence means "this process runs in a container".
 _CONTAINER_MARKER = Path("/.dockerenv")
 
+# The model each provider gets when none is named — the tier the app puts forward
+# first for it (mirrors KNOWN_MODELS in web/src/lib/knownModels.ts).
+_DEFAULT_MODEL = {
+    "gemini": "gemini-3.6-flash",
+    "openai": "gpt-5.6-luna",
+    "anthropic": "claude-sonnet-5",
+    "ollama": "llama3.2",
+}
+
 
 class LLMConfig(BaseModel):
     """LLM provider configuration."""
@@ -44,8 +54,10 @@ class LLMConfig(BaseModel):
     # `provider` because that folds the three OpenAI types into one value, and
     # only openai_responses offers provider-native tools.
     config_type: str = ""
-    model: str = "gemini-3.6-flash"
-    api_key_env: str = "GEMINI_API_KEY"
+    # Both follow `provider` unless the user names them — see
+    # apply_provider_defaults. Ollama is local, so it derives no key env var.
+    model: str = _DEFAULT_MODEL["gemini"]
+    api_key_env: str = KEY_ENV["gemini"]
     # How the OpenAI provider authenticates:
     #   "api_key"      — pay-per-token via OPENAI_API_KEY (default, unchanged path)
     #   "subscription" — Sign in with ChatGPT (OAuth); routes through the ChatGPT
@@ -95,6 +107,32 @@ class LLMConfig(BaseModel):
     # True when AG2ASSISTANT_MODEL in the process environment named ``model`` above,
     # which outranks every Chat/Task/profile selection (ADR 0025).
     env_pinned: bool = False
+
+    # Every construction path (config.yaml, a profile overlay, a direct call) gets
+    # the provider's model and key env var unless it named them itself.
+    @model_validator(mode="after")
+    def _follow_provider(self) -> "LLMConfig":
+        apply_provider_defaults(self)
+        return self
+
+
+def _set_derived(llm: LLMConfig, field: str, value: str) -> None:
+    """Assign a value the caller never supplied, leaving the field marked unset so a
+    later provider change derives it again."""
+    setattr(llm, field, value)
+    llm.model_fields_set.discard(field)
+
+
+def apply_provider_defaults(llm: LLMConfig) -> None:
+    """Point ``model`` and ``api_key_env`` at ``llm.provider``'s defaults, for
+    whichever of the two was never supplied explicitly (an explicit value wins)."""
+    provider = llm.provider.strip().lower()
+    if provider not in _DEFAULT_MODEL:
+        return
+    if "model" not in llm.model_fields_set:
+        _set_derived(llm, "model", _DEFAULT_MODEL[provider])
+    if "api_key_env" not in llm.model_fields_set:
+        _set_derived(llm, "api_key_env", KEY_ENV.get(provider, ""))
 
 
 class AgentConfig(BaseModel):
@@ -158,9 +196,13 @@ def apply_overlay(cfg: "Config", path: Path) -> None:
             continue
         current = getattr(cfg, section)
         try:
-            setattr(cfg, section, type(current)(**{**current.model_dump(), **raw}))
+            merged = type(current)(**{**current.model_dump(), **raw})
         except Exception:
             continue
+        # A field neither the global nor the overlay named stays unset, so an overlay
+        # that switches only `llm.provider` still derives the rest from it.
+        merged.model_fields_set.intersection_update(current.model_fields_set | set(raw))
+        setattr(cfg, section, merged)
 
 
 class Config(BaseModel):
@@ -342,6 +384,9 @@ def apply_env_overrides(cfg: Config, env: Mapping[str, str]) -> None:
             cfg.memory.compact_max_tokens = int(v)
         except ValueError:
             pass
+    # AG2ASSISTANT_LLM_PROVIDER may have just moved the provider: re-derive the model
+    # and key env var unless this layering (or an earlier one) named them.
+    apply_provider_defaults(cfg.llm)
 
 
 def tz_unset_in_container(env: Mapping[str, str], *, marker: Path = _CONTAINER_MARKER) -> bool:

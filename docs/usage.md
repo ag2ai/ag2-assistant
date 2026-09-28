@@ -369,11 +369,13 @@ Every key above also has an env override (these win over `config.yaml`):
 
 ### Switching LLM providers
 
-Set the provider + model + the env var holding its key. Gemini and OpenAI are
-bundled; **Anthropic and Ollama need their provider extra installed first**
-(`pip install "ag2-assistant[anthropic]"` / `pip install "ag2-assistant[ollama]"`;
-the Docker image already carries both), otherwise the provider fails at first use
-with a missing-dependency error:
+Set the provider; the model and the env var holding its key follow it unless you
+name them too (`openai` → `gpt-5.6-luna` / `OPENAI_API_KEY`, `anthropic` →
+`claude-sonnet-5` / `ANTHROPIC_API_KEY`, `ollama` → `llama3.2`, keyless). Gemini
+and OpenAI are bundled; **Anthropic and Ollama need their provider extra
+installed first** (`pip install "ag2-assistant[anthropic]"` /
+`pip install "ag2-assistant[ollama]"`; the Docker image already carries both),
+otherwise the provider fails at first use with a missing-dependency error:
 
 ```yaml
 llm: { provider: openai, model: gpt-4o, api_key_env: OPENAI_API_KEY }

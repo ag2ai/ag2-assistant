@@ -85,6 +85,56 @@ def test_config_yaml_overrides_defaults(paths):
     assert (cfg.llm.provider, cfg.llm.model) == ("anthropic", "opus")
 
 
+def test_gemini_defaults_are_unchanged(paths):
+    cfg = resolve_config({}, paths)
+    assert (cfg.llm.provider, cfg.llm.model, cfg.llm.api_key_env) == (
+        "gemini",
+        "gemini-3.6-flash",
+        "GEMINI_API_KEY",
+    )
+
+
+@pytest.mark.parametrize(
+    "provider,model,key_env",
+    [
+        ("gemini", "gemini-3.6-flash", "GEMINI_API_KEY"),
+        ("openai", "gpt-5.6-luna", "OPENAI_API_KEY"),
+        ("anthropic", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
+        ("ollama", "llama3.2", ""),  # local and keyless
+    ],
+)
+def test_provider_alone_carries_the_model_and_key_env(paths, provider, model, key_env):
+    cfg = resolve_config({"AG2ASSISTANT_LLM_PROVIDER": provider}, paths)
+    assert (cfg.llm.model, cfg.llm.api_key_env) == (model, key_env)
+
+
+def test_an_explicit_model_beats_the_provider_default(paths):
+    cfg = resolve_config(
+        {"AG2ASSISTANT_LLM_PROVIDER": "openai", "AG2ASSISTANT_MODEL": "gpt-5.4-nano"}, paths
+    )
+    assert cfg.llm.model == "gpt-5.4-nano"
+    assert cfg.llm.api_key_env == "OPENAI_API_KEY"  # the unnamed one still follows
+
+
+def test_an_explicit_api_key_env_beats_the_provider_default(paths):
+    cfg = resolve_config(
+        {"AG2ASSISTANT_LLM_PROVIDER": "anthropic", "AG2ASSISTANT_API_KEY_ENV": "MY_KEY"}, paths
+    )
+    assert cfg.llm.api_key_env == "MY_KEY"
+    assert cfg.llm.model == "claude-sonnet-5"
+
+
+def test_config_yaml_provider_alone_carries_the_model_and_key_env(paths):
+    write_yaml(paths.config_yaml, {"llm": {"provider": "openai"}})
+    cfg = resolve_config({}, paths)
+    assert (cfg.llm.model, cfg.llm.api_key_env) == ("gpt-5.6-luna", "OPENAI_API_KEY")
+
+
+def test_config_yaml_model_beats_the_provider_default(paths):
+    write_yaml(paths.config_yaml, {"llm": {"provider": "openai", "model": "gpt-5.6-sol"}})
+    assert resolve_config({}, paths).llm.model == "gpt-5.6-sol"
+
+
 def test_env_overrides_config_yaml(paths):
     write_yaml(paths.config_yaml, {"llm": {"provider": "anthropic", "model": "opus"}})
     cfg = resolve_config({"AG2ASSISTANT_LLM_PROVIDER": "openai"}, paths)
@@ -255,6 +305,14 @@ def test_profile_overlay_overrides_global(paths):
     assert cfg.llm.model != "overlay-model"  # the base config is not mutated
 
 
+def test_profile_overlay_provider_carries_the_model_and_key_env(paths):
+    cfg = resolve_config({}, paths)
+    write_yaml(paths.profile_dir("work") / "config.yaml", {"llm": {"provider": "anthropic"}})
+    prof = cfg.with_profile(_meta())
+    assert (prof.llm.model, prof.llm.api_key_env) == ("claude-sonnet-5", "ANTHROPIC_API_KEY")
+    assert cfg.llm.model == "gemini-3.6-flash"  # the base config is not mutated
+
+
 def test_env_still_wins_over_profile_overlay(paths):
     env = {"AG2ASSISTANT_MODEL": "env-model"}
     cfg = resolve_config(env, paths)
@@ -306,6 +364,13 @@ def test_profile_llm_override_absent_inherits_install_active(paths):
     prof = resolve_config({}, paths).with_profile(_meta())  # no override written
     assert prof.llm.provider == "anthropic"
     assert prof.llm.model == "claude-x"
+
+
+def test_active_config_keeps_its_model_and_gets_its_provider_key_env(paths):
+    """An entry names a model but no key env var, so that one follows its provider."""
+    _two_shared_configs(paths)
+    cfg = resolve_config({}, paths)
+    assert (cfg.llm.model, cfg.llm.api_key_env) == ("claude-x", "ANTHROPIC_API_KEY")
 
 
 def test_profile_llm_override_wins_over_install_active(paths):
