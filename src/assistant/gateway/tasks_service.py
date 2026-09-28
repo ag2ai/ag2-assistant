@@ -405,15 +405,13 @@ class TaskService:
             if self._gateway is not None:
                 with contextlib.suppress(Exception):
                     await self._gateway.delete_chat(r.stream_id)
-        await self._store.delete_task(task_id)
         if self._gateway is not None:
-            # Best-effort: a stub gateway in unit tests may have no `.permissions`
-            # at all, and a real deleted task's grants are gone either way once the
-            # task itself no longer exists.
-            with contextlib.suppress(Exception):
+            # Revoke before the task goes, so a failed revoke leaves it there to retry.
+            if self._gateway.permissions is not None:
                 self._gateway.permissions.drop_task(task_id)
-            with contextlib.suppress(Exception):
+            if self._gateway.folders is not None:
                 self._gateway.folders.drop_task(task_id)
+        await self._store.delete_task(task_id)
         return True
 
     async def list_tasks(self) -> list[dict]:

@@ -302,8 +302,8 @@ async def test_migration_grant_failure_does_not_drop_later_tasks(paths, tmp_path
 
 
 async def test_delete_task_drops_task_scope_folder_grants(paths, tmp_path):
-    """delete_task best-effort drops the deleted task's task-scope folder grants,
-    and survives a folders store that raises (dropping grants is best-effort)."""
+    """delete_task drops the task's task-scope folder grants; if that fails, the
+    error surfaces and the task stays, so the delete can be retried."""
     from assistant.folders import READ_WRITE, FolderStore
 
     folders = FolderStore(path=tmp_path / "folders.json")
@@ -319,14 +319,15 @@ async def test_delete_task_drops_task_scope_folder_grants(paths, tmp_path):
     assert await svc.delete_task(t["id"]) is True
     assert folders.mode_for(wd, profile, task_id=t["id"]) is None
 
-    # a folders store that throws must not sink delete_task
     class _BoomFolders:
         def drop_task(self, task_id):
-            raise RuntimeError("boom")
+            raise OSError("folders.json is read-only")
 
     gw.folders = _BoomFolders()
     t2 = await svc.create_task(name="D2", prompt="p")
-    assert await svc.delete_task(t2["id"]) is True
+    with pytest.raises(OSError):
+        await svc.delete_task(t2["id"])
+    assert await svc.get_task(t2["id"]) is not None
 
 
 async def test_stop_run_cancels_the_turn(paths, tmp_path):
@@ -404,7 +405,7 @@ async def test_delete_task_purges_runs_and_streams(paths, tmp_path):
 
 
 async def test_delete_task_drops_task_scoped_permissions(paths, tmp_path):
-    """delete_task best-effort drops the deleted task's task-scoped command grants —
+    """delete_task drops the deleted task's task-scoped command grants —
     they'd otherwise be an orphaned, unreachable JSON entry (Task 4)."""
     from assistant.permissions import PermissionStore
 
