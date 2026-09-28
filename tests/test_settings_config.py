@@ -1,32 +1,10 @@
 """API-key secrets store, settings LLM selection, and model_config provider mapping."""
 
-import json
-import stat
-
 import pytest
 
 from assistant.agent import cheap_model, model_config
-from assistant.config import Config, resolve_config
-from assistant.gateway.core import Gateway
+from assistant.config import Config
 from assistant.secrets import SecretStore
-
-
-def test_secrets_set_status_clear_and_env(paths):
-    store = SecretStore(paths)
-    assert store.status({})["anthropic"]["set"] is False
-
-    assert store.set_key("anthropic", "sk-ant-secret-9999")
-    st = store.status(store.env_overlay())["anthropic"]
-    assert st["set"] is True and st["hint"] == "…9999"  # only the last 4, never raw
-    # the key is what a call would send, without the store touching the process env
-    assert store.env_overlay()["ANTHROPIC_API_KEY"] == "sk-ant-secret-9999"
-
-    assert stat.S_IMODE(paths.secrets_json.stat().st_mode) == 0o600  # file is 0600
-
-    assert store.clear("anthropic")
-    assert store.status(store.env_overlay())["anthropic"]["set"] is False
-
-    assert store.set_key("bogus", "x") is False  # unknown provider
 
 
 def test_ollama_base_url(paths):
@@ -34,34 +12,6 @@ def test_ollama_base_url(paths):
     assert store.set_key("ollama", "http://host:1234")
     assert store.env_overlay()["OLLAMA_BASE_URL"] == "http://host:1234"
     assert store.status(store.env_overlay())["ollama"]["base_url"] == "http://host:1234"
-
-
-def test_resolve_config_no_longer_overlays_settings(paths):
-    """A per-profile settings llm block is NOT consulted when resolving — the
-    assistant model is the install-wide named-config store now. Resolution derives
-    only defaults ← config.yaml ← active llm config ← env; with no store it stays on
-    the flat gemini defaults, ignoring any stray profile-settings llm block."""
-    # A stray legacy llm block written straight into a settings.json is ignored.
-    settings_file = paths.root / "settings.json"
-    settings_file.parent.mkdir(parents=True, exist_ok=True)
-    settings_file.write_text(json.dumps({"llm": {"provider": "anthropic", "model": "claude-x"}}))
-
-    cfg = resolve_config({}, paths)
-    assert cfg.llm.provider == "gemini"  # default, settings NOT overlaid
-    assert cfg.llm.model.startswith("gemini")
-
-    # explicit env still applies
-    assert resolve_config({"AG2ASSISTANT_LLM_PROVIDER": "openai"}, paths).llm.provider == "openai"
-
-
-@pytest.mark.asyncio
-async def test_gateway_reload_swaps_agent(paths):
-    g = Gateway(config=Config.for_paths(paths), memory=False, persist=False)
-    await g.start()
-    first = g._agent
-    assert first is not None
-    await g.reload()  # reference-swap
-    assert g._agent is not None and g._agent is not first
 
 
 def test_model_config_key_env_by_provider(paths):

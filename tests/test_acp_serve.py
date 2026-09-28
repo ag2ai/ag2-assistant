@@ -77,17 +77,6 @@ async def test_serve_stdio_wires_cold_start_agent_when_no_profile_exists(paths, 
             await client.new_session(cwd=".")  # unconfigured ⇒ auth_required (ADR-0035)
 
 
-def test_stdout_guard_redirects_stray_prints_to_stderr(capsys):
-    """The exact mechanism ``_run_stdio_guarded`` applies after the transport has
-    captured the real fd 1: any stray ``print()`` from here on lands on stderr."""
-    with contextlib.redirect_stdout(sys.stderr):
-        print("stray output")
-
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert "stray output" in captured.err
-
-
 async def test_real_acp_command_emits_nothing_but_jsonrpc_on_stdout(tmp_path):
     """fd 1 of the real ``acp`` command carries nothing but
     JSON-RPC frames — asserted on the raw subprocess pipe across a full

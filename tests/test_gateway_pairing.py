@@ -84,21 +84,9 @@ def test_a_handle_is_refused_where_messages_carry_none(paths):
         assert r.status_code == 400
 
 
-def test_adding_an_account_takes_effect_at_once(paths):
-    with _client(paths) as client:
-        _pair(client, paths, "42")
-        assert PairingStore(paths).is_paired(_cid(paths), "42") is True
-
-
 def test_an_empty_entry_is_rejected(paths):
     with _client(paths) as client:
         assert _pair(client, paths, "  ").status_code == 400
-
-
-def test_pairing_is_per_channel(paths):
-    with _client(paths) as client:
-        _pair(client, paths, "42")
-        assert _pairing(client, paths, "discord")["accounts"] == []
 
 
 # --- two Connections of one platform have two rosters ---

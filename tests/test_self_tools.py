@@ -144,11 +144,6 @@ async def test_describe_integrations_reports_google_and_mcp(tmp_path):
     assert "MCP servers" in out
 
 
-def test_self_knowledge_skill_is_bundled():
-    skill = bundled_skills_dir() / "self-knowledge" / "SKILL.md"
-    assert skill.exists()
-
-
 _SELF_TOOLS = {"list_folders", "describe_integrations", "describe_settings"}
 
 

@@ -347,9 +347,6 @@ class SecretStore:
             self.create_secret(PROVIDER_TITLE[provider], value, provider=provider, default=True)
         return True
 
-    def clear(self, provider: str) -> bool:
-        return self.set_key(provider, "")
-
     def channel_token(self, env_name: str, env: Mapping[str, str]) -> str:
         """One channel token's raw value — the saved one, else ``env``. Read as a seed
         for a first Connection only; nothing else consumes this."""

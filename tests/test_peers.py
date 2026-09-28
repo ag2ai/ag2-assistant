@@ -22,12 +22,6 @@ def test_an_unknown_conversation_has_no_peer_yet(paths):
     assert PeerStore(paths).get_peer("cn-work", "42") is None
 
 
-def test_the_selected_profile_survives_a_restart(paths):
-    """Nothing is cached in the process — a fresh read sees the same selection."""
-    PeerStore(paths).select_profile("cn-work", "42", "work")
-    assert PeerStore(paths).get_peer("cn-work", "42").profile == "work"
-
-
 def test_two_conversations_hold_two_different_profiles(paths):
     PeerStore(paths).select_profile("cn-work", "42", "work")
     PeerStore(paths).select_profile("cn-work", "99", "home")
@@ -76,12 +70,6 @@ def test_a_started_chat_is_opaque_not_the_platform_address(paths):
     PeerStore(paths).select_profile("cn-work", "42", "work", platform="telegram")
     chat = PeerStore(paths).start_chat("cn-work", "42", platform="telegram")
     assert re.fullmatch(r"telegram-[0-9a-f]{8}", chat)
-
-
-def test_starting_a_chat_attaches_the_peer_to_it(paths):
-    PeerStore(paths).select_profile("cn-work", "42", "work")
-    chat = PeerStore(paths).start_chat("cn-work", "42")
-    assert PeerStore(paths).get_peer("cn-work", "42").chat == chat
 
 
 def test_two_started_chats_are_different_chats(paths):
@@ -214,12 +202,6 @@ def test_the_peer_a_chat_was_started_from_is_recoverable(paths):
     chat = PeerStore(paths).start_chat("cn-work", "42", platform="telegram")
     peer = PeerStore(paths).peer_for_chat(chat)
     assert (peer.connection, peer.chat_id) == ("cn-work", "42")
-
-
-def test_a_chat_stays_with_its_peer_after_the_peer_has_moved_on(paths):
-    chat = PeerStore(paths).start_chat("cn-work", "42")
-    PeerStore(paths).start_chat("cn-work", "42")
-    assert PeerStore(paths).peer_for_chat(chat).chat_id == "42"
 
 
 def test_a_chat_nobody_started_belongs_to_no_peer(paths):

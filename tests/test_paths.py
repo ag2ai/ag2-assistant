@@ -54,15 +54,6 @@ def test_derived_paths_hang_off_the_root(tmp_path):
     assert paths.profile_dir("work") == tmp_path / "r" / "profiles" / "work"
 
 
-def test_our_codex_token_store_is_not_the_codex_cli_login_file(tmp_path):
-    """Two different files: our subscription tokens under root, the CLI's own login
-    wherever the CLI keeps it."""
-    paths = Paths.from_env({}, tmp_path)
-    assert paths.codex_tokens == tmp_path / ".ag2assistant" / "codex_auth.json"
-    assert paths.codex_auth == tmp_path / ".codex" / "auth.json"
-    assert paths.codex_tokens != paths.codex_auth
-
-
 def test_codex_auth_defaults_under_home_but_env_overrides(tmp_path):
     paths = Paths.from_env({}, tmp_path)
     assert paths.codex_auth == tmp_path / ".codex" / "auth.json"

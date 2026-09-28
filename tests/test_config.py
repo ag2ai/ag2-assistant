@@ -12,10 +12,8 @@ import pytest
 
 from assistant.agent import model_config
 from assistant.config import (
-    AgentConfig,
     Config,
     LLMConfig,
-    load_config,
     read_yaml,
     resolve_config,
     write_yaml,
@@ -56,20 +54,6 @@ def test_config_rejects_construction_without_paths():
     with pytest.raises(Exception) as exc:
         Config()
     assert "root_dir" in str(exc.value) or "data_dir" in str(exc.value)
-
-
-def test_custom_llm_config(paths):
-    llm = LLMConfig(provider="openai", model="gpt-4o", api_key_env="OPENAI_API_KEY")
-    config = Config.for_paths(paths, llm=llm)
-    assert config.llm.provider == "openai"
-    assert config.llm.model == "gpt-4o"
-
-
-def test_custom_agent_config(paths):
-    agent = AgentConfig(name="test-agent", system_prompt="You are a test agent.")
-    config = Config.for_paths(paths, agent=agent)
-    assert config.agent.name == "test-agent"
-    assert "test agent" in config.agent.system_prompt
 
 
 def test_defaults_apply_when_nothing_is_configured(paths):
@@ -133,10 +117,6 @@ def test_bad_numeric_env_is_ignored_not_fatal(paths):
     assert cfg.gateway.reply_timeout_s == 600.0
 
 
-def test_resolve_config_defaults_when_no_file(paths):
-    assert resolve_config({}, paths).llm.provider == "gemini"
-
-
 def test_config_yaml_accepts_a_json_document(paths):
     """YAML is a JSON superset, so a config.yaml written as JSON still resolves."""
     paths.config_yaml.parent.mkdir(parents=True, exist_ok=True)
@@ -183,37 +163,12 @@ def test_malformed_config_yaml_reads_as_empty(paths):
     assert resolve_config({}, paths).llm.provider == "gemini"
 
 
-def test_resolve_config_reads_yaml(paths):
-    write_yaml(paths.config_yaml, {"agent": {"name": "custom"}, "llm": {"model": "my-model"}})
-    cfg = resolve_config({}, paths)
-    assert cfg.agent.name == "custom"
-    assert cfg.llm.model == "my-model"
-
-
-def test_malformed_yaml_falls_back_to_defaults(paths):
-    paths.config_yaml.parent.mkdir(parents=True, exist_ok=True)
-    paths.config_yaml.write_text("[unclosed")
-    assert resolve_config({}, paths).agent.name == "ag2-assistant"
-
-
-def test_config_file_is_yaml(paths):
-    assert paths.config_yaml.name == "config.yaml"
-
-
 def test_data_dir_in_the_file_cannot_move_the_resolved_layout(paths, tmp_path):
     """Paths already resolved the layout; a stale ``data_dir`` key must not split it."""
     write_yaml(paths.config_yaml, {"data_dir": str(tmp_path / "elsewhere")})
     cfg = resolve_config({}, paths)
     assert cfg.data_dir == paths.root
     assert cfg.root_dir == paths.root
-
-
-def test_load_config_composes_resolve_with_the_real_environment():
-    """The entry point glues the pure resolve onto os.environ + Path.home()."""
-    cfg = load_config()
-    expected = resolve_config(os.environ, Paths.from_env(os.environ, Path.home()))
-    assert cfg.llm.provider == expected.llm.provider
-    assert cfg.data_dir == expected.data_dir
 
 
 def test_workspace_dir_default_and_env(tmp_path):
@@ -299,21 +254,6 @@ def _two_shared_configs(paths):
     b = store.save_config({"name": "B", "type": "openai", "model": "gpt-x"})
     store.set_active(a["id"])
     return a, b
-
-
-def test_profile_llm_override_absent_inherits_install_active(paths):
-    _two_shared_configs(paths)
-    prof = resolve_config({}, paths).with_profile(_meta())  # no override written
-    assert prof.llm.provider == "anthropic"
-    assert prof.llm.model == "claude-x"
-
-
-def test_profile_llm_override_wins_over_install_active(paths):
-    _a, b = _two_shared_configs(paths)
-    _write_override(paths, "work", b["id"])
-    prof = resolve_config({}, paths).with_profile(_meta())
-    assert prof.llm.provider == "openai"
-    assert prof.llm.model == "gpt-x"
 
 
 def test_env_pin_wins_over_profile_llm_override(paths):

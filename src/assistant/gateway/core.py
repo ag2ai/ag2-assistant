@@ -1288,10 +1288,7 @@ class Gateway:
         thread then resolves like a plain chat instead of erroring."""
         if not chat_id.startswith("task-run:") or self._tasks is None:
             return ""
-        try:
-            run = await self._tasks.get_run(chat_id.removeprefix("task-run:"))
-        except Exception:
-            return ""
+        run = await self._tasks.get_run(chat_id.removeprefix("task-run:"))
         return (run or {}).get("task_id") or ""
 
     def _ask_kwargs(self, asker, chat_id: str = "", task_id: str = "") -> dict:

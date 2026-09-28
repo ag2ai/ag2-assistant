@@ -207,13 +207,6 @@ def test_withdrawing_a_profile_answers_the_same_table_with_the_change(seeded):
 # ---- pairing ----
 
 
-def test_a_fresh_connection_has_an_empty_roster_and_no_code(seeded):
-    assert seeded.get(f"/api/connections/{_cid(seeded)}/pairing").json() == {
-        "accounts": [],
-        "code": None,
-    }
-
-
 def test_a_paired_id_and_a_pending_handle_share_one_row_shape(seeded):
     """A handle is an invitation with nobody behind it, so `account_id` is null
     there — null, not absent, which is what the zod twin's `.nullable()` demands."""
@@ -226,16 +219,6 @@ def test_a_paired_id_and_a_pending_handle_share_one_row_shape(seeded):
     pinned, pending = rows
     assert pinned["account_id"] == "42" and pinned["pending"] is False
     assert pending["account_id"] is None and pending["pending"] is True
-
-
-def test_revoking_answers_the_roster_that_is_left(seeded):
-    cid = _cid(seeded)
-    key = seeded.post(f"/api/connections/{cid}/pairing", json={"value": "42"}).json()["accounts"][
-        0
-    ]["key"]
-    r = seeded.delete(f"/api/connections/{cid}/pairing/{key}")
-    assert r.status_code == 200, r.text
-    assert r.json() == {"accounts": [], "code": None}
 
 
 def test_minting_a_code_answers_the_code_alone(seeded):

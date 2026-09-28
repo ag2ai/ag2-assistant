@@ -59,7 +59,6 @@ def test_workspace_is_derived_not_stored(registry, paths):
     # and ProfileMeta — pure data — does not know the layout either.
     entry = registry.load_registry()["profiles"][0]
     assert "workspace" not in entry
-    assert not hasattr(registry.get_profile("work"), "workspace")
     assert registry.profile_dir("work") / "workspace" == (
         paths.root / "profiles" / "work" / "workspace"
     )
@@ -235,18 +234,6 @@ def test_with_profile_path_derivation(paths, registry):
     # derived is an independent copy; the base config is untouched
     assert base.data_dir == root
     assert base.skills_dir == root / "skills"
-
-
-def test_with_profile_paths_differ_from_legacy_root_locations(paths, registry):
-    """Every overridable path field on the derived config must differ from its
-    legacy root-level location (§3.4) — else installed state leaks across profiles."""
-    meta = registry.create_profile("Work", TEAL)
-    base = Config.for_paths(paths)
-    derived = base.with_profile(meta)
-
-    assert derived.data_dir != base.data_dir  # not the root data dir
-    assert derived.skills_dir != base.skills_dir  # not the root skills dir
-    assert derived.workspace_dir != base.workspace_dir  # profile's own workspace
 
 
 def test_with_profile_deep_copy_isolates_nested_models(paths, registry):

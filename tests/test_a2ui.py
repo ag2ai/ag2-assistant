@@ -54,13 +54,11 @@ def test_a2ui_runtime_prompt_exposes_schema_and_custom_contracts():
     assert "## A2UI Message Schema (v1.0)" in prompt
     assert "## Available Components" in prompt
     assert "**Custom components:**" in prompt
-    assert "WeatherPanel" in prompt
     assert "LowdownPanel" not in prompt
     assert 'root component="Column"' in prompt
     assert "users do not need to ask for A2UI explicitly" in prompt
     assert "Prefer an A2UI component" in prompt
     assert "optional summary" in prompt
-    assert "TaskPlan" in prompt
     # Intent → COMPONENT. Which tool gathers the data is the tool's own business, so no
     # tool name appears here (see tests/test_capability_registry.py). The imperative to
     # actually EMIT the component must survive: dropping it silently cost us the
@@ -71,7 +69,6 @@ def test_a2ui_runtime_prompt_exposes_schema_and_custom_contracts():
     assert "Gather the real data with your tools BEFORE you render" in prompt
     assert "Creating, scheduling, or planning a new task -> render a TaskPlan" in prompt
     assert "task status/history) -> render a TaskProgress" in prompt
-    assert "DecisionMatrix" in prompt
     assert "recommending between options -> render a DecisionMatrix" in prompt
     assert "Use Divider for section separation when useful" in prompt
     assert "A canvas is an A2UI surface, not a component" in prompt

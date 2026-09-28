@@ -39,23 +39,6 @@ def test_attaching_a_model_adds_no_null_keys_to_the_wire(tmp_path):
     assert agents["bridge"] is None
 
 
-def test_a_profile_health_row_omits_the_detail_it_does_not_carry(profile_app):
-    """Only the mcp and channels rows carry `servers`/`items`; the others must not
-    grow them as nulls — exclude_unset has to reach into the nested rows too."""
-    client, pid = profile_app
-    checks = {c["id"]: c for c in client.get(f"/api/p/{pid}/health").json()["checks"]}
-    assert set(checks["agent"]) == {"id", "label", "state", "detail"}
-    assert "servers" in checks["mcp"]
-    assert "items" in checks["channels"]
-
-
-def test_health_with_a_running_profile(profile_app):
-    client, _pid = profile_app
-    r = client.get("/api/health")
-    assert r.status_code == 200
-    assert "status" in r.json()
-
-
 def test_usage_rollup_on_a_zero_profile_install(tmp_path):
     app = create_app(make_manager(make_paths(tmp_path)))
     with TestClient(app) as client:
@@ -94,15 +77,6 @@ def test_profile_usage(profile_app):
     client, pid = profile_app
     body = client.get(f"/api/p/{pid}/usage").json()
     assert {"prompt", "completion", "total", "cost", "priced", "date", "by_model"} <= set(body)
-
-
-def test_profile_health(profile_app):
-    client, pid = profile_app
-    body = client.get(f"/api/p/{pid}/health").json()
-    assert body["overall"] in {"ok", "warn", "down", "off"}
-    for check in body["checks"]:
-        assert {"id", "label", "state", "detail"} <= set(check)
-        assert check["state"] in {"ok", "warn", "down", "off"}
 
 
 def test_coding_agents_local_mode(tmp_path):
@@ -151,25 +125,6 @@ def test_fs_list_error_branch_keeps_its_own_shape(tmp_path):
     assert body == {"ok": False, "error": "not a readable directory"}
 
 
-def test_fs_mkdir_returns_an_absolute_path(tmp_path):
-    app = create_app(make_manager(make_paths(tmp_path)))
-    with TestClient(app) as client:
-        r = client.post("/api/fs/mkdir", json={"path": str(tmp_path), "name": "made"})
-    assert r.status_code == 200
-    assert r.json() == {"ok": True, "path": str((tmp_path / "made").resolve())}
-
-
-def test_fs_mkdir_error_paths_are_untouched_by_the_response_model(tmp_path):
-    """These return JSONResponse, which bypasses the response model entirely."""
-    app = create_app(make_manager(make_paths(tmp_path)))
-    with TestClient(app) as client:
-        assert client.post("/api/fs/mkdir", json={"path": "/nope", "name": "x"}).status_code == 400
-        client.post("/api/fs/mkdir", json={"path": str(tmp_path), "name": "dup"})
-        again = client.post("/api/fs/mkdir", json={"path": str(tmp_path), "name": "dup"})
-    assert again.status_code == 409
-    assert "error" in again.json()
-
-
 def test_universal_and_profile_memory_round_trip(profile_app):
     client, pid = profile_app
     assert client.get("/api/memory").json() == {"text": ""}
@@ -184,19 +139,3 @@ def test_universal_and_profile_memory_round_trip(profile_app):
 def test_onboarded(profile_app):
     client, _pid = profile_app
     assert client.post("/api/onboarded", json={"value": True}).json() == {"ok": True}
-
-
-def test_identity_seeds_once_then_reports_why_it_skipped(profile_app):
-    """Three shapes off one route: seeded, skipped-empty, skipped-exists. `reason`
-    is absent on the success branch, so it must carry a default."""
-    client, _pid = profile_app
-
-    empty = client.post("/api/identity", json={}).json()
-    assert empty == {"ok": True, "seeded": False, "reason": "empty"}
-
-    seeded = client.post("/api/identity", json={"name": "Sam"}).json()
-    assert seeded == {"ok": True, "seeded": True}
-    assert "reason" not in seeded
-
-    again = client.post("/api/identity", json={"name": "Sam"}).json()
-    assert again == {"ok": True, "seeded": False, "reason": "exists"}

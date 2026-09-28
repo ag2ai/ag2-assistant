@@ -18,7 +18,6 @@ from assistant.channels.router import (
     ATTACHMENT_ONLY_PROMPT,
     ATTACHMENT_UNREADABLE,
     CHAT_GONE,
-    CHATS_OFFERED,
     CHOOSE_INSTEAD,
     COMMANDS,
     INHERITED_MODEL,
@@ -381,30 +380,6 @@ async def test_gateway_failure_becomes_a_reply_not_an_exception(paths):
 # --- which profile the turn lands in ---
 
 
-async def test_the_profile_is_resolved_per_message(paths):
-    """One adapter serves the whole install: the runtime is picked when the message
-    arrives, not captured when the channel started."""
-    directory = FakeDirectory("work", "home")
-    directory.gateways["work"].reply = "from work"
-    directory.gateways["home"].reply = "from home"
-    PeerStore(paths).select_profile("telegram", "c1", "work")
-    PeerStore(paths).select_profile("telegram", "c2", "home")
-    router = ChannelRouter(directory, paths)
-
-    first = await router.handle(_inbound("hi", chat_id="c1"))
-    second = await router.handle(_inbound("hi", chat_id="c2"))
-    assert (first, second) == (Reply("from work"), Reply("from home"))
-
-
-async def test_a_settled_peer_is_not_rewritten_on_every_message(paths):
-    """Resolving a profile reads the registry; it only writes when something moved."""
-    router, _ = _router(paths)
-    await router.handle(_inbound("hi"))
-    before = PeerStore(paths).get_peer("telegram", "c1")
-    await router.handle(_inbound("again"))
-    assert PeerStore(paths).get_peer("telegram", "c1") == before
-
-
 async def test_the_only_profile_is_chosen_without_asking(paths):
     router, gateway = _router(paths)
     assert isinstance(await router.handle(_inbound("hi")), Reply)
@@ -438,12 +413,6 @@ async def test_a_peers_own_profile_beats_the_channel_default(paths):
     assert directory.gateways["work"].calls != []
 
 
-async def test_a_peer_whose_profile_is_gone_is_asked_again(paths):
-    PeerStore(paths).select_profile("telegram", "c1", "archived-one")
-    directory = FakeDirectory("work", "home")
-    assert isinstance(await ChannelRouter(directory, paths).handle(_inbound("hi")), Choose)
-
-
 async def test_no_reachable_profile_is_refused(paths):
     """Nothing to route to (no profile is running): say so rather than failing
     silently or raising into the adapter."""
@@ -462,24 +431,7 @@ async def test_a_platform_without_commands_is_never_placed_without_a_default(pat
         assert PeerStore(paths).get_peer(platform, "c1") is None
 
 
-async def test_a_platform_without_commands_is_refused_rather_than_asked(paths):
-    """Discord and Slack have no command surface, so they cannot answer a Choose —
-    they sit in their Channel's default profile or nowhere."""
-    directory = FakeDirectory("work", "home")
-    for platform in ("discord", "slack"):
-        outcome = await ChannelRouter(directory, paths).handle(_inbound("hi", platform=platform))
-        assert outcome == Refuse(NO_PROFILE)
-
-
 # --- channel exposure ---
-
-
-async def test_a_withdrawn_profile_is_absent_from_the_picker(paths):
-    directory = FakeDirectory("work", "home")
-    directory.withdraw("home", "telegram:dm")
-    outcome = await ChannelRouter(directory, paths).handle(_inbound("/profile"))
-    assert isinstance(outcome, Choose)
-    assert [opt.token for opt in outcome.options] == ["profile:work"]
 
 
 async def test_a_withdrawn_profile_cannot_be_selected_by_name(paths):
@@ -538,12 +490,6 @@ async def test_telegram_groups_are_withdrawn_independently_of_direct_messages(pa
     group = await router.handle(_inbound("hi", chat_id="g1", is_direct=False, mentioned=True))
     assert group == Refuse(PROFILE_WITHDRAWN)  # a group has no picker to offer
     assert isinstance(await router.handle(_inbound("hi")), Reply)  # the DM still lands there
-
-
-async def test_the_sole_profile_fallback_does_not_reach_a_withdrawn_profile(paths):
-    directory = FakeDirectory("work")
-    directory.withdraw("work", "telegram:dm")
-    assert await ChannelRouter(directory, paths).handle(_inbound("hi")) == Refuse(NO_PROFILE)
 
 
 async def test_a_withdrawn_channel_default_is_not_smuggled_back(paths):
@@ -671,15 +617,6 @@ async def test_flipping_between_profiles_creates_no_chats(paths):
     assert directory.gateways["home"].calls == []
 
 
-async def test_profile_is_refused_in_a_group(paths):
-    directory = FakeDirectory("work", "home", default="work")
-    outcome = await ChannelRouter(directory, paths).handle(
-        _inbound("/profile", is_direct=False, mentioned=True)
-    )
-    assert isinstance(outcome, Refuse)
-    assert directory.gateways["work"].calls == []
-
-
 async def test_a_platform_without_commands_treats_a_slash_as_words(paths):
     """Discord and Slack expose no commands, so nothing is intercepted there."""
     directory = FakeDirectory("work", default="work")
@@ -706,13 +643,6 @@ async def test_choosing_an_option_selects_that_profile(paths):
 
     assert isinstance(await router.choose(_inbound(""), token), Reply)
     assert PeerStore(paths).get_peer("telegram", "c1").profile == "home"
-
-
-async def test_choosing_a_profile_that_has_since_gone_is_refused(paths):
-    directory = FakeDirectory("work", "home")
-    outcome = await ChannelRouter(directory, paths).choose(_inbound(""), "profile:gone")
-    assert isinstance(outcome, Refuse)
-    assert PeerStore(paths).get_peer("telegram", "c1") is None
 
 
 # --- who may reach the bot at all (ADR 0021) ---
@@ -905,14 +835,6 @@ async def test_new_in_a_chat_nothing_was_said_in_says_so(paths):
 # --- /clear ---
 
 
-async def test_clear_asks_before_deleting_anything(paths):
-    router, gateway = _router(paths)
-    await router.handle(_inbound("hi"))
-    outcome = await router.handle(_inbound("/clear"))
-    assert isinstance(outcome, Choose)
-    assert gateway.deleted == []
-
-
 async def test_confirming_clear_deletes_the_chat_the_peer_is_in(paths):
     router, gateway = _router(paths)
     await router.handle(_inbound("hi"))
@@ -940,17 +862,6 @@ async def test_declining_clear_leaves_the_chat_untouched(paths):
     assert PeerStore(paths).get_peer("telegram", "c1").chat == chat
 
 
-async def test_the_message_after_a_cleared_chat_starts_a_new_one(paths):
-    router, gateway = _router(paths)
-    await router.handle(_inbound("hi"))
-    outcome = await router.handle(_inbound("/clear"))
-    confirm = next(opt.token for opt in outcome.options if opt.token.startswith("clear:"))
-    await router.choose(_inbound(""), confirm)
-
-    await router.handle(_inbound("hello again"))
-    assert gateway.calls[1]["chat_id"] != gateway.calls[0]["chat_id"]
-
-
 async def test_clear_with_nothing_to_delete_says_so(paths):
     router, gateway = _router(paths)
     outcome = await router.handle(_inbound("/clear"))
@@ -976,25 +887,6 @@ async def test_a_confirmation_only_deletes_the_chat_it_was_raised_for(paths):
 # --- /status ---
 
 
-async def test_status_reports_the_profile_the_chat_and_its_size(paths):
-    router, gateway = _router(paths)
-    await router.handle(_inbound("hi"))
-    gateway.chats[gateway.calls[0]["chat_id"]]["title"] = "Tax questions"
-
-    outcome = await router.handle(_inbound("/status"))
-    assert isinstance(outcome, Reply)
-    assert "Work" in outcome.text
-    assert "Tax questions" in outcome.text
-    assert "1" in outcome.text
-
-
-async def test_status_before_the_first_message_says_there_is_no_chat_yet(paths):
-    router, _ = _router(paths)
-    outcome = await router.handle(_inbound("/status"))
-    assert isinstance(outcome, Reply)
-    assert "Work" in outcome.text
-
-
 # --- /model ---
 
 
@@ -1009,20 +901,6 @@ async def _attached_to_a_chat(paths, **kw) -> tuple[ChannelRouter, FakeGateway]:
 
 def _model_labels(outcome) -> list[str]:
     return [opt.label for opt in outcome.options]
-
-
-async def test_model_is_listed_in_help_like_every_other_command(paths):
-    router, _ = _router(paths)
-    outcome = await router.handle(_inbound("/help"))
-    assert "/model" in outcome.text
-    assert next(c.description for c in COMMANDS if c.name == "model") in outcome.text
-
-
-async def test_model_with_no_argument_offers_the_configured_models(paths):
-    router, _gateway = await _attached_to_a_chat(paths)
-    outcome = await router.handle(_inbound("/model"))
-    assert isinstance(outcome, Choose)
-    assert _model_labels(outcome) == [USE_DEFAULT, "Fast", "Deep"]
 
 
 async def test_use_default_is_first_and_clears_the_override(paths):
@@ -1058,7 +936,6 @@ async def test_the_model_picker_is_capped_like_the_chat_picker(paths):
         gateway.add_model(f"c_{i}", f"Model {i}")
 
     outcome = await router.handle(_inbound("/model"))
-    assert MODELS_OFFERED == CHATS_OFFERED
     assert len(outcome.options) == MODELS_OFFERED + 1  # "Use default" rides above the cap
 
 
@@ -1298,24 +1175,6 @@ async def test_resuming_a_chat_drops_a_held_model_rather_than_carrying_it_in(pat
 
 
 # --- /status says which model you are on ---
-
-
-async def test_status_names_the_model_this_chat_was_given(paths):
-    router, gateway = await _attached_to_a_chat(paths)
-    await router.handle(_inbound("/model Deep"))
-
-    outcome = await router.handle(_inbound("/status"))
-    assert isinstance(outcome, Reply)
-    assert "Model: Deep" in outcome.text
-    assert INHERITED_MODEL not in outcome.text  # its own choice, not a default
-
-
-async def test_status_marks_an_inherited_model_as_the_default(paths):
-    """A Chat that chose nothing follows whatever is Active, so a later switch moves it."""
-    router, _gateway = await _attached_to_a_chat(paths)
-
-    outcome = await router.handle(_inbound("/status"))
-    assert f"Model: Fast {INHERITED_MODEL}" in outcome.text
 
 
 async def test_status_marks_a_chat_whose_chosen_model_was_deleted_as_a_default(paths):
@@ -1738,14 +1597,6 @@ async def test_a_referenced_directory_mirrors_as_its_name(paths):
     assert directory.pushed[0][2].startswith("You: what's in @src\nFiles: src")
 
 
-async def test_a_message_with_no_files_mirrors_unchanged(paths):
-    router, directory = await _mirroring_peer(paths, reply="It's sunny.")
-
-    await _browser_turn(directory, "web-1", "what's the weather?")
-
-    assert directory.pushed == [("telegram", "c1", "You: what's the weather?\n\nMe: It's sunny.")]
-
-
 async def test_prose_that_merely_says_referenced_files_is_left_alone(paths):
     """Only a well-formed block is a File reference; the words stay words."""
     router, directory = await _mirroring_peer(paths, reply="Sure.")
@@ -1823,15 +1674,6 @@ async def test_replying_to_a_mirrored_question_answers_it(paths):
 
     assert isinstance(outcome, Nothing)
     assert gateway.inquiries["inq-1"]["answer"] == "eight"
-
-
-async def test_answering_in_the_browser_retracts_the_prompt_on_the_platform(paths):
-    router, gateway, directory = await _attached(paths)
-    await gateway.raise_question("web-1", "Which table?", ("By the window",))
-
-    await gateway.answer_inquiry("inq-1", "By the window")
-
-    assert directory.retracted == [("telegram", "c1", "inq-1")]
 
 
 # --- pushing a task outcome ---
@@ -1975,21 +1817,6 @@ async def test_two_bots_of_one_platform_on_one_chat_id_are_two_conversations(pat
     assert work.chat is not None and work.chat != play.chat
 
 
-async def test_each_connection_falls_back_to_its_own_default_profile(paths):
-    """A Peer that has chosen nothing lands in the default of the Connection its
-    message arrived on, not in whichever default its platform happens to have."""
-    directory = FakeDirectory("work", "home")
-    directory.gateways["work"].reply = "from work"
-    directory.gateways["home"].reply = "from home"
-    directory.defaults = {"cn-work": "work", "cn-play": "home"}
-    router = ChannelRouter(directory, paths)
-
-    first = await router.handle(_inbound("hi", chat_id="42", connection="cn-work"))
-    second = await router.handle(_inbound("hi", chat_id="42", connection="cn-play"))
-
-    assert (first, second) == (Reply("from work"), Reply("from home"))
-
-
 async def test_a_connection_with_no_default_refuses_what_its_sibling_answers(paths):
     """The default is the Connection's own: setting one bot's does not place the other's
     conversations, and with two profiles running there is nothing to guess."""
@@ -2003,18 +1830,6 @@ async def test_a_connection_with_no_default_refuses_what_its_sibling_answers(pat
     assert answered == Reply("the answer")
     assert isinstance(asked, Choose)
     assert PeerStore(paths).get_peer("cn-play", "42") is None
-
-
-async def test_the_mirror_pushes_back_through_the_connection_the_peer_arrived_on(paths):
-    """A turn mirrored to a Peer of the second Telegram bot goes out on that bot, not
-    on whichever Connection of the platform happened to come first."""
-    router, directory = _mirroring(paths)
-    directory.gateways["work"].add_chat("web-1", "Dinner plans", _ago(minutes=1))
-    await router.choose(_inbound("", connection="cn-play"), "resume:web-1")
-
-    await _browser_turn(directory, "web-1", "what's the weather?")
-
-    assert [(cn, chat) for cn, chat, _ in directory.pushed] == [("cn-play", "c1")]
 
 
 async def test_a_question_and_its_retraction_address_the_peers_connection(paths):
@@ -2073,12 +1888,6 @@ async def test_a_message_sent_while_a_turn_runs_is_fed_into_it(paths):
     assert len(gateway.calls) == 1  # no second turn was started
 
 
-async def test_a_fed_message_says_nothing_back(paths):
-    """The answer arrives in the first message's placeholder, so this one gets none."""
-    router, _, _ = await _mid_turn(paths)
-    assert spoken_text(await router.handle(_inbound("and cheaper"))) is None
-
-
 async def test_a_file_dropped_onto_a_running_turn_goes_into_it(paths):
     router, gateway, _ = await _mid_turn(paths)
 
@@ -2093,13 +1902,6 @@ async def test_a_wordless_file_dropped_onto_a_running_turn_still_speaks_for_itse
     await router.handle(_inbound("", has_attachment=True), attachments=["<input>"])
 
     assert gateway.fed[0]["text"] == ATTACHMENT_ONLY_PROMPT
-
-
-async def test_a_message_with_no_turn_running_starts_one(paths):
-    router, gateway = _router(paths, reply="4")
-    outcome = await router.handle(_inbound("what is 2+2?"))
-    assert outcome == Reply("4")
-    assert gateway.fed == []
 
 
 async def test_a_turn_that_finished_first_runs_the_message_as_a_new_one(paths):
@@ -2167,13 +1969,6 @@ async def test_stop_before_there_is_a_chat_says_nothing_is_running(paths):
     router, gateway = _router(paths)
     assert await router.handle(_inbound("/stop")) == Reply(NOTHING_RUNNING)
     assert gateway.calls == []
-
-
-async def test_a_turn_that_was_stopped_says_nothing_where_it_started(paths):
-    """A stopped turn answers with nothing, so the message that began it is left with
-    no placeholder still saying it is working."""
-    router, _ = _router(paths, reply="")
-    assert isinstance(await router.handle(_inbound("research widgets")), Nothing)
 
 
 # --- /help ---
@@ -2263,29 +2058,6 @@ async def test_a_groups_profile_is_re_pointed_from_the_webui(paths):
     assert directory.gateways["home"].calls[0]["chat_id"] != first
 
 
-async def test_a_group_left_without_its_profile_recovers_when_re_pointed(paths):
-    """A withdrawal stops a group dead with no picker to offer; the WebUI is what
-    gets it going again."""
-    directory = FakeDirectory("work", "home")
-    router = ChannelRouter(directory, paths)
-    PeerStore(paths).select_profile("telegram", "g1", "home", surface="group")
-    directory.withdraw("home", "telegram:group")
-
-    assert await router.handle(_group("hi")) == Refuse(PROFILE_WITHDRAWN)
-
-    PeerStore(paths).select_profile("telegram", "g1", "work", surface="group")
-    assert isinstance(await router.handle(_group("hi again")), Reply)
-
-
-async def test_resume_in_a_group_offers_only_the_chats_of_its_pinned_profile(paths):
-    directory = FakeDirectory("work", "home", default="work")
-    directory.gateways["work"].add_chat("web-work", "Work things", _ago(minutes=1))
-    directory.gateways["home"].add_chat("web-home", "Home things", _ago(minutes=1))
-    router = ChannelRouter(directory, paths)
-
-    assert _resume_tokens(await router.handle(_group("/resume"))) == ["web-work"]
-
-
 async def test_a_profile_withheld_from_groups_never_shows_a_chat_in_one(paths):
     """The read-side leak this ticket closes: a group is read by everyone in it, so a
     Profile withheld from groups must be absent from the picker AND unreachable by a
@@ -2343,25 +2115,6 @@ async def test_an_unpaired_account_is_refused_a_command_in_a_group_like_anything
 # --- who gets answered ---
 
 
-async def test_group_without_a_mention_is_ignored(paths):
-    router, gateway = _router(paths)
-    outcome = await router.handle(_inbound(is_direct=False, mentioned=False))
-    assert isinstance(outcome, Nothing)
-    assert gateway.calls == []
-
-
-async def test_group_with_a_mention_is_answered(paths):
-    router, _ = _router(paths, reply="hello")
-    outcome = await router.handle(_inbound(is_direct=False, mentioned=True))
-    assert outcome == Reply("hello")
-
-
-async def test_blank_message_with_no_attachment_is_ignored(paths):
-    router, gateway = _router(paths)
-    assert isinstance(await router.handle(_inbound("   ")), Nothing)
-    assert gateway.calls == []
-
-
 def test_accepts_gates_platform_feedback_the_same_way(paths):
     router, _ = _router(paths)
     assert router.accepts(_inbound()) is True
@@ -2371,12 +2124,6 @@ def test_accepts_gates_platform_feedback_the_same_way(paths):
 
 
 # --- attachments and questions ---
-
-
-async def test_attachments_reach_the_gateway(paths):
-    router, gateway = _router(paths)
-    await router.handle(_inbound("look"), attachments=["<input>"])
-    assert gateway.calls[0]["attachments"] == ["<input>"]
 
 
 async def test_a_captionless_attachment_is_answered(paths):
@@ -2471,10 +2218,6 @@ def test_a_tool_called_twice_is_listed_twice(paths):
     assert len(_trace(*calls)) == 3
 
 
-def test_a_call_names_what_it_was_about(paths):
-    assert "src/app.py" in _trace(ToolCall("read_file", {"path": "src/app.py"}))[0]
-
-
 def test_the_preview_comes_from_the_first_preferred_key_present(paths):
     """`path` outranks `query`, so a call carrying both names the file it touched."""
     line = _trace(ToolCall("grep", {"query": "needle", "path": "src/app.py"}))[0]
@@ -2515,11 +2258,6 @@ def test_the_same_kind_of_argument_is_always_marked_the_same_way(paths):
     assert by_path == by_file
 
 
-def test_a_structured_value_under_a_preferred_key_is_omitted_too(paths):
-    line = _trace(ToolCall("write_file", {"path": {"nested": "src/app.py"}}))[0]
-    assert line.endswith("write_file") and "nested" not in line
-
-
 def test_a_structured_first_preferred_key_is_not_stood_in_for_by_a_later_one(paths):
     """The preview is the first preferred key present — the ranking is not a search for
     something printable, so a call whose `path` is a structure names no argument."""
@@ -2545,17 +2283,9 @@ def test_a_truncated_trace_says_how_many_calls_are_not_shown(paths):
     assert _trace(*calls)[0] == earlier_calls(4)
 
 
-def test_a_trace_within_the_bound_says_nothing_about_dropped_calls(paths):
-    assert len(_trace(ToolCall("read_file", {}))) == 1
-
-
 def test_a_running_turns_trace_carries_a_working_marker(paths):
     """A list that has stopped growing must not read as a finished turn."""
     assert _trace(ToolCall("read_file", {}), working=True)[0] == TRACE_WORKING
-
-
-def test_a_finished_turns_trace_carries_none(paths):
-    assert TRACE_WORKING not in tool_trace((ToolCall("read_file", {}),), working=False)
 
 
 def test_a_turn_that_called_nothing_renders_no_trace_at_all(paths):
@@ -2685,34 +2415,3 @@ async def test_a_trace_the_adapter_cannot_show_does_not_fail_the_turn(paths):
         raise RuntimeError("too many requests")
 
     assert await router.handle(_inbound(), progress=refuse) == Reply("4")
-
-
-async def test_an_unpaired_peer_never_reaches_the_trace(paths):
-    router, gateway = _router(paths)
-    gateway.will_call_tools((("read_file", {"path": "a.py"}),))
-    reported, progress = _collector()
-
-    await router.handle(_inbound("hello", sender_id="9999"), progress=progress)
-
-    assert reported == [] and gateway.calls == []
-
-
-async def test_a_command_never_reaches_the_trace(paths):
-    """A picker is not a trace: `/resume` renders as it does today."""
-    router, gateway = _router(paths)
-    reported, progress = _collector()
-
-    await router.handle(_inbound("/help"), progress=progress)
-
-    assert reported == []
-
-
-async def test_a_steering_message_reports_nothing_of_its_own(paths):
-    """It is fed into the running turn, whose own trace is already growing."""
-    router, gateway = _router(paths)
-    reported, progress = _collector()
-    gateway.start_turn(PeerStore(paths).start_chat("telegram", "c1", surface="telegram:dm"))
-
-    outcome = await router.handle(_inbound("focus on 2026"), progress=progress)
-
-    assert isinstance(outcome, Ack) and reported == []

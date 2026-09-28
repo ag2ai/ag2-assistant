@@ -283,12 +283,6 @@ def test_an_adopted_entry_is_not_re_adopted(paths):
 # --- persistence ---
 
 
-def test_the_paired_accounts_survive_a_restart(paths):
-    """Nothing is cached in the process — a fresh read sees the same accounts."""
-    PairingStore(paths).add_account(WORK, "42", "telegram")
-    assert PairingStore(paths).list_accounts(WORK)[0].account_id == "42"
-
-
 def test_a_broken_registry_reads_as_nobody_paired(paths):
     paths.root.mkdir(parents=True, exist_ok=True)
     (paths.root / "pairing.json").write_text("{ not json")

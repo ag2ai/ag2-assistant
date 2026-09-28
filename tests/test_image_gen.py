@@ -6,7 +6,7 @@ import time
 from assistant import codex_auth
 from assistant.config import Config
 from assistant.llm_configs import LlmConfigStore
-from assistant.tools.image_gen import _image_agent, _workspace_file_url, build_image_tool
+from assistant.tools.image_gen import _image_agent, _workspace_file_url
 
 
 def _cfg(provider: str, paths) -> Config:
@@ -30,11 +30,6 @@ def test_gemini_image_agent_requests_image_modality(paths):
     cfg = agent.config
     assert "IMAGE" in (cfg.response_modalities or [])
     assert "image" in cfg.model  # an image model, e.g. gemini-3.1-flash-lite-image
-
-
-def test_build_image_tool_is_named_generate_image(paths, tmp_path):
-    tool = build_image_tool(_cfg("gemini", paths), tmp_path)
-    assert tool.name == "generate_image"
 
 
 def test_workspace_file_url_is_profile_scoped_and_path_encoded(paths, tmp_path):

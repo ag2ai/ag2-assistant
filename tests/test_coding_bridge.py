@@ -16,7 +16,7 @@ from assistant.coding import bridge_server, detect
 from assistant.coding import config as cfgmod
 from assistant.coding import session as sessmod
 from assistant.coding.bridge_client import BridgeClient
-from assistant.coding.bridge_protocol import DEFAULT_PORT, encode_frame, read_frame
+from assistant.coding.bridge_protocol import encode_frame, read_frame
 from assistant.events import A2UISurface
 from tests.support.stubs import write_stub
 
@@ -79,28 +79,6 @@ async def test_read_frame_on_closed_connection_raises():
     reader.feed_eof()
     with pytest.raises(ConnectionError):
         await read_frame(reader)
-
-
-# --- endpoint parsing ------------------------------------------------------
-
-
-async def test_bridge_endpoint_unset():
-    assert detect.bridge_endpoint({}) is None
-
-
-async def test_bridge_endpoint_host_port_token():
-    ep = detect.bridge_endpoint(
-        {
-            "AG2ASSISTANT_ACP_BRIDGE": "host.docker.internal:8801",
-            "AG2ASSISTANT_ACP_BRIDGE_TOKEN": "sek",
-        }
-    )
-    assert (ep.host, ep.port, ep.token) == ("host.docker.internal", 8801, "sek")
-
-
-async def test_bridge_endpoint_bare_host_defaults_port():
-    ep = detect.bridge_endpoint({"AG2ASSISTANT_ACP_BRIDGE": "myhost"})
-    assert (ep.host, ep.port, ep.token) == ("myhost", DEFAULT_PORT, "")
 
 
 # --- pick ------------------------------------------------------------------

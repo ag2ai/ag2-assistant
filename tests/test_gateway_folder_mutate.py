@@ -3,8 +3,8 @@ the Root — through ``PUT``/``DELETE /files/raw`` and ``POST /files/move`` with
 paths (ticket 04). Every absolute path funnels through the one authorization resolver
 (``FolderStore.resolve_within``) requiring ``read_write``, so this gateway seam covers:
 edit-in-place (ADR 0011 ETag/conflict), rename/delete/move confined to the Folder's own
-subtree, the no-cross-Root-move rejection, ``read``-only denial (403), ``chat_id``
-scoping, and the untouched relative Files-space path (regression). Mirrors
+subtree, the no-cross-Root-move rejection, ``read``-only denial (403) and ``chat_id``
+scoping; relative Files-space mutations live in ``test_gateway_files.py``. Mirrors
 ``test_gateway_folder_files.py`` for the granted-Folder setup."""
 
 from fastapi.testclient import TestClient
@@ -367,24 +367,3 @@ def test_folder_mkdir_upload_is_chat_scoped(paths, tmp_path):
         assert _mkdir(client, pid, repo / "e", chat_id="c2").status_code == 400
         assert _mkdir(client, pid, repo / "e").status_code == 400
         assert not (repo / "e").exists()
-
-
-# ---- regression: relative (Files-space) mutations unchanged ----
-
-
-def test_relative_mutations_still_hit_files_space(paths, tmp_path):
-    client, pid = _client(paths)
-    with client:
-        client.post(
-            api(pid, "/files/upload"),
-            files=[("files", ("report.txt", b"hello", "text/plain"))],
-        )
-        # edit in place
-        etag = _get(client, pid, "report.txt").headers.get("etag", "").strip('"')
-        assert _put(client, pid, "report.txt", "bye", if_match=etag).status_code == 200
-        # rename
-        assert _move(client, pid, "report.txt", "renamed.txt").status_code == 200
-        # delete
-        assert _delete(client, pid, "renamed.txt").status_code == 200
-        # a relative traversal escape stays the sandbox 400/404, not a Folder lookup
-        assert _put(client, pid, "../../etc/passwd", "x").status_code == 400

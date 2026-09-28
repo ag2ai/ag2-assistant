@@ -348,7 +348,9 @@ def read_profile_sync(store_path: Path) -> str:
     if not row:
         return ""
     content = row[0]
-    return content.decode("utf-8") if isinstance(content, bytes | bytearray) else str(content)
+    if isinstance(content, bytes | bytearray):
+        return content.decode("utf-8", errors="replace")
+    return str(content)
 
 
 async def clear_profile(store_path: Path) -> bool:

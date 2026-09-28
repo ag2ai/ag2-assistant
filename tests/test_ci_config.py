@@ -1,6 +1,5 @@
 """Checks that the repository's CI configuration agrees with itself."""
 
-import json
 import re
 import subprocess
 import tomllib
@@ -125,16 +124,6 @@ def _discovered_manifests():
     return found
 
 
-def test_manifest_discovery_never_leaves_the_repository():
-    """A lockfile git ignores — a local checkout, a scratch clone — is not ours to watch."""
-    tracked = {path.as_posix() for path in _tracked_paths()}
-
-    for ecosystem, directory in _discovered_manifests():
-        filename = next(name for name, eco in _ECOSYSTEMS.items() if eco == ecosystem)
-        prefix = "" if directory == "/" else f"{directory.lstrip('/')}/"
-        assert prefix + filename in tracked
-
-
 def test_every_dependency_manifest_has_a_dependabot_ecosystem():
     config = yaml.safe_load((_ROOT / ".github/dependabot.yml").read_text())
     configured = {(entry["package-ecosystem"], entry["directory"]) for entry in config["updates"]}
@@ -179,4 +168,3 @@ def test_the_web_manifest_dependabot_watches_is_the_one_the_bundle_is_built_from
         assert directory in npm_dirs, (
             f"CI installs from {path} but dependabot watches npm in {sorted(npm_dirs)}"
         )
-    assert json.loads((_ROOT / "web/package.json").read_text())["name"]

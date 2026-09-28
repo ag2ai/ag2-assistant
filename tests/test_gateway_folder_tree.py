@@ -6,8 +6,7 @@ Two gateway seams, both funnelling through the one authorization resolver
   * ``GET /folders/roots`` — the Folder roots browsable for the open Thread
     (``chat_id``-scoped, ADR 0013), each with its resolved mode + missing-path badge.
   * ``GET /files?path=<abs>`` — ONE Directory level inside a granted Folder, noise
-    pruned, authorized (``read``) and scoped by ``chat_id``; a relative path keeps
-    today's Files-space listing (regression).
+    pruned, authorized (``read``) and scoped by ``chat_id``.
 
 Mirrors ``test_gateway_folder_files.py`` for the granted-Folder setup."""
 
@@ -71,17 +70,6 @@ def test_non_granted_folder_is_absent_from_roots(paths, tmp_path):
     with client:
         _register_folder(client, repo)  # registered but NOT granted
         assert _roots(client, pid).json()["roots"] == []
-
-
-def test_read_write_grant_surfaces_its_mode(paths, tmp_path):
-    repo = tmp_path / "acme"
-    repo.mkdir()
-    client, pid = _client(paths)
-    with client:
-        f = _register_folder(client, repo)
-        _grant(client, f["id"], pid, "read_write")
-        (root,) = _roots(client, pid).json()["roots"]
-        assert root["mode"] == "read_write"
 
 
 def test_chat_only_grant_scopes_roots_by_chat_id(paths, tmp_path):
@@ -294,15 +282,3 @@ def test_run_thread_token_resolves_chat_task_and_profile_together(paths, tmp_pat
             "assistant": "read_write",
             "scripts": "read",
         }
-
-
-def test_relative_path_still_lists_files_space(paths, tmp_path):
-    # Regression: no/relative path is unchanged — today's whole-Files-space listing.
-    client, pid = _client(paths)
-    with client:
-        client.post(
-            api(pid, "/files/upload"),
-            files=[("files", ("report.txt", b"hello", "text/plain"))],
-        )
-        body = client.get(api(pid, "/files")).json()
-        assert "root" in body and any(f["name"] == "report.txt" for f in body["files"])

@@ -220,15 +220,6 @@ def test_none_block_on_parent_spares_independent_child_grant(tmp_path):
     assert store.mode_for(acme, "work", chat_id="c1") == READ  # child grant survives
 
 
-def test_none_mode_rejected_at_profile_scope(tmp_path):
-    store = _store(tmp_path)
-    d = tmp_path / "acme"
-    d.mkdir()
-    f = store.create_folder(str(d))
-    with pytest.raises(ValueError):
-        store.set_grant(f["id"], NONE, profile="work")  # no chat_id: meaningless block
-
-
 def test_grant_path_finds_or_creates_by_path(tmp_path):
     store = _store(tmp_path)
     d = tmp_path / "acme"

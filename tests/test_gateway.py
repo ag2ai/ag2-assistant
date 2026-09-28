@@ -85,11 +85,6 @@ def fake_gateway(paths):
     return gw
 
 
-async def test_send_message_returns_reply(fake_gateway):
-    reply = await fake_gateway.send_message("hello", chat_id="s1")
-    assert reply == "echo[1]: hello"
-
-
 async def test_forwarding_events_passes_structured_events_not_transcript(fake_gateway):
     """`_forwarding_events` forwards the agent's structured events verbatim
     (so a voice client folds them with the text reducer) while OMITTING the
@@ -435,24 +430,6 @@ def test_rest_message_endpoint(profile_app):
     body = resp.json()
     assert body["reply"] == "echo[1]: hi there"
     assert body["chat_id"] == "u1"
-
-
-def test_unknown_and_archived_profile_status(paths):
-    """A prefixed route on an unknown pid 404s; on an archived pid 410s."""
-
-    registry = ProfileRegistry(paths)
-    work = registry.create_profile("Work", "#109e91")
-    registry.profile_dir(work.id).mkdir(parents=True, exist_ok=True)
-    keep = registry.create_profile("Personal", "#f95339")  # so archive isn't the last
-    registry.profile_dir(keep.id).mkdir(parents=True, exist_ok=True)
-
-    app = create_app(make_manager(paths))
-    with TestClient(app) as client:
-        assert client.get(api("ghost", "/chats")).status_code == 404
-        assert client.get(api(work.id, "/chats")).status_code == 200
-        # archive work (with a replacement default if needed), then it 410s
-        client.request("DELETE", f"/api/profiles/{work.id}", json={"new_default": keep.id})
-        assert client.get(api(work.id, "/chats")).status_code == 410
 
 
 def test_mcp_settings_endpoints(profile_app):

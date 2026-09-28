@@ -26,7 +26,6 @@ def test_create_acp_connection_round_trips_through_connection_store(paths):
 
     # A fresh ConnectionStore instance reads the same state back from disk.
     reloaded = ConnectionStore(paths).get_acp_connection(created.connection.id)
-    assert reloaded is not None
     assert reloaded.connection.id == created.connection.id
     assert reloaded.connection.platform == "acp"
     assert reloaded.connection.name == "Laptop bridge"
@@ -122,9 +121,6 @@ def test_two_listeners_resolve_to_their_own_distinct_profile(paths):
     assert listener_a.connection.id != listener_b.connection.id
     assert store.acp_profile_for(listener_a.connection.id) == pid_a
     assert store.acp_profile_for(listener_b.connection.id) == pid_b
-    # Neither binding can be read as the other's profile.
-    assert store.acp_profile_for(listener_a.connection.id) != pid_b
-    assert store.acp_profile_for(listener_b.connection.id) != pid_a
 
 
 def test_two_listeners_do_not_share_tokens(paths):
@@ -137,9 +133,6 @@ def test_two_listeners_do_not_share_tokens(paths):
 
     assert store.acp_token_for(listener_a.connection.id) == "alpha-secret"
     assert store.acp_token_for(listener_b.connection.id) == "bravo-secret"
-    assert store.acp_token_for(listener_a.connection.id) != store.acp_token_for(
-        listener_b.connection.id
-    )
 
 
 def test_deleting_one_listener_leaves_the_other_bound(paths):

@@ -168,19 +168,6 @@ def test_the_cli_runs_as_the_platforms_own_connection(paths):
     assert kwargs == {"token": "seed-tok"}
 
 
-def test_the_cli_connection_serves_the_accounts_paired_to_it(paths):
-    env = {"TELEGRAM_BOT_TOKEN": "seed-tok"}
-    real = ConnectionStore(paths, env).connections_for("telegram")[0].id
-    PairingStore(paths).add_account(real, "42", "telegram")
-
-    assert (
-        PairingStore(paths).is_paired(
-            cli._cli_connection("telegram", paths, {"TELEGRAM_BOT_TOKEN": "seed-tok"})[0], "42"
-        )
-        is True
-    )
-
-
 def test_the_cli_runs_on_the_connections_stored_token_not_a_stray_env_one(paths):
     connection = ConnectionStore(paths).create_connection(
         "telegram", "Work", {"TELEGRAM_BOT_TOKEN": "stored"}
@@ -264,11 +251,11 @@ def _cli_inbound(cid: str, text="hi", platform="telegram") -> InboundMessage:
     )
 
 
-@pytest.mark.parametrize("platform", ["telegram", "discord", "slack"])
-async def test_the_cli_router_runs_a_message_on_the_one_gateway(paths, platform):
+async def test_the_cli_router_runs_a_message_on_the_one_gateway(paths):
     """The router each single-channel command starts needs a real `ProfileDirectory`,
     not a callable returning the gateway: the first inbound message asks it which
     profiles are available, and a bare function has no answer."""
+    platform = "discord"  # no command surface, so only the directory's default places it
     cid = ConnectionStore(paths).create_connection(platform, "", {}).id
     PairingStore(paths).add_account(cid, "42", platform)
     gateway, channel = _OneGateway("4"), _OneChannel()

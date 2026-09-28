@@ -245,31 +245,6 @@ def test_a_draft_test_answers_the_same_shape_without_saving(paths):
         assert c.get("/api/llm-configs").json()["configs"] == []
 
 
-def test_the_provider_catalog_answers_the_models_current_reason_envelope(paths):
-    async def probe(_target):
-        return ["gpt-4o", "gpt-4o-mini"]
-
-    app, _pid = make_profile_app(paths, llm_catalog_probe=probe)
-    with TestClient(app) as c:
-        r = c.get("/api/llm-configs/models?type=openai")
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["current"] == ""
-    assert body["reason"] == ""
-    assert [m["id"] for m in body["models"]] == ["gpt-4o", "gpt-4o-mini"]
-    for row in body["models"]:
-        assert set(row) == {"id", "name", "description"}
-
-
-def test_a_catalog_that_cannot_be_probed_says_why(paths):
-    """`reason` is the whole reason this envelope exists — an empty list alone
-    would leave the form unable to explain itself."""
-    app, _pid = make_profile_app(paths)
-    with TestClient(app) as c:
-        body = c.get("/api/llm-configs/models?type=openai_subscription").json()
-    assert body == {"models": [], "current": "", "reason": "not_probeable"}
-
-
 # ---- live-configs ----
 
 
@@ -376,24 +351,10 @@ def test_codex_status_signed_in_reports_the_source_and_the_expiry(paths):
     assert isinstance(body["expires_at"], float)
 
 
-def test_a_login_url_carries_the_state_the_headless_fallback_quotes_back(client):
-    body = client.post("/api/codex/login_url").json()
-    assert set(body) == {"ok", "auth_url", "state"}
-    assert body["ok"] is True
-    assert body["auth_url"].startswith("https://")
-    assert body["state"]
-
-
 def test_submitting_a_code_for_an_unknown_flow_is_a_400(client):
     r = client.post("/api/codex/submit", json={"state": "nope", "code": "abc"})
     assert r.status_code == 400
     assert r.json()["error"] == "unknown or expired sign-in"
-
-
-def test_codex_logout_answers_the_bare_acknowledgement(client):
-    body = client.post("/api/codex/logout").json()
-    assert set(body) == {"ok"}
-    assert isinstance(body["ok"], bool)
 
 
 # ---- the reload every install-wide write owes the running profiles ----

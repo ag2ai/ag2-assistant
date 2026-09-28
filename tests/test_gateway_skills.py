@@ -51,19 +51,6 @@ def test_state_unknown_skill_404(paths):
         assert r.status_code == 404
 
 
-def test_state_toggle_reflected_in_resolved_catalog(paths):
-    """Disabling install-wide makes the skill resolve unavailable for the profile's
-    agent — asserted via the resolution seam the build uses."""
-    from assistant.skills import SkillStateStore
-
-    client, _pid = _client(paths)
-    with client:
-        client.post("/api/skills/pdf-tools/state", json={"enabled": False})
-        store = SkillStateStore(paths.root / "skills.json")
-        assert store.is_available("pdf-tools") is False
-        assert store.is_available("web-research") is True
-
-
 def test_state_toggle_fans_out_to_all_runtimes(paths):
     """An install-wide toggle reloads EVERY live runtime, so the disabled skill leaves
     the catalog everywhere at once — including profiles nobody is chatting with."""

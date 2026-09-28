@@ -198,19 +198,3 @@ def test_a_listener_with_no_port_gets_no_token(profiled):
 
     assert body["token"] == ""
     assert body["listener"]["has_token"] is False
-
-
-def test_a_stdio_listener_is_the_one_the_cli_resolves_by_name(profiled, paths):
-    """--connection takes an id or an exact name, and ignores port precisely so a
-    portless record resolves (assistant/acp/listeners.py::stdio_connection_target)."""
-    from assistant.acp.listeners import stdio_connection_target
-    from assistant.connections import ConnectionStore
-
-    client, pid = profiled
-    created = client.post(
-        "/api/acp/listeners", json={"profile": pid, "name": "Space · prod"}
-    ).json()["listener"]
-
-    profile, connection_id = stdio_connection_target(ConnectionStore(paths), "Space · prod")
-    assert profile == pid
-    assert connection_id == created["id"]

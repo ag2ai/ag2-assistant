@@ -13,10 +13,6 @@ from tests.support.apps import api, make_profile_app
 from tests.support.fakes import fake_summary_factory
 
 
-def test_app_imports_cleanly():
-    import assistant.gateway.app  # noqa: F401  (route wiring is executed at import)
-
-
 async def test_update_task_patch_semantics(paths, tmp_path):
     svc = TaskService(
         config=Config.for_paths(paths),

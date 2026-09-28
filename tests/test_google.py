@@ -192,7 +192,6 @@ def test_install_hint_matches_how_this_install_was_made(tmp_path):
     (module location, interpreter prefix) — no environment to patch."""
     from pathlib import Path
 
-    checkout = Path("/repo/src/assistant/integrations/google_auth.py")
     src_tree = tmp_path / "src" / "assistant" / "integrations"
     src_tree.mkdir(parents=True)
     (tmp_path / "pyproject.toml").write_text("[project]\n")
@@ -207,7 +206,6 @@ def test_install_hint_matches_how_this_install_was_made(tmp_path):
     assert hint.startswith("uv tool install") and "ag2-assistant[google]" in hint
 
     assert install_hint(orphan, Path("/usr/local")) == 'pip install "ag2-assistant[google]"'
-    assert checkout  # documents the shape the real module path has
 
 
 def test_google_login_url_and_callback(paths):
@@ -309,6 +307,4 @@ def test_build_service_gives_install_hint_not_import_error(google):
     with _pytest.raises(ImportError) as exc:
         google.build_service("gmail", "v1")
     msg = str(exc.value)
-    assert msg == google._missing_libs_message()
     assert "Install with:" in msg and google.install_hint() in msg
-    assert msg != "No module named 'googleapiclient'"  # never the bare error

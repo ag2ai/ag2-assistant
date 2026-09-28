@@ -73,13 +73,12 @@ def _payload(code, desc, wind_kmph="10"):
 def test_build_result_celsius_shape_and_enum():
     r = build_result(_payload(296, "Light rain"), "London", "celsius")
     assert r["condition"] == "rainy"
-    assert r["condition"] in WEATHER_CONDITIONS
     assert r["location"] == "London, United Kingdom"
     labels = {row["label"]: row["value"] for row in r["rows"]}
     assert labels["Temperature"] == "12°C (feels 10°C)"
     assert labels["Conditions"] == "Light rain"
     assert labels["Humidity"] == "82%"
-    assert labels["Wind"] == "24 km/h" or labels["Wind"] == "10 km/h"  # uses windspeedKmph
+    assert labels["Wind"] == "10 km/h"  # uses windspeedKmph
     assert labels["Today"] == "High 15°C · Low 9°C"
 
 

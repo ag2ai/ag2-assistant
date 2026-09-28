@@ -101,13 +101,6 @@ def _put(client, pid, path, body, *, if_match=None):
     return client.put(api(pid, "/files/raw"), params={"path": path}, content=body, headers=headers)
 
 
-def test_get_raw_emits_etag(profile_app):
-    client, pid = profile_app
-    client.post(api(pid, "/files/upload"), files=[("files", ("n.md", b"hi", "text/plain"))])
-    r = client.get(api(pid, "/files/raw"), params={"path": "n.md"})
-    assert r.status_code == 200 and r.headers.get("etag")
-
-
 def test_put_with_correct_if_match_writes_and_returns_new_etag(profile_app):
     client, pid = profile_app
     client.post(api(pid, "/files/upload"), files=[("files", ("n.md", b"old", "text/plain"))])
@@ -170,13 +163,6 @@ def test_put_non_utf8_body_is_400(profile_app):
     r = _put(client, pid, "n.md", b"\xff\xfe not utf-8")
     assert r.status_code == 400
     assert client.get(api(pid, "/files/raw"), params={"path": "n.md"}).content == b"old"
-
-
-def test_put_to_directory_is_404(profile_app):
-    client, pid = profile_app
-    client.post(api(pid, "/files/mkdir"), json={"path": "sub"})
-    r = _put(client, pid, "sub", b"x", if_match="whatever")
-    assert r.status_code == 404
 
 
 def test_put_is_per_profile_scoped(profile_app):

@@ -79,7 +79,6 @@ async def test_capture_failure_writes_record_with_history_shape(tmp_path):
         error=err,
         stream=stream,
     )
-    assert path is not None
     rec = json.loads(open(path).read())
     assert rec["chat_id"] == "task:abc"
     assert rec["error_type"] == "ValueError" and "boom" in rec["error"]

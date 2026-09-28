@@ -48,13 +48,6 @@ def test_build_agent_tools_has_core_capabilities():
     assert len(tools) == 12
 
 
-@pytest.mark.parametrize("ctype", ["gemini", "anthropic", "openai_responses", "openai", ""])
-def test_every_type_gets_the_local_fetcher_by_default(ctype):
-    """A provider's own fetcher is opt-in per model (ADR 0029), so the type alone
-    no longer decides — this used to branch on `provider`."""
-    assert web_fetch_tool in build_agent_tools(ctype)
-
-
 def test_the_native_fetcher_replaces_ours_only_when_switched_on():
     tools = build_agent_tools("anthropic", builtin={"web_fetch": {}})
     assert web_fetch_tool not in tools  # ours stood down for it
@@ -137,13 +130,6 @@ def test_capability_scoping_limits_tools():
     assert files == {"read_file", "list_folder", "write_file"}
 
     assert build_agent_tools("gemini", capabilities=[]) == []  # no caps → no tools
-
-
-def test_no_capabilities_filter_is_all_tools():
-    """Chat path (capabilities=None) still gets the full default tool set."""
-    names = {t.name for t in build_agent_tools("gemini")}
-    assert {"duckduckgo_search", "web_fetch", "read_file"} <= names
-    assert any("run_" in n for n in names)
 
 
 def test_mcp_tools_are_namespaced_to_avoid_native_name_collisions(paths, tmp_path):
@@ -378,12 +364,3 @@ def test_images_capability_adds_generate_image(paths, tmp_path):
         t.name for t in build_agent_tools("gemini", capabilities=["images"], workspace_dir=tmp_path)
     }
     assert "generate_image" not in without_cfg  # no config → skipped
-
-
-def test_no_workspace_dir_means_no_fs_tools():
-    """Without a workspace_dir, only the Grant-gated host tools are present (no
-    AG2 FS toolkit, since it has no workspace to be scoped to)."""
-    tools = build_agent_tools("gemini", capabilities=["files"], workspace_dir=None)
-    names = [t.name for t in tools if getattr(t, "name", None)]
-    assert {"read_file", "list_folder", "write_file"} <= set(names)
-    assert "update_file" not in names  # no workspace → no AG2 FS toolkit

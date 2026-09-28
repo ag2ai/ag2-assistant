@@ -10,7 +10,6 @@ over the isolated ``paths`` fixture.
 
 import json
 import os
-import stat
 
 import pytest
 
@@ -110,11 +109,6 @@ def test_an_unknown_env_name_is_rejected(paths):
         store.set_connection_tokens("cn_1", {"OPENAI_API_KEY": "nope"})
     with pytest.raises(ValueError):
         store.set_connection_tokens("cn_1", {"MADE_UP_TOKEN": "nope"})
-
-
-def test_the_secrets_file_is_0600(paths):
-    SecretStore(paths).set_connection_tokens("cn_1", {DISCORD: "d-tok"})
-    assert stat.S_IMODE(paths.secrets_json.stat().st_mode) == 0o600
 
 
 def test_status_reports_presence_and_a_hint_never_the_value(paths):

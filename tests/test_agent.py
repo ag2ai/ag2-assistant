@@ -85,13 +85,3 @@ def test_model_config_codex_empty_model(paths, tmp_path):
     mc = model_config(cfg)
     assert isinstance(mc, CodexConfig)
     assert mc.env is None
-
-
-def test_build_middleware_codex_skips_llm_timeout(paths):
-    cfg = Config.for_paths(paths)
-    # Same reasoning as claude_code: one ACP "LLM call" is a whole inner tool
-    # loop; ACPConfig.turn_timeout is the ceiling instead.
-    cfg.llm.provider = "codex"
-    mw = _build_middleware(cfg)
-    assert not any(isinstance(m, LLMTimeoutMiddleware) for m in mw)
-    assert any(isinstance(m, LLMRetryMiddleware) for m in mw)

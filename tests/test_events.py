@@ -53,7 +53,6 @@ def test_custom_event_round_trips_through_wire(event):
     assert cls is type(event)
 
     back = cls.from_dict(record["data"])
-    assert type(back) is type(event)
     # every declared field survives the round-trip
     for f in event._event_fields_:
         assert getattr(back, f) == getattr(event, f)

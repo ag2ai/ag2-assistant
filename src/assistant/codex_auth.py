@@ -21,7 +21,6 @@ mirroring ``integrations.google_auth``.
 
 import base64
 import contextlib
-import contextlib as _contextlib
 import hashlib
 import http.server
 import json
@@ -29,7 +28,6 @@ import os
 import secrets as _secrets
 import socket
 import time
-import time as _time
 import urllib.parse
 import webbrowser
 from dataclasses import dataclass
@@ -264,14 +262,14 @@ def _capture_code(state: str, timeout_s: float = 300.0) -> str:
         ) from exc
 
     server.timeout = 1.0  # poll interval; loop below enforces the real deadline
-    deadline = _time.monotonic() + timeout_s
+    deadline = time.monotonic() + timeout_s
     with server:
         # Loop, not a single handle_request(): a stray hit (favicon / a browser's
         # IPv6-then-IPv4 retry) must not consume our one shot and close the socket.
         while not captured.get("code") and not captured.get("error"):
-            if _time.monotonic() >= deadline:
+            if time.monotonic() >= deadline:
                 break
-            with _contextlib.suppress(Exception):
+            with contextlib.suppress(Exception):
                 server.handle_request()  # returns after `timeout` if no request
     if captured.get("error"):
         raise CodexAuthError(f"OpenAI returned: {captured['error']}")

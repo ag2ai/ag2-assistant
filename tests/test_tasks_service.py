@@ -425,14 +425,6 @@ async def test_delete_task_drops_task_scoped_permissions(paths, tmp_path):
     assert perms.granted_commands(task_id=t["id"]) == []
 
 
-async def test_delete_task_tolerates_gateway_without_permissions(paths, tmp_path):
-    """A gateway stub with no `.permissions` (plain FakeGateway, as most tests use)
-    must not break delete_task — dropping task rules is best-effort."""
-    svc = await _svc(paths, tmp_path, FakeGateway())
-    t = await svc.create_task(name="D2", prompt="p")
-    assert await svc.delete_task(t["id"]) is True
-
-
 async def test_list_tasks_carries_last_run_and_unread(paths, tmp_path):
     gw = FakeGateway()
     svc = await _svc(paths, tmp_path, gw)

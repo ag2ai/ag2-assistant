@@ -34,11 +34,3 @@ def test_non_run_streams_and_missing_runs_resolve_empty():
     assert asyncio.run(stub._task_for_stream("task-run:run-gone")) == ""
     stub_no_tasks = _Stub(None)
     assert asyncio.run(stub_no_tasks._task_for_stream("task-run:run-1")) == ""
-
-
-def test_lookup_errors_degrade_to_plain_chat():
-    class _Boom:
-        async def get_run(self, run_id):
-            raise RuntimeError("store down")
-
-    assert asyncio.run(_Stub(_Boom())._task_for_stream("task-run:run-1")) == ""
