@@ -152,7 +152,6 @@ async def test_recall_keeps_a_settled_run_that_has_no_summary(paths, tmp_path):
 
 
 async def test_recall_budget_drops_oldest_and_says_how_many(paths, tmp_path):
-    from assistant.gateway import tasks_service as ts
     from assistant.tasks.model import RunStatus
 
     gw = FakeGateway()
@@ -162,17 +161,12 @@ async def test_recall_budget_drops_oldest_and_says_how_many(paths, tmp_path):
     for i in range(6):
         r = await svc._store.create_run(t["id"])
         await svc._store.set_run_status(
-            r.id, RunStatus.COMPLETED, summary=f"outcome {i} " + "x" * 80
+            r.id, RunStatus.COMPLETED, summary=f"outcome {i} " + "x" * 5_000
         )
         ids.append(r.id)
 
-    monkey = ts._RECALL_BUDGET
-    ts._RECALL_BUDGET = 300  # room for a couple of rows, not six
-    try:
-        await svc.start_run(t["id"])
-        await asyncio.wait_for(svc._jobs_done(), 5)
-    finally:
-        ts._RECALL_BUDGET = monkey
+    await svc.start_run(t["id"])  # six 5k summaries overrun the 16k surface budget
+    await asyncio.wait_for(svc._jobs_done(), 5)
     surface = gw.sent[0]["surface"]
     assert ids[-1] in surface and ids[0] not in surface  # newest kept, oldest dropped
     assert "older runs — get_task lists every one" in surface

@@ -18,8 +18,14 @@ def web_fetch(url: str, max_chars: int = 10000) -> str:
     Returns:
         The extracted text content from the page.
     """
+    with httpx.Client() as client:
+        return fetch_page(client, url, max_chars)
+
+
+def fetch_page(client: httpx.Client, url: str, max_chars: int = 10000) -> str:
+    """``web_fetch`` over the given client: readable text, or an error line."""
     try:
-        response = httpx.get(
+        response = client.get(
             url,
             follow_redirects=True,
             timeout=30.0,

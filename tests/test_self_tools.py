@@ -41,7 +41,6 @@ async def _run(tool, **kwargs):
         return await tool.model.asolve(stack=stack, cache_dependencies={}, **kwargs)
 
 
-@pytest.mark.asyncio
 async def test_no_grants_says_allowlist_not_blocked(tmp_path):
     """The common case: nothing is reachable, and nothing is 'blocked' either."""
     tools = _tools(tmp_path)
@@ -50,7 +49,6 @@ async def test_no_grants_says_allowlist_not_blocked(tmp_path):
     assert "Settings → Folders" in out
 
 
-@pytest.mark.asyncio
 async def test_profile_grant_is_reported(tmp_path):
     target = tmp_path / "docs"
     target.mkdir()
@@ -63,7 +61,6 @@ async def test_profile_grant_is_reported(tmp_path):
     assert "read only" in out
 
 
-@pytest.mark.asyncio
 async def test_chat_grant_is_visible_only_in_that_chat(tmp_path):
     """The whole reason this tool reads the turn's PermissionManager: a chat-scoped
     Grant must show up in its own chat and nowhere else."""
@@ -89,7 +86,6 @@ async def test_chat_grant_is_visible_only_in_that_chat(tmp_path):
     assert "no Grant for this" in other_chat
 
 
-@pytest.mark.asyncio
 async def test_grant_is_persona_scoped(tmp_path):
     """A Grant carries a profile even when chat-scoped — another persona sees nothing."""
     target = tmp_path / "mine"
@@ -105,7 +101,6 @@ async def test_grant_is_persona_scoped(tmp_path):
     assert "Mine" not in out
 
 
-@pytest.mark.asyncio
 async def test_allow_once_is_not_reported_as_access(tmp_path):
     """Turn-scoped `_once` is not a Grant; reporting it as access would be a lie."""
     target = tmp_path / "temp"
@@ -118,7 +113,6 @@ async def test_allow_once_is_not_reported_as_access(tmp_path):
     assert "Temp" not in out
 
 
-@pytest.mark.asyncio
 async def test_missing_directory_is_repointable_not_an_error(tmp_path):
     target = tmp_path / "gone"
     target.mkdir()
@@ -131,13 +125,11 @@ async def test_missing_directory_is_repointable_not_an_error(tmp_path):
     assert "repointed" in out
 
 
-@pytest.mark.asyncio
 async def test_describe_settings_states_model_is_install_wide(tmp_path):
     out = await _run(_tools(tmp_path)["describe_settings"])
     assert "install-wide" in out
 
 
-@pytest.mark.asyncio
 async def test_describe_integrations_reports_google_and_mcp(tmp_path):
     out = await _run(_tools(tmp_path)["describe_integrations"])
     assert "Google:" in out

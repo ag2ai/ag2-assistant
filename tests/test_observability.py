@@ -97,7 +97,7 @@ async def test_capture_failure_best_effort_no_stream(tmp_path):
 
 
 def test_log_suppressed_records_context(caplog):
-    caplog.set_level("WARNING", logger="ag2-assistant")
+    caplog.set_level("WARNING", logger="ag2assistant")
     err = RuntimeError("emit failed")
     log_suppressed("task event emit", err, task_id="task-1", status="running")
 

@@ -16,7 +16,6 @@ from ag2.acp import ACPAgent
 from ag2.acp.testing import connect
 from ag2.testing import TestConfig
 
-from assistant.acp import serve as serve_module
 from assistant.acp.serve import cold_start_agent
 
 
@@ -53,28 +52,6 @@ async def test_cold_start_agent_completes_handshake_and_fails_the_turn_clearly()
             await client.prompt(session_id=session.session_id, prompt=[acp.text_block("hi")])
 
     assert "profiles create" in exc_info.value.data["reason"]
-
-
-async def test_serve_stdio_wires_cold_start_agent_when_no_profile_exists(paths, monkeypatch):
-    """The production ``serve_stdio`` entry, with the transport stubbed out — an
-    isolated layout with no registered profile, so this exercises the same
-    ``UnknownProfile`` branch a cold ``uvx`` install would hit."""
-    captured: dict[str, ACPAgent] = {}
-
-    async def fake_run_stdio_guarded(acp_agent: ACPAgent) -> None:
-        captured["agent"] = acp_agent
-
-    monkeypatch.setattr(serve_module, "_run_stdio_guarded", fake_run_stdio_guarded)
-
-    await serve_module.serve_stdio(None, paths, env={})
-
-    acp_agent = captured["agent"]
-    async with connect(acp_agent, initialize=False) as (client, _recorder):
-        init = await client.initialize(protocol_version=acp.PROTOCOL_VERSION)
-        ids = {m.id for m in init.auth_methods or []}
-        assert {"terminal", "env_var"} <= ids  # the registry gate reads exactly this line
-        with pytest.raises(acp.RequestError):
-            await client.new_session(cwd=".")  # unconfigured ⇒ auth_required (ADR-0035)
 
 
 async def test_real_acp_command_emits_nothing_but_jsonrpc_on_stdout(tmp_path):

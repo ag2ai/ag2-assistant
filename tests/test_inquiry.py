@@ -118,11 +118,3 @@ async def test_durable_asker_rebind_tags_subtask(tmp_path):
     assert child.task_id == "child"
     await child.ask(Question(text="q"))
     assert (await store.list_all())[0].task_id == "child"
-
-
-# Note: the old TaskManager/DeliverableStatus/TaskStatus integration tests that
-# used to live here exercised task-executor machinery removed by the TaskService
-# v2 rewrite (a run is now one ordinary chat turn, executed by the gateway itself
-# — there is no separate injectable executor/TaskManager to submit/cancel/wait
-# on). The generic DurableAsker behavior above (persists, resolves out-of-band,
-# times out, rebinds) is unaffected and still fully covered.

@@ -8,6 +8,7 @@ web_fetch fallback that's kept for providers without native web fetch.
 import asyncio
 from contextlib import asynccontextmanager
 
+import httpx
 import pytest
 from ag2.context import ConversationContext
 from ag2.events import ToolCallEvent
@@ -26,7 +27,8 @@ from assistant.tools.mcp import (
     describe_mcp_error,
     namespaced_tool_name,
 )
-from assistant.tools.web_fetch import web_fetch
+from assistant.tools.web_fetch import fetch_page
+from tests.support.http import client
 
 
 def test_build_agent_tools_has_core_capabilities():
@@ -57,28 +59,33 @@ def test_the_native_fetcher_replaces_ours_only_when_switched_on():
 # --- custom web_fetch fallback (plain function) ---
 
 
-def test_web_fetch_html():
-
-    # example.com is an IANA-maintained, highly stable test domain.
-    result = web_fetch(url="https://example.com", max_chars=5000)
-    if result.startswith("Error fetching"):
-        pytest.skip("network/example.com unavailable")
-    assert isinstance(result, str)
-    assert "Example Domain" in result
+def _page(body: str, content_type: str):
+    return lambda request: httpx.Response(200, text=body, headers={"content-type": content_type})
 
 
-def test_web_fetch_json():
+def test_web_fetch_extracts_the_readable_text_of_a_page():
+    html = (
+        "<html><head><title>Example Domain</title><script>x()</script></head>"
+        "<body><nav>menu</nav><main><h1>Example Domain</h1><p>For examples.</p></main></body>"
+        "</html>"
+    )
+    result = fetch_page(client(_page(html, "text/html")), "https://example.com")
+    assert result == (
+        "# Example Domain\n\nSource: https://example.com\n\nExample Domain\nFor examples."
+    )
 
-    result = web_fetch(url="https://httpbin.org/json", max_chars=5000)
-    if result.startswith("Error fetching") or "Error fetching" in result[:40]:
-        pytest.skip("httpbin.org unavailable")
-    assert "JSON" in result
+
+def test_web_fetch_passes_json_through():
+    result = fetch_page(client(_page('{"a": 1}', "application/json")), "https://x.test/j")
+    assert result == 'JSON from https://x.test/j:\n\n{"a": 1}'
 
 
-def test_web_fetch_invalid_url():
+def test_web_fetch_reports_an_unreachable_host():
+    def unreachable(request):
+        raise httpx.ConnectError("name resolution failed")
 
-    result = web_fetch(url="https://thisdomaindoesnotexist.invalid", max_chars=1000)
-    assert "Error" in result
+    result = fetch_page(client(unreachable), "https://nowhere.invalid")
+    assert result == "Error fetching https://nowhere.invalid: name resolution failed"
 
 
 @pytest.mark.integration

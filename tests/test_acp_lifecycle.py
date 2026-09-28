@@ -25,6 +25,8 @@ from assistant.profiles import ProfileRegistry
 from tests.support.apps import make_manager
 from tests.support.fakes import fake_agent_factory
 
+CREDENTIALED = {"GEMINI_API_KEY": "test-key"}
+
 
 def _free_port() -> int:
     """A loopback port nothing is listening on yet — released before the caller binds it."""
@@ -82,13 +84,12 @@ def _pong_factory():
     )
 
 
-async def test_start_brings_up_a_reachable_listener_and_close_tears_it_down(paths, monkeypatch):
-    monkeypatch.setattr("assistant.acp.auth.profile_has_credentials", lambda config, env: True)
+async def test_start_brings_up_a_reachable_listener_and_close_tears_it_down(paths):
     pid = ProfileRegistry(paths).create_profile("Work", "#336699").id
     port = _free_port()
     listener = ConnectionStore(paths).create_acp_connection(pid, port=port, token="s3cret")
 
-    mgr = make_manager(paths, agent_factory=_pong_factory())
+    mgr = make_manager(paths, env=CREDENTIALED, agent_factory=_pong_factory())
     await mgr.start()
     try:
         assert listener.connection.id in mgr.acp_listeners
@@ -259,17 +260,16 @@ async def test_manager_listener_installs_owner_side_approvals_once(paths):
         await mgr.close()
 
 
-async def test_manager_listener_sessions_persist_as_chats(paths, monkeypatch):
+async def test_manager_listener_sessions_persist_as_chats(paths):
     """A conversation through a manager-booted listener lands as a Chat whose Peer is
     attributed to the stored Connection's real id."""
     from assistant.peers import PeerStore
 
-    monkeypatch.setattr("assistant.acp.auth.profile_has_credentials", lambda config, env: True)
     pid = ProfileRegistry(paths).create_profile("Work", "#336699").id
     port = _free_port()
     listener = ConnectionStore(paths).create_acp_connection(pid, port=port, token="s3cret")
 
-    mgr = make_manager(paths, agent_factory=_pong_factory())
+    mgr = make_manager(paths, env=CREDENTIALED, agent_factory=_pong_factory())
     await mgr.start()
     try:
         await _wait_listening(port)

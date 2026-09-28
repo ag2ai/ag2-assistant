@@ -364,14 +364,6 @@ def test_saving_a_key_reloads_every_runtime_so_the_next_turn_sees_it(paths):
     """The routes moved into three modules but kept one shared `reload_all`; this
     is the behaviour that would silently rot if a module grew its own copy."""
     manager = make_manager(paths)
-    reloaded: list[str] = []
-    original = manager.reload
-
-    async def record(pid):
-        reloaded.append(pid)
-        return await original(pid)
-
-    manager.reload = record
     from assistant.gateway.app import create_app
     from assistant.profiles import ProfileRegistry
 
@@ -381,5 +373,6 @@ def test_saving_a_key_reloads_every_runtime_so_the_next_turn_sees_it(paths):
         assert c.post("/api/secrets/key", json={"provider": "openai", "value": "sk-9"}).json() == {
             "ok": True
         }
-    assert reloaded == [meta.id]
+        live = manager.get(meta.id).require_config().secret_env
+        assert live.get("OPENAI_API_KEY") == "sk-9"
     assert SecretStore(paths).status({}).get("openai", {}).get("set") is True
