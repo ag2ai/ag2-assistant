@@ -20,6 +20,7 @@ export type TaskDraft = {
   model?: string | null
   schedule?: Record<string, unknown> | null
   description?: string
+  recall_depth?: number
 }
 
 // TaskPatch — absent means unchanged; model '' clears back to the profile default.
@@ -31,6 +32,7 @@ export type TaskPatchBody = {
   paused?: boolean
   starred?: boolean
   description?: string
+  recall_depth?: number
 }
 
 export const tasksApi = {
@@ -61,6 +63,9 @@ export const tasksApi = {
   stopRun: (id: string) => post(P('/runs/' + encodeURIComponent(id) + '/stop'), undefined, Ok),
 
   runSeen: (id: string) => post(P('/runs/' + encodeURIComponent(id) + '/seen'), undefined, Ok),
+
+  taskRunsSeen: (id: string) =>
+    post(P('/tasks/' + encodeURIComponent(id) + '/seen'), undefined, Ok),
 
   inquiries: () => get(P('/inquiries/pending'), InquiryList).then((d) => d.pending),
 

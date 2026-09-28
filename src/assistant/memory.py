@@ -125,7 +125,7 @@ async def record_preference(
     note = (note or "").strip()
     removals = [r for r in (remove or []) if r and r.strip()]
     store = build_profile_store(store_path)
-    existing = await store.read(PROFILE_PATH) if await store.exists(PROFILE_PATH) else ""
+    existing = (await store.read(PROFILE_PATH) or "") if await store.exists(PROFILE_PATH) else ""
     doc = existing if existing.strip() else _blank_profile()
     if not note and not removals:
         return doc  # nothing to do (e.g. the feedback is already captured)
@@ -252,6 +252,8 @@ def build_knowledge_config(
         A KnowledgeConfig wiring a SQLite store + working-memory aggregation.
     """
     if store is None:
+        if store_path is None:
+            raise ValueError("build_knowledge_config needs a store_path when no store is given")
         store = build_profile_store(store_path)
 
     if aggregate_config is None:
@@ -322,7 +324,7 @@ async def read_profile(store_path: Path) -> str:
     store = SqliteKnowledgeStore(str(store_path))
     if not await store.exists(PROFILE_PATH):
         return ""
-    return await store.read(PROFILE_PATH)
+    return await store.read(PROFILE_PATH) or ""
 
 
 def read_profile_sync(store_path: Path) -> str:

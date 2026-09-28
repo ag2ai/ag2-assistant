@@ -2,6 +2,7 @@
 // and the probe result both Test buttons return.
 import { z } from 'zod'
 import { SecretRef, SharedKey } from './primitives.ts'
+import { CatalogModel } from './system.ts'
 
 // Optional provider-library state for a config type (llm_configs.deps_status).
 export const DepsStatus = z.object({
@@ -23,6 +24,10 @@ export const LlmConfig = z.object({
   base_url: z.string(),
   host: z.string(),
   options: z.record(z.string(), z.unknown()),
+  // Provider-native tools switched on, as {tool id: options}. Options are always
+  // empty today — every field on the registered tools is optional — but the shape
+  // is a map so an option panel can land without changing the contract.
+  builtin_tools: z.record(z.string(), z.record(z.string(), z.unknown())),
   secret_id: z.string(),
   secret: SecretRef.nullable(),
   secret_missing: z.boolean(),
@@ -48,8 +53,23 @@ export const LlmConfigList = z.object({
   active: z.string().nullable(),
   env_override: LlmEnvOverride.nullable(),
   provider_deps: z.record(z.string(), DepsStatus),
+  // type -> the provider-native tool ids that type offers. Ids only; the words
+  // are lib/builtinTools.ts's. Every type, not just the configured ones, so the
+  // form can render a type no config uses yet.
+  builtin_tools_by_type: z.record(z.string(), z.array(z.string())),
 })
 export type LlmConfigList = z.infer<typeof LlmConfigList>
+
+// GET /api/llm-configs/models — the same {models, current, reason} envelope the ACP
+// route uses, with provider_catalog.py's own reasons (lib/modelSuggest.ts REASON)
+// instead of the coding-agent ones. `current` is always '' here: a provider names no
+// model of its own. CatalogModel is shared with the ACP route, hence the import.
+export const ProviderCatalog = z.object({
+  models: z.array(CatalogModel),
+  current: z.string(),
+  reason: z.enum(['', 'unauthorized', 'unreachable', 'no_list_endpoint', 'not_probeable']),
+})
+export type ProviderCatalog = z.infer<typeof ProviderCatalog>
 
 export const LlmConfigSaved = z.object({
   ok: z.literal(true),

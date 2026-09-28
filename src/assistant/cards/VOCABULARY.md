@@ -3,7 +3,7 @@
 Every **Card** — Bundled, Global or Profile — declares its `layout` from the primitives and
 the styling words listed here. A Card never carries a colour or a length: it names a tone, an
 emphasis, a size or a gap, and the renderer resolves the name to a design token
-([ADR 0028](../../../docs/adr/0028-a-cards-look-is-data-not-code.md)).
+([ADR 0037](../../../docs/adr/0037-a-cards-look-is-data-not-code.md)).
 
 A value is either written out or **bound**: `{path: /title}` reads the data model,
 `{path: ./day}` reads the item a repeated template is drawing, and `{path: .}` is that item

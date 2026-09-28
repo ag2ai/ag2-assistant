@@ -68,7 +68,7 @@ def test_audio_events_flagged_binary_others_not():
     assert not is_binary_event(TaskCreated("task-1"))
 
 
-# --- What is stored, and what a client is sent (ADR 0027) -------------------
+# --- What is stored, and what a client is sent (ADR 0036) -------------------
 
 
 def _coding_instance() -> A2UISurface:

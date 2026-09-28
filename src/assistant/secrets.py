@@ -218,15 +218,16 @@ class SecretStore:
         dup = next((s for s in items if s.get("value") == value), None)
         if dup:
             raise DuplicateValue(_secret_view(dup))
+        secret_id = "s_" + token_hex(4)
         entry = {
-            "id": "s_" + token_hex(4),
+            "id": secret_id,
             "name": name,
             "value": value,
             "provider": provider,
             "default": default,
         }
         if default:
-            _displace_default(items, provider, entry["id"])
+            _displace_default(items, provider, secret_id)
         items.append(entry)
         data[_SECRETS_FIELD] = items
         self._write(data)

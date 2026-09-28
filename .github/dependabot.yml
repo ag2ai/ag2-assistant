@@ -1,0 +1,39 @@
+# Version updates for the manifests that ship code to users. Security updates are a
+# repository setting, not a file, so they are not configured here.
+version: 2
+updates:
+  # `uv`, not `pip`: only the uv updater regenerates uv.lock, which the `lockfile` job
+  # in ci.yml requires. tests/test_ci_config.py asserts every manifest has an entry.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    groups:
+      # `applies-to` is explicit because it defaults to version-updates: these groups do
+      # not cover security updates, and grouping those needs its own group.
+      python-minor-and-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      python-major:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["major"]
+    ignore:
+      # Which ag2 version ships is a product decision, not a monthly bump.
+      - dependency-name: "ag2"
+
+  # Merging one of these needs the SPA bundle rebuilt, or ci.yml's `bundle-fresh` fails.
+  - package-ecosystem: "npm"
+    directory: "/web"
+    schedule:
+      interval: "monthly"
+    groups:
+      web-minor-and-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      web-major:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["major"]

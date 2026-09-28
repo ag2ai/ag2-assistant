@@ -2,7 +2,7 @@
 
 import json
 from functools import lru_cache
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ag2.a2ui import a2ui_action
 from ag2.a2ui.actions import collect_action_declarations, collect_server_actions
@@ -18,6 +18,9 @@ from assistant.cards import (
     root_component,
 )
 from assistant.events import A2UISurface
+
+if TYPE_CHECKING:
+    from ag2.a2ui.schema_manager import A2UISchemaManager
 
 # A2UI protocol message keys — a JSON array whose items carry any of these is an
 # A2UI message batch (used to recover surfaces from models that omit the wrapper).
@@ -79,41 +82,43 @@ def bundled_cards() -> dict[str, Card]:
     return load_cards(bundled_cards_dir(), components=CARD_VOCABULARY)
 
 
-class _AssistantSchemaManager:
-    """Filter AG2's merged Basic Catalog to this renderer's supported subset."""
+def _build_schema_manager(*args: Any, **kwargs: Any) -> "A2UISchemaManager":
+    """AG2's schema manager, filtering its merged Basic Catalog to this renderer's
+    supported subset."""
+    from ag2.a2ui.schema_manager import A2UISchemaManager
 
-    def __new__(cls, *args, **kwargs):
-        from ag2.a2ui.schema_manager import A2UISchemaManager
+    class FilteredSchemaManager(A2UISchemaManager):
+        def _ensure_loaded(self):
+            super()._ensure_loaded()
+            if getattr(self, "_assistant_catalog_filtered", False):
+                return
+            basic = dict(self._basic_catalog)
+            raw_components = basic.get("components")
+            basic_components = raw_components if isinstance(raw_components, dict) else {}
+            components = {
+                name: schema
+                for name, schema in basic_components.items()
+                if name in SUPPORTED_BASIC_COMPONENTS
+            }
+            raw_defs = basic.get("$defs")
+            definitions = dict(raw_defs) if isinstance(raw_defs, dict) else {}
+            definitions["anyComponent"] = {
+                "oneOf": [{"$ref": f"#/components/{name}"} for name in components],
+                "discriminator": {"propertyName": "component"},
+            }
+            basic["components"] = components
+            basic["$defs"] = definitions
+            self._basic_catalog = basic
+            self._catalog_rules = (
+                "Only use these Basic Catalog components: "
+                + ", ".join(sorted(SUPPORTED_BASIC_COMPONENTS))
+                + ". A canvas is an A2UI surface, not a component: compose it with "
+                "Card, Column, Row, and List; never emit a Canvas component. Image "
+                "requires exactly its url plus optional description, fit, and variant."
+            )
+            self._assistant_catalog_filtered = True
 
-        class FilteredSchemaManager(A2UISchemaManager):
-            def _ensure_loaded(self):
-                super()._ensure_loaded()
-                if getattr(self, "_assistant_catalog_filtered", False):
-                    return
-                basic = dict(self._basic_catalog)
-                components = {
-                    name: schema
-                    for name, schema in basic.get("components", {}).items()
-                    if name in SUPPORTED_BASIC_COMPONENTS
-                }
-                definitions = dict(basic.get("$defs", {}))
-                definitions["anyComponent"] = {
-                    "oneOf": [{"$ref": f"#/components/{name}"} for name in components],
-                    "discriminator": {"propertyName": "component"},
-                }
-                basic["components"] = components
-                basic["$defs"] = definitions
-                self._basic_catalog = basic
-                self._catalog_rules = (
-                    "Only use these Basic Catalog components: "
-                    + ", ".join(sorted(SUPPORTED_BASIC_COMPONENTS))
-                    + ". A canvas is an A2UI surface, not a component: compose it with "
-                    "Card, Column, Row, and List; never emit a Canvas component. Image "
-                    "requires exactly its url plus optional description, fit, and variant."
-                )
-                self._assistant_catalog_filtered = True
-
-        return FilteredSchemaManager(*args, **kwargs)
+    return FilteredSchemaManager(*args, **kwargs)
 
 
 def _message_dict(message: Any) -> dict:
@@ -160,15 +165,20 @@ def update_data_value(data: dict, path: str, value: Any) -> dict:
     current: dict | list = result
     for part in parts[:-1]:
         key = _key_for(current, part)
-        if key is None:
+        if isinstance(current, list) and isinstance(key, int):
+            branch = _copy_of(current[key])
+            current[key] = branch
+        elif isinstance(current, dict) and isinstance(key, str):
+            branch = _copy_of(current.get(key))
+            current[key] = branch
+        else:
             return result
-        branch = _copy_of(current[key] if isinstance(current, list) else current.get(key))
-        current[key] = branch
         current = branch
     last = _key_for(current, parts[-1])
-    if last is None:
-        return result
-    current[last] = value
+    if isinstance(current, list) and isinstance(last, int):
+        current[last] = value
+    elif isinstance(current, dict) and isinstance(last, str):
+        current[last] = value
     return result
 
 
@@ -258,18 +268,18 @@ def durable_surfaces_from_messages(messages: list[Any]) -> list[A2UISurface]:
 
     return [
         A2UISurface(
-            state["surface_id"],
-            catalog_id=state.get("catalog_id") or CATALOG_ID,
-            version=state.get("version") or "v1.0",
-            component=state.get("component") or {},
-            data=state.get("data") or {},
-            title=_surface_title(state.get("data") or {}),
+            final["surface_id"],
+            catalog_id=final.get("catalog_id") or CATALOG_ID,
+            version=final.get("version") or "v1.0",
+            component=final.get("component") or {},
+            data=final.get("data") or {},
+            title=_surface_title(final.get("data") or {}),
             intent="generated-ui",
         )
         for sid in order
         # A record with data and no tree carries a later turn's write to a surface an
         # earlier one drew. Neither a component nor data is nothing to keep.
-        if (state := states.get(sid)) and (state.get("component") or state.get("data"))
+        if (final := states.get(sid)) and (final.get("component") or final.get("data"))
     ]
 
 
@@ -442,7 +452,7 @@ class _AssistantA2UIRuntime:
 
     def __init__(self, cards: dict[str, Card] | None = None) -> None:
         self.cards = bundled_cards() if cards is None else cards
-        self.schema_manager = _AssistantSchemaManager(
+        self.schema_manager = _build_schema_manager(
             protocol_version="v1.0",
             custom_catalog=assistant_catalog(self.cards),
             custom_catalog_rules=catalog_rules(self.cards),

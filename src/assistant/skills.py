@@ -12,6 +12,7 @@ Resolution is DEFAULT-ON: a skill is available unless a record turns it off. See
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import Protocol
 
 from ag2.context import ConversationContext
 from ag2.exceptions import SkillNotFoundError
@@ -48,6 +49,13 @@ class SkillStateStore(StateStore):
         super().__init__(Path(root_dir) / SKILLS_DOCUMENT if root_dir is not None else None)
 
 
+class DiscoveredSkill(Protocol):
+    """What availability resolution reads off a skill a runtime discovered."""
+
+    name: str
+    location: str | None
+
+
 class FilteredSkillRuntime:
     """A ``SkillRuntime`` view that hides skills resolved unavailable by a predicate.
 
@@ -60,7 +68,7 @@ class FilteredSkillRuntime:
     set.
     """
 
-    def __init__(self, inner, is_available: Callable[[object], bool]) -> None:
+    def __init__(self, inner, is_available: Callable[[DiscoveredSkill], bool]) -> None:
         self._inner = inner
         self._is_available = is_available
 

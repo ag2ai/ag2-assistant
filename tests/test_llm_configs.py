@@ -577,3 +577,112 @@ def test_module_present_never_raises_into_the_health_path():
     # A dotted name under a non-package parent makes the real find_spec raise
     # ModuleNotFoundError — the health path must read that as "absent", not blow up.
     assert _module_present("json.decoder.definitely_not_a_submodule") is False
+
+
+# --- provider-native tools (assistant.builtin_tools) -------------------------
+
+
+def test_builtin_tools_are_filtered_to_what_the_type_offers(store):
+    """A hand-edited config.yaml, or a type changed under a saved selection, must
+    not carry an id the provider has no mapper for."""
+    entry = store.save_config(
+        {
+            "name": "R",
+            "type": "openai_responses",
+            "model": "gpt-5",
+            # web_fetch is Anthropic's and Gemini's; the Responses mapper has none.
+            "builtin_tools": {"web_search": {}, "web_fetch": {}, "invented": {}},
+        }
+    )
+    assert entry["builtin_tools"] == {"web_search": {}}
+
+
+def test_changing_type_drops_tools_the_new_type_cannot_serve(store):
+    entry = store.save_config(
+        {"name": "M", "type": "gemini", "model": "g", "builtin_tools": {"web_fetch": {}}}
+    )
+    moved = store.save_config({**entry, "type": "openai_responses", "model": "gpt-5"})
+    assert moved["builtin_tools"] == {}
+
+
+def test_builtin_tools_must_be_an_object(store):
+    with pytest.raises(ValueError, match="builtin_tools"):
+        _clean_entry({"name": "M", "type": "gemini", "model": "g", "builtin_tools": []})
+    with pytest.raises(ValueError, match="options"):
+        _clean_entry(
+            {"name": "M", "type": "gemini", "model": "g", "builtin_tools": {"web_search": 1}}
+        )
+
+
+# The pre-feature default: build_agent_tools gave EVERY Anthropic agent the native
+# WebFetchTool and everyone else the local function tool. An absent key means the
+# entry predates the switches, so that capability must survive the upgrade.
+
+
+def test_an_anthropic_config_predating_the_feature_keeps_its_native_fetcher():
+    entry = _clean_entry({"name": "A", "type": "anthropic", "model": "claude"})
+    assert entry["builtin_tools"] == {"web_fetch": {}}
+
+
+def test_an_empty_object_is_a_choice_and_is_left_alone():
+    """`{}` means the user turned everything off — distinct from an absent key,
+    which is what makes the legacy seed safe to apply."""
+    entry = _clean_entry({"name": "A", "type": "anthropic", "model": "claude", "builtin_tools": {}})
+    assert entry["builtin_tools"] == {}
+
+
+def test_only_anthropic_had_an_automatic_builtin_to_carry_over():
+    for ctype in ("gemini", "openai_responses", "openai", "ollama"):
+        entry = _clean_entry({"name": "M", "type": ctype, "model": "m"})
+        assert entry["builtin_tools"] == {}, ctype
+
+
+def test_the_legacy_seed_stops_applying_once_it_has_been_saved(store):
+    saved = store.save_config({"name": "A", "type": "anthropic", "model": "claude"})
+    assert saved["builtin_tools"] == {"web_fetch": {}}
+    # Now an ordinary entry: turning it off sticks rather than being re-seeded.
+    off = store.save_config({**saved, "builtin_tools": {}})
+    assert off["builtin_tools"] == {}
+    assert store.get_config(off["id"])["builtin_tools"] == {}
+
+
+def test_derive_onto_carries_the_type_and_the_enabled_tools(store, paths):
+    entry = store.save_config(
+        {"name": "G", "type": "gemini", "model": "g", "builtin_tools": {"web_search": {}}}
+    )
+    cfg = Config.for_paths(paths)
+    store.derive_onto(cfg, entry)
+    assert cfg.llm.provider == "gemini"
+    # The TYPE, not just the provider: PROVIDER_OF folds the three OpenAI types
+    # into one, and only openai_responses offers builtins.
+    assert cfg.llm.config_type == "gemini"
+    assert cfg.llm.builtin_tools == {"web_search": {}}
+
+
+def test_apply_active_and_derive_onto_agree(store, paths):
+    """The gateway's per-chat model override derives through the same seam, so a
+    field added to one path cannot miss the other."""
+    entry = store.save_config(
+        {
+            "name": "R",
+            "type": "openai_responses",
+            "model": "gpt-5",
+            "builtin_tools": {"web_search": {}},
+        }
+    )
+    store.set_active(entry["id"])
+
+    from_active = Config.for_paths(paths)
+    store.apply_active(from_active)
+    from_derive = Config.for_paths(paths)
+    store.derive_onto(from_derive, entry)
+
+    assert from_active.llm.model_dump() == from_derive.llm.model_dump()
+    assert from_active.llm.config_type == "openai_responses"
+
+
+def test_a_config_type_with_no_builtins_derives_an_empty_selection(store, paths):
+    entry = store.save_config({"name": "O", "type": "ollama", "model": "llama3"})
+    cfg = Config.for_paths(paths)
+    store.derive_onto(cfg, entry)
+    assert cfg.llm.builtin_tools == {}

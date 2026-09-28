@@ -67,13 +67,17 @@ export const HealthCheck = z.object({
   state: HealthState,
   detail: z.string(),
   servers: z.array(z.object({ name: z.string(), enabled: z.boolean() })).optional(),
+  // One connection that defaults to this profile. Corrected against the handler:
+  // it declared a `token_present` the gateway never sent and omitted the
+  // `connection`/`name` it does send. The OpenAPI gate now checks this.
   items: z
     .array(
       z.object({
+        connection: z.string(),
+        name: z.string(),
         platform: z.string(),
         active: z.boolean(),
         error: z.string().nullable(),
-        token_present: z.boolean(),
       }),
     )
     .optional(),

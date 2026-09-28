@@ -16,6 +16,7 @@
   import { getSettings } from './context.svelte.ts'
   import { api } from '../../transport/api/index.ts'
   import Icon from '../Icon.svelte'
+  import AcpListenersSection from './AcpListenersSection.svelte'
   import ConnectForm from './ConnectForm.svelte'
   import ConnectionDetail from './ConnectionDetail.svelte'
   import IntegrationHeader from './IntegrationHeader.svelte'
@@ -226,4 +227,6 @@
       <button class="linkbtn" onclick={() => (adding = false)}>Cancel</button>
     </div>
   {/if}
+
+  <AcpListenersSection />
 {/if}

@@ -49,7 +49,7 @@ def repair_dangling_tool_calls(events):
     adjacency providers expect.
     """
     events = events if isinstance(events, list) else list(events)
-    answered = set()
+    answered: set[str] = set()
     for event in events:
         if isinstance(event, ToolResultsEvent):
             answered.update(r.parent_id for r in event.results)

@@ -116,16 +116,6 @@ export const CodingCatalog = z.object({
 })
 export type CodingCatalog = z.infer<typeof CodingCatalog>
 
-// GET /api/llm-configs/models — the same {models, current, reason} envelope, with
-// provider_catalog.py's own reasons (lib/modelSuggest.ts REASON) instead of the ACP
-// route's. `current` is always '' here: a provider names no model of its own.
-export const ProviderCatalog = z.object({
-  models: z.array(CatalogModel),
-  current: z.string(),
-  reason: z.enum(['', 'unauthorized', 'unreachable', 'no_list_endpoint', 'not_probeable']),
-})
-export type ProviderCatalog = z.infer<typeof ProviderCatalog>
-
 // GET /api/fs/list — the host folder picker; an unreadable dir answers ok:false.
 export const FsListing = z.union([
   z.object({

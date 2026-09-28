@@ -27,14 +27,33 @@ pre-commit install          # run the lint/format/safety hooks on every commit
 
 ## Checks (run these before you push)
 
-These are the same checks CI runs; a PR that fails them will not merge.
+These are the same checks CI runs. They are advisory: the repository has no rulesets, so
+a red pull request is reported by the `CI status` check rather than blocked by it. (Classic
+branch protection needs admin to read, so it has not been ruled out. To enforce this,
+require the single `CI status` check — it stays one name as the test matrix grows.)
 
 ```bash
 ruff check .                       # lint
 ruff format .                      # auto-format (use --check to verify only)
+mypy                               # typecheck src/assistant (target is configured; pass no path)
 pytest -m "not integration" -q     # unit tests — no API key needed
 npm --prefix web run check         # typecheck the SPA (svelte-check, strict)
+npm --prefix web test              # SPA unit tests (node:test over web/src/**/*.test.ts)
 npm --prefix web run build         # rebuild the SPA bundle if you touched web/
+```
+
+CI runs the unit tests on every Python version `pyproject.toml` promises — 3.12, 3.13 and
+3.14 — so a change that only works on the newest one fails there even though it passed for
+you. To reproduce a specific leg:
+
+```bash
+UV_PYTHON=3.12 uv run pytest -m "not integration" -q
+```
+
+Coverage is reported, never enforced. To see the number CI reports:
+
+```bash
+pytest -m "not integration" -q --cov=assistant --cov-branch --cov-report=term:skip-covered
 ```
 
 `npm --prefix web run build` runs `check` first, so a bundle can never be built —
@@ -122,8 +141,43 @@ cannot drift apart. Every response goes through `transport/validate.ts::parse()`
 in dev a mismatch throws `SchemaError`, in prod it logs `[schema] …` and passes
 the data through. Request bodies are typed but not validated at runtime.
 
-When you change a response body in `gateway/`, update the matching schema in
-`web/src/schemas/` in the same change — nothing generates them from OpenAPI.
+The gateway declares the same shapes as Pydantic response models in
+`src/assistant/gateway/schemas/`, and the gateway's OpenAPI document ties the two
+together. CI fails if a zod schema and the gateway disagree on field names,
+requiredness or enum members — the gate remembers this, you don't (ADR 0028). So
+when you change a response body in `gateway/`, there are only two steps:
+
+1. update the Pydantic model in `gateway/schemas/`;
+2. update the zod schema in `web/src/schemas/` — CI tells you if you forget.
+
+The document is **generated, never committed**: `npm --prefix web test` builds it
+from the app into `web/.openapi.json` (gitignored) before the gate reads it, so
+there is nothing to refresh and nothing to go stale. To read it yourself, or to
+point a code generator at it: `python3 scripts/dump_openapi.py [--out PATH]`.
+
+## Gateway routes (`gateway/routes/`)
+
+`routes/`, `schemas/` and `web/src/schemas/` mirror each other file for file: a
+route, its response model and its zod twin share a module name, and the twin
+picks the module (`/tasks/{id}/permissions` lives in `permission.py` because
+`TaskRules` is declared in `permission.ts`). `app.py` declares no domain route —
+it holds `GatewayDeps`, the lifespan, the WebSockets, static/SPA and the
+`include_router` calls.
+
+- A module exposes `build_router(deps)` and/or
+  `build_profile_router(deps, get_runtime)`; a `create_app` parameter rather than
+  a store (`llm_probe`, `code_reader`, `secret_env`, …) is passed as a keyword
+  argument to the factory instead of joining `GatewayDeps`.
+- A helper two modules need goes in `routes/common.py`.
+- Every route names its model as `response_model=` in the decorator, never as a
+  return annotation, and sits in exactly one bucket of `routes.ts` (`ROUTES`, or
+  `UNMAPPED` with a reason). The model is the contract: a key it does not declare
+  never reaches the client.
+- Add `response_model_exclude_unset=True` only when the model has a defaulted
+  field — otherwise FastAPI ships it as `null`, which the zod twin rejects.
+- Registration order is load-bearing: a literal path goes before the
+  parameterised one covering it (`/api/llm-configs/test` before `/{cid}`).
+  `tests/test_gateway_routes_wiring.py` is the gate.
 
 ## Testing
 

@@ -180,7 +180,10 @@ def expand_card_messages(messages: list[Any], cards: dict[str, Card]) -> list[An
     drawn: list[Any] = []
     for message in messages:
         update = message.get("updateComponents") if isinstance(message, dict) else None
-        components = update.get("components") if isinstance(update, dict) else None
+        if not isinstance(update, dict):
+            drawn.append(message)
+            continue
+        components = update.get("components")
         if not isinstance(components, list):
             drawn.append(message)
             continue

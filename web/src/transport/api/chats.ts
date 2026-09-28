@@ -1,6 +1,6 @@
 // Chats: the drawer rows and their metadata (app.py 2227-2261).
 import { api as P } from '../../lib/profile.ts'
-import { del, get, patch } from '../http.ts'
+import { del, get, patch, post } from '../http.ts'
 import { ChatList, Ok, Transcript } from '../../schemas/index.ts'
 
 export const chatsApi = {
@@ -17,4 +17,9 @@ export const chatsApi = {
   // model '' clears the Chat override back to inheriting — ADR 0025).
   updateChat: (id: string, patchBody: { title?: string; starred?: boolean; model?: string }) =>
     patch(P('/chats/' + encodeURIComponent(id)), patchBody, Ok),
+
+  // Owner's kill switch on a live ACP chat: drops the remote client,
+  // keeps the Chat. 404 (not an ACP chat) / 409 (not live) surface as ApiError.
+  closeAcpSession: (id: string) =>
+    post(P('/chats/' + encodeURIComponent(id) + '/acp/close'), undefined, Ok),
 }

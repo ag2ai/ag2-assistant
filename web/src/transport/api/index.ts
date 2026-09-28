@@ -4,6 +4,7 @@
 // Profile-scoped routes go through P() (→ /api/p/{pid}/…); genuinely global
 // routes (profiles registry, secrets, onboarded, google, fs browser) go through
 // G() (→ /api/…). See lib/profile.ts.
+import { acpApi } from './acp.ts'
 import { chatsApi } from './chats.ts'
 import { codingApi } from './coding.ts'
 import { connectionsApi } from './connections.ts'
@@ -29,6 +30,7 @@ export const api = {
   ...systemApi,
   ...codingApi,
   ...connectionsApi,
+  ...acpApi,
   ...chatsApi,
   ...tasksApi,
   ...filesApi,

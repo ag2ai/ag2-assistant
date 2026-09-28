@@ -12,6 +12,7 @@ Developer Portal, otherwise message text arrives empty.
 import asyncio
 import contextlib
 import re
+from typing import Any, Protocol, runtime_checkable
 
 import discord
 
@@ -25,6 +26,13 @@ from assistant.hitl.channel import PendingAsks
 DISCORD_LIMIT = 2000
 _ASK_TIMEOUT = 300.0
 _MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+
+
+@runtime_checkable
+class _Sendable(Protocol):
+    """A channel that takes a message — what `notify` needs of the id it is given."""
+
+    async def send(self, content: str) -> Any: ...
 
 
 async def _download_attachments(message: "discord.Message") -> list:
@@ -43,25 +51,32 @@ async def _download_attachments(message: "discord.Message") -> list:
     return inputs
 
 
+class _OptionButton(discord.ui.Button):
+    """One option of a HITL question: the tap resolves the ask it belongs to."""
+
+    def __init__(self, option: str, channel_id: str, pending: PendingAsks) -> None:
+        super().__init__(label=option[:80])
+        self._option = option
+        self._channel_id = channel_id
+        self._pending = pending
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        self._pending.resolve(self._channel_id, self._option)
+        with contextlib.suppress(Exception):
+            await interaction.response.defer()
+        # A tap that carries no message leaves the prompt nothing to clear.
+        if interaction.message is not None:
+            with contextlib.suppress(Exception):
+                await interaction.message.delete()  # transient prompt
+
+
 class _AskView(discord.ui.View):
     """Buttons for a HITL question; the first tap resolves and clears the prompt."""
 
     def __init__(self, options, channel_id: str, pending: PendingAsks, timeout: float):
         super().__init__(timeout=timeout)
         for opt in options:
-            button = discord.ui.Button(label=opt[:80])
-            button.callback = self._make_callback(opt, channel_id, pending)
-            self.add_item(button)
-
-    def _make_callback(self, option: str, channel_id: str, pending: PendingAsks):
-        async def callback(interaction: discord.Interaction) -> None:
-            pending.resolve(channel_id, option)
-            with contextlib.suppress(Exception):
-                await interaction.response.defer()
-            with contextlib.suppress(Exception):
-                await interaction.message.delete()  # transient prompt
-
-        return callback
+            self.add_item(_OptionButton(opt, channel_id, pending))
 
 
 class DiscordAsker(PendingGuard):
@@ -135,6 +150,9 @@ class DiscordChannel(Channel):
         channel = self._client.get_channel(int(chat_id)) or await self._client.fetch_channel(
             int(chat_id)
         )
+        # A category or forum id is a routing bug, not a silent no-op.
+        if not isinstance(channel, _Sendable):
+            raise RuntimeError(f"discord channel {chat_id} cannot be sent to")
         for chunk in split_for_limit(self.format_outbound(text), self._message_limit):
             await channel.send(chunk)
 
@@ -188,12 +206,12 @@ class DiscordChannel(Channel):
             return
 
         inbound = self._normalize(message)
-        if inbound is None or not self._router.accepts(inbound):
+        if inbound is None or not self._require_router().accepts(inbound):
             return
 
         async with message.channel.typing():
             attachments = await _download_attachments(message)
-            outcome = await self._router.handle(
+            outcome = await self._require_router().handle(
                 inbound,
                 asker=self._asker_for(channel_id),
                 attachments=attachments,

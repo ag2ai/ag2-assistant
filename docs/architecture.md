@@ -115,9 +115,12 @@ memory, voice, HITL, and the persistent stores hanging off the event-stream spin
   finish on the old agent; the next turn uses a freshly-built one (new keys/config).
   Per-chat streams are untouched, so no history is lost. The task service rebuilds
   its planner lazily.
-- **app.py** wires it together: builds/owns the gateway + `TaskService`, mounts the
-  REST routes and the two WebSockets, serves the Svelte bundle at `/app`, and runs
-  the FastAPI `lifespan` (start/stop of gateway, task service, scheduler).
+- **app.py** wires it together: builds the collaborators into `GatewayDeps`,
+  includes the domain routers, declares the two WebSockets, serves the Svelte
+  bundle at `/app`, and runs the FastAPI `lifespan` (start/stop of gateway, task
+  service, scheduler). The REST routes themselves live in `gateway/routes/`, one
+  module per domain, with their Pydantic response models in `gateway/schemas/`
+  (ADR 0028).
 - Helpers: `gateway/stream_bridge.py` (replay-then-subscribe bridge to a client),
   `gateway/wire.py` (`to_wire()`, `is_binary_event()` — audio is binary, not JSON).
 
@@ -352,6 +355,7 @@ what `/api/stream?chat=task-run:{run_id}` opens.
 | DELETE | `/api/tasks/{id}` | delete the task, its runs, and their chat streams — irreversible |
 | POST   | `/api/tasks/{id}/run` | run now — start a run immediately, schedule unchanged |
 | GET    | `/api/tasks/{id}/runs` | the task's run history (newest first) |
+| POST   | `/api/tasks/{id}/seen` | clear the unread highlight on every finished run of the task |
 | GET    | `/api/runs/{id}` | one run's status/summary/task name |
 | POST   | `/api/runs/{id}/stop` | stop a live run (keeps what it already produced) |
 | POST   | `/api/runs/{id}/seen` | clear a finished run's unread highlight |

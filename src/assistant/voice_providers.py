@@ -166,7 +166,14 @@ async def _gemini_preview(config: Config, voice: str, text: str, api_key: str = 
                 ),
             ),
         )
-        return resp.candidates[0].content.parts[0].inline_data.data
+        candidates = resp.candidates or []
+        content = candidates[0].content if candidates else None
+        parts = content.parts if content else None
+        blob = parts[0].inline_data if parts else None
+        data = blob.data if blob else None
+        if data is None:
+            raise RuntimeError("Gemini returned no audio for this text")
+        return data
 
     pcm = await asyncio.to_thread(_call)
     return pcm_to_wav(pcm)

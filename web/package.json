@@ -8,23 +8,24 @@
     "build": "npm run check && vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
+    "pretest": "sh ../scripts/gen_openapi.sh",
     "test": "node --test 'src/**/*.test.ts'"
   },
   "devDependencies": {
-    "@sveltejs/vite-plugin-svelte": "^5.0.3",
-    "@types/jsdom": "^28.0.3",
-    "@types/node": "^22.20.1",
-    "@types/three": "^0.185.3",
-    "jsdom": "^29.1.1",
-    "svelte": "^5.19.0",
-    "svelte-check": "^4.7.4",
-    "typescript": "^5.9.3",
-    "vite": "^6.0.7"
+    "@sveltejs/vite-plugin-svelte": "^7.3.0",
+    "@types/jsdom": "^30.0.0",
+    "@types/node": "^26.4.0",
+    "@types/three": "^0.185.4",
+    "jsdom": "^30.0.1",
+    "svelte": "^5.57.0",
+    "svelte-check": "^4.7.6",
+    "typescript": "^6.0.3",
+    "vite": "^8.2.2"
   },
   "dependencies": {
-    "dompurify": "^3.2.4",
-    "marked": "^15.0.6",
-    "three": "^0.185.0",
-    "zod": "^4.4.3"
+    "dompurify": "^3.4.14",
+    "marked": "^18.0.11",
+    "three": "^0.185.1",
+    "zod": "^4.5.2"
   }
 }

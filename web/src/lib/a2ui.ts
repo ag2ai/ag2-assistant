@@ -127,7 +127,7 @@ export function templateStart(children: unknown): number {
   return Math.max(0, Math.trunc(Number((children as { start?: unknown }).start) || 0))
 }
 
-// ── The styling vocabulary (ADR 0028) ───────────────────────────────────────
+// ── The styling vocabulary (ADR 0037) ───────────────────────────────────────
 // A Card names a tone, a format or a label; the renderer resolves the name.
 
 export type A2UITone = 'neutral' | 'muted' | 'accent' | 'positive' | 'negative'

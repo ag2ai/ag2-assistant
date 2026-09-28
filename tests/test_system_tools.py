@@ -122,3 +122,47 @@ async def test_task_tools_carry_description(tmp_path, paths):
     tid = msg.split("Created task ")[1].split(" ")[0].rstrip(".—").strip()
     detail = await tools["get_task"](task_id=tid)
     assert "short desc" in detail
+
+
+async def test_task_tools_carry_recall_depth(tmp_path, paths):
+    """The agent can set look-back when it creates a task from a chat or channel, and
+    reads it back — '-1' is the answer to "a different topic each time" (ADR 0027)."""
+    svc = _svc(tmp_path)
+
+    class _Settings:
+        pass
+
+    tools = _tools(svc, _Settings(), peers=PeerStore(paths))
+    msg = await tools["create_task"](
+        name="N", prompt="a different topic each time", recall_depth=-1, context=_Ctx("web-1")
+    )
+    tid = msg.split("Created task ")[1].split(" ")[0].rstrip(".—").strip()
+    assert (await svc.store.get_task(tid)).recall_depth == -1
+    assert "all previous runs" in await tools["get_task"](task_id=tid)
+    # the string arg turns it off; a non-numeric one is correctable, not an exception
+    await tools["update_task"](task_id=tid, recall_depth="0")
+    assert (await svc.store.get_task(tid)).recall_depth == 0
+    assert "whole number" in await tools["update_task"](task_id=tid, recall_depth="lots")
+
+
+async def test_read_run_returns_a_run_transcript(tmp_path, paths):
+    """A run's thread is a chat on `task-run:<id>`, so the agent can open one in full
+    when the one-line summary is too coarse."""
+    svc = _svc(tmp_path)
+
+    class _Settings:
+        pass
+
+    class _Chats:
+        async def list_chats(self):
+            return []
+
+        async def transcript(self, chat_id):
+            if chat_id != "task-run:run-abc":
+                return []
+            return [{"role": "user", "text": "collect news"}, {"role": "assistant", "text": "done"}]
+
+    tools = _tools(svc, _Settings(), chats=_Chats(), peers=PeerStore(paths))
+    out = await tools["read_run"](run_id="run-abc")
+    assert "collect news" in out and "done" in out
+    assert "No such run" in await tools["read_run"](run_id="run-nope")

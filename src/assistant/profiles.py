@@ -49,6 +49,13 @@ assert set(CHANNEL_TOKEN_ENVS) == set(CHANNEL_PLATFORMS)
 # Every channel env var name, flattened — the closed set the secrets store accepts.
 CHANNEL_TOKEN_ENV_NAMES = frozenset(e for envs in CHANNEL_TOKEN_ENVS.values() for e in envs)
 
+# The ACP listener platform (`acp` stdio / `acp-serve`). Kept OUT of CHANNEL_PLATFORMS:
+# that tuple gates ProfileManager's bot-token channel boot loop (Gateway.start ->
+# start_channel -> CHANNEL_TOKEN_ENVS[platform]), and ACP has no bot token and is not
+# a messaging channel — joining it would make boot try to start ACP as one. See
+# ADR 0031.
+ACP_PLATFORM = "acp"
+
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 

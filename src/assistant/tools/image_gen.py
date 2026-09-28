@@ -81,10 +81,10 @@ def _image_agent(config):
 
     if provider == "gemini":
         image_model = config.image_model or DEFAULT_GEMINI_IMAGE_MODEL
-        cfg = GeminiConfig(
+        gemini_cfg = GeminiConfig(
             model=image_model, api_key=_key("gemini"), response_modalities=["TEXT", "IMAGE"]
         )
-        return Agent("imager", config=cfg)
+        return Agent("imager", config=gemini_cfg)
     if provider == "openai":
         cfg = OpenAIResponsesConfig(model=model, api_key=_key("openai"))
         return Agent("imager", config=cfg, tools=[ImageGenerationTool()])
@@ -104,15 +104,15 @@ def _workspace_file_url(config, path: str) -> str:
     return f"/api/p/{quote(profile_id, safe='')}/files/raw?path={quote(path, safe='')}"
 
 
-async def _first_image(reply) -> tuple[bytes, str] | tuple[None, None]:
-    """Extract the first generated image (bytes, media_type) from a reply, or (None, None)."""
+async def _first_image(reply) -> tuple[bytes, str] | None:
+    """Extract the first generated image (bytes, media_type) from a reply, or None."""
     for f in getattr(reply, "files", None) or []:
         getter = getattr(f, "content", None)
         data = await getter() if callable(getter) else (getattr(f, "data", b"") or b"")
         if data:
             media = (getattr(f, "metadata", {}) or {}).get("media_type") or "image/png"
             return data, media
-    return None, None
+    return None
 
 
 def build_image_tool(config, workspace_dir):
@@ -121,6 +121,7 @@ def build_image_tool(config, workspace_dir):
     @tool
     async def generate_image(
         prompt: Annotated[str, Field(description="A full description of the image to create.")],
+        context: Context,
         source_image: Annotated[
             str | None,
             Field(
@@ -129,7 +130,6 @@ def build_image_tool(config, workspace_dir):
                 "returned to modify that image (e.g. 'change the sky to sunset')."
             ),
         ] = None,
-        context: Context = None,
     ) -> str:
         """Generate an image from a description, or edit one you already made. Saves the
         image into the workspace and returns its path. To modify an image, call again
@@ -154,9 +154,10 @@ def build_image_tool(config, workspace_dir):
         except Exception as exc:
             return f"Image generation failed: {exc}"
 
-        data, media = await _first_image(reply)
-        if not data:
+        found = await _first_image(reply)
+        if found is None:
             return "No image was produced — try rephrasing the description."
+        data, media = found
         rel = write_image(workspace_dir, prompt, data, media)
         # Emit onto the stream so the client renders an inline thumbnail (the path
         # lives in the result, not the call args, so a card alone can't show it).

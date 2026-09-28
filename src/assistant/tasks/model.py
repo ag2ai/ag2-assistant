@@ -76,6 +76,10 @@ def normalize_schedule(raw: dict | None) -> dict:
     return {"kind": ScheduleKind.CRON, "at": None, "cron": cron}
 
 
+RECALL_NONE = 0
+RECALL_ALL = -1
+
+
 @dataclass
 class Task:
     """Standing task configuration — what to run, on what model, when."""
@@ -87,6 +91,9 @@ class Task:
     schedule: dict = field(default_factory=manual_schedule)
     paused: bool = False
     starred: bool = False  # user pin → lifts the task into the drawer's Starred section
+
+    # How many earlier runs the run's surface indexes: 0 none, -1 all.
+    recall_depth: int = 0
 
     # delivery routing: the messaging channel (and its native chat id) the task
     # was created from, so run outcomes can be pushed back there. None for web.

@@ -5,9 +5,17 @@ conversation talks to. It is install-level state (ADR 0022): it spans Profiles b
 construction, so it cannot live inside any one of them.
 """
 
+import multiprocessing
+import os
 import re
+from pathlib import Path
+from unittest.mock import patch
 
+import pytest
+
+from assistant import peers
 from assistant.peers import PeerStore
+from tests.support.apps import make_paths
 
 
 def test_an_unknown_conversation_has_no_peer_yet(paths):
@@ -302,3 +310,52 @@ def test_stamping_senders_is_idempotent_and_never_overwrites_one(paths):
 
     assert PeerStore(paths).adopt_senders(_paired(("cn-work", "42"))) == 0
     assert PeerStore(paths).get_peer("cn-work", "42").sender == "99"
+
+
+# --- Cross-process safety -------------------------------------------------------
+# peers.json is install-level, so the gateway and every stdio `ag2-assistant acp`
+# child write it concurrently. These run real processes: an in-process thread pool
+# would pass without the lock, because each read/write is one synchronous call.
+
+
+def _append_peers(root: str, connection: str, count: int) -> None:
+    """Record ``count`` fresh conversations, one at a time, in a child process."""
+    store = PeerStore(make_paths(Path(root)))
+    for n in range(count):
+        store.select_profile(connection, str(n), "work", platform="telegram")
+
+
+def _run(procs: list) -> None:
+    for proc in procs:
+        proc.start()
+    for proc in procs:
+        proc.join(timeout=60)
+        assert proc.exitcode == 0
+
+
+def test_four_processes_appending_at_once_lose_no_peer(tmp_path):
+    """The lost update this guards: two processes read the same entries, each appends
+    its own, and the second write drops the first one's."""
+    ctx = multiprocessing.get_context("spawn")
+    _run([ctx.Process(target=_append_peers, args=(str(tmp_path), f"cn-{n}", 25)) for n in range(4)])
+
+    assert len(PeerStore(make_paths(tmp_path)).list_peers()) == 100
+
+
+def test_a_write_that_fails_leaves_the_previous_registry_intact(paths):
+    """The swap is the write: until the rename lands, the old file is still the file.
+    A plain write truncates first, so the same failure would leave nothing behind."""
+    PeerStore(paths).select_profile("cn-work", "42", "work")
+    registry = paths.root / "peers.json"
+    before = registry.read_text()
+
+    def _no_swap(*_args):
+        raise OSError("no space left on device")
+
+    with patch.object(peers, "os", wraps=os) as fake:
+        fake.replace.side_effect = _no_swap
+        with pytest.raises(OSError):
+            PeerStore(paths).select_profile("cn-play", "99", "home")
+
+    assert registry.read_text() == before
+    assert not list(paths.root.glob(".peers-*")), "the temp file outlived the failure"

@@ -259,7 +259,7 @@ def test_data_model_update_ignores_a_pointer_no_row_answers_to():
     assert update_data_value(data, "/runs/day", "Sun") == data
 
 
-# --- Checklist is a file (ADR 0027/0028): offered from it, drawn from it ---
+# --- Checklist is a file (ADR 0036/0028): offered from it, drawn from it ---
 
 
 def _emit(root: dict) -> list[dict]:

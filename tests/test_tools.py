@@ -30,7 +30,7 @@ from assistant.tools.web_fetch import web_fetch
 
 
 def test_build_agent_tools_has_core_capabilities():
-    tools = build_agent_tools(provider="gemini")
+    tools = build_agent_tools("gemini")
     names = {t.name for t in tools}
     # search, shell, code, file read, fetch
     assert "duckduckgo_search" in names
@@ -48,20 +48,17 @@ def test_build_agent_tools_has_core_capabilities():
     assert len(tools) == 12
 
 
-def test_build_agent_tools_gemini_uses_fallback_fetch():
-    # Native WebFetchTool is server-side on Gemini and won't mix with function
-    # tools, so Gemini gets the custom function-tool fallback.
+@pytest.mark.parametrize("ctype", ["gemini", "anthropic", "openai_responses", "openai", ""])
+def test_every_type_gets_the_local_fetcher_by_default(ctype):
+    """A provider's own fetcher is opt-in per model (ADR 0029), so the type alone
+    no longer decides — this used to branch on `provider`."""
+    assert web_fetch_tool in build_agent_tools(ctype)
 
-    tools = build_agent_tools(provider="gemini")
-    assert web_fetch_tool in tools
 
-
-def test_build_agent_tools_anthropic_uses_native_fetch():
-
-    tools = build_agent_tools(provider="anthropic")
-    # Anthropic gets the native WebFetchTool, not our custom fallback object.
-    assert web_fetch_tool not in tools
-    assert any(t.name == "web_fetch" for t in tools)
+def test_the_native_fetcher_replaces_ours_only_when_switched_on():
+    tools = build_agent_tools("anthropic", builtin={"web_fetch": {}})
+    assert web_fetch_tool not in tools  # ours stood down for it
+    assert any(t.name == "web_fetch" for t in tools)  # the provider's, same name
 
 
 # --- custom web_fetch fallback (plain function) ---
@@ -357,7 +354,7 @@ def test_files_capability_wires_workspace_toolkit(tmp_path):
     `write_file` (our Grant-gated host tools; AG2's toolkit versions are dropped to
     avoid duplicate tool names)."""
     ws = tmp_path / "workspace"
-    tools = build_agent_tools(provider="gemini", capabilities=["files"], workspace_dir=ws)
+    tools = build_agent_tools("gemini", capabilities=["files"], workspace_dir=ws)
     names = [t.name for t in tools if getattr(t, "name", None)]
     assert {"update_file", "find_files", "delete_file"} <= set(names)
     assert names.count("read_file") == 1  # only the custom host reader
@@ -386,7 +383,7 @@ def test_images_capability_adds_generate_image(paths, tmp_path):
 def test_no_workspace_dir_means_no_fs_tools():
     """Without a workspace_dir, only the Grant-gated host tools are present (no
     AG2 FS toolkit, since it has no workspace to be scoped to)."""
-    tools = build_agent_tools(provider="gemini", capabilities=["files"], workspace_dir=None)
+    tools = build_agent_tools("gemini", capabilities=["files"], workspace_dir=None)
     names = [t.name for t in tools if getattr(t, "name", None)]
     assert {"read_file", "list_folder", "write_file"} <= set(names)
     assert "update_file" not in names  # no workspace → no AG2 FS toolkit

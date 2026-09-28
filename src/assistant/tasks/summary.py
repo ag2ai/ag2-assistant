@@ -10,8 +10,10 @@ for a short name + one-sentence description from the task's prompt. Mirrors
 
 from collections.abc import Callable
 
+from ag2 import Agent
 from pydantic import BaseModel, Field
 
+from assistant.agent import cheap_model, model_config
 from assistant.config import Config
 from assistant.structured import aclose_config, ask_structured
 
@@ -39,13 +41,9 @@ class TaskMeta(BaseModel):
     description: str = Field(default="", description="One-sentence description of the task.")
 
 
-def default_summarizer(config: Config):
+def default_summarizer(config: Config) -> Agent:
     """The production distiller: a one-shot agent on the cheap model, read from the
     Profile's ``config`` and not from the Task's model or a Chat override (ADR 0025)."""
-    from ag2 import Agent
-
-    from assistant.agent import cheap_model, model_config
-
     return Agent("run-summarizer", config=model_config(config, cheap_model(config)))
 
 
@@ -53,7 +51,7 @@ async def summarize_run(
     config: Config,
     task_prompt: str,
     reply: str,
-    agent_factory: Callable[[Config], object] = default_summarizer,
+    agent_factory: Callable[[Config], Agent] = default_summarizer,
 ) -> str:
     """One-line outcome of a run, or "" on any failure (summary is optional)."""
     try:
@@ -74,7 +72,7 @@ async def summarize_run(
 async def suggest_task_meta(
     config: Config,
     prompt: str,
-    agent_factory: Callable[[Config], object] = default_summarizer,
+    agent_factory: Callable[[Config], Agent] = default_summarizer,
 ) -> tuple[str, str]:
     """(name, description) for a task created without a name, distilled from its
     prompt by the cheap model. On any LLM/parsing failure, falls back to the

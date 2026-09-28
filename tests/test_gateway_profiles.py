@@ -379,7 +379,17 @@ def test_usage_rollup_sums_two_profiles(paths):
                 "total": 150.0,
                 "cost": 0.01,
                 "priced": True,
-                "by_model": {"gemini-3.6-flash": {}},
+                # A per-model slice carries the same five fields the day does —
+                # record() never writes a partial one.
+                "by_model": {
+                    "gemini-3.6-flash": {
+                        "prompt": 100.0,
+                        "completion": 50.0,
+                        "total": 150.0,
+                        "cost": 0.01,
+                        "priced": True,
+                    }
+                },
             },
         )
         _seed_usage(
@@ -393,7 +403,15 @@ def test_usage_rollup_sums_two_profiles(paths):
                 "total": 300.0,
                 "cost": 0.02,
                 "priced": True,
-                "by_model": {"gpt-5": {}},
+                "by_model": {
+                    "gpt-5": {
+                        "prompt": 200.0,
+                        "completion": 100.0,
+                        "total": 300.0,
+                        "cost": 0.02,
+                        "priced": True,
+                    }
+                },
             },
         )
 

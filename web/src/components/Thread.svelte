@@ -1,7 +1,9 @@
 <script lang="ts">
-  import { thread, runInfo, profile, profiles } from '../store.ts'
+  import { thread, runInfo, profile, profiles, chats } from '../store.ts'
   import { llmConfigs } from '../lib/llm.ts'
   import { go, newChatId } from '../router.ts'
+  import { api } from '../transport/api/index.ts'
+  import { errText } from '../lib/errors.ts'
   import Item from './Item.svelte'
   import Composer from './Composer.svelte'
   import Thinking from './items/Thinking.svelte'
@@ -19,6 +21,22 @@
   const activeProfile = $derived($profiles.list.find((p) => p.id === $profiles.activeId))
   const activeModel = $derived($llmConfigs.configs.find((c) => c.id === $llmConfigs.active))
   const subtitle = $derived([activeProfile?.name, activeModel?.name].filter(Boolean).join(' • '))
+
+  // ACP origin: read off the drawer's own polled chat list — no second
+  // fetch, and liveness goes stale only until that list's next 5s refresh (MVP).
+  const chatRow = $derived($thread.kind === 'chat' ? $chats.find((c) => c.chat_id === $thread.id) : undefined)
+  const acpOrigin = $derived(chatRow?.origin_platform === 'acp' ? chatRow : undefined)
+  const acpLive = $derived(!!acpOrigin?.origin_live)
+
+  let closingSession = $state(false)
+  let closeErr = $state('')
+  async function closeAcpSession() {
+    if (!$thread.id || closingSession) return
+    closingSession = true
+    closeErr = ''
+    try { await api.closeAcpSession($thread.id) } catch (e) { closeErr = errText(e) }
+    closingSession = false
+  }
 
   // Interleave day breakpoints: each row carries `sep`, the divider label to show
   // above the first item of a new calendar day (null otherwise). Items carry `at`
@@ -109,6 +127,14 @@
   title={$thread.kind === 'run' ? (($runInfo && $runInfo.task_name) || 'Task') : 'Conversation'}
   {subtitle}>
   {#if $thread.kind === 'run' && $runInfo}<span class="badge">{$runInfo.status}</span>{/if}
+  {#if acpOrigin}
+    <!-- The listener Connection's name is the truth — never the
+         client's own self-reported clientInfo. -->
+    <span class="badge acpbadge" class:live={acpLive}
+      title={acpLive ? `Live — driven by the “${acpOrigin.origin_name}” ACP listener` : `Started by the “${acpOrigin.origin_name}” ACP listener`}>
+      ACP · {acpOrigin.origin_name}
+    </span>
+  {/if}
 </AppBar>
 
 <div class="thread" bind:this={scroller} onscroll={onScroll}>
@@ -131,4 +157,27 @@
   </button>
 {/if}
 
-<Composer />
+{#if acpLive}
+  <!-- No co-typing into a live ACP session in MVP: the composer is
+       replaced, not just disabled, so there is nothing to type into. -->
+  <div class="acplive">
+    <p>A remote client is driving this chat — the composer is unavailable until it ends.</p>
+    {#if closeErr}<p class="acperr">{closeErr}</p>{/if}
+    <button class="acpclose" disabled={closingSession} onclick={closeAcpSession}>
+      <Icon name="x" size={14} /> {closingSession ? 'Closing…' : 'Close session'}
+    </button>
+  </div>
+{:else}
+  <Composer />
+{/if}
+
+<style>
+  .acpbadge { display: inline-flex; align-items: center; gap: 5px; }
+  .acpbadge.live::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
+  .acplive { display: flex; flex-direction: column; align-items: center; gap: 8px; margin: 0 16px 16px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius, 12px); background: var(--surface); text-align: center; }
+  .acplive p { margin: 0; font-size: 13px; color: var(--text-muted); }
+  .acperr { color: var(--danger); }
+  .acpclose { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--danger); color: var(--danger); background: none; border-radius: 999px; padding: 6px 14px; font: inherit; font-size: 13px; cursor: pointer; }
+  .acpclose:hover:not(:disabled) { background: color-mix(in srgb, var(--danger) 10%, transparent); }
+  .acpclose:disabled { opacity: .6; cursor: default; }
+</style>

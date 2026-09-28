@@ -27,3 +27,7 @@ graphify-out/
 src/assistant/gateway/static/voices/
 
 docker-compose.override.yml
+
+# the gateway's OpenAPI document — generated for the zod gate, never committed
+# (ADR 0028); `npm --prefix web test` regenerates it
+web/.openapi.json

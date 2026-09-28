@@ -27,7 +27,6 @@
   // global flag: a global one greys out every card's switch while any single card is
   // in flight, which reads as the whole list blinking.
   let busyName = $state('')
-  const busy = $derived(busyName !== '')
   let err = $state('')
   // Two-step delete: first click arms the row (name), second confirms. Global only —
   // Bundled skills are read-only and never show a Delete control.
@@ -91,45 +90,43 @@
       <p class="muted">No skills installed.</p>
     {/if}
 
-    <!-- Click anywhere on the card to flip its switch — the whole card is the target,
-         not just the 34px toggle. Not while it's armed for delete: a stray click there
-         shouldn't toggle a skill you're about to remove. The action buttons
-         stopPropagation so they never toggle on the way past. -->
+    <!-- .sktop IS the switch: name, description and the pill are one widget, so the whole
+         line is the target rather than the 34px toggle. The pill is decorative; the meta
+         line's buttons sit outside the widget, so no interactive element is nested in it. -->
     {#each ordered as s (s.name)}
-      <!-- canToggle drives the card's own affordance, so it depends only on THIS row —
-           a write elsewhere must not restyle every other card. The handlers additionally
-           gate on the global `busy` so two writes can't race. -->
+      <!-- canToggle depends only on THIS row — a write elsewhere must not restyle every
+           other card. Armed for delete counts as off: a stray click shouldn't toggle a
+           skill you're about to remove. -->
       {@const rowBusy = busyName === s.name}
       {@const canToggle = !rowBusy && confirming !== s.name}
-      <div
-        class="skcard" class:off={!s.enabled} class:clickable={canToggle}
-        role="button" aria-disabled={!canToggle} tabindex={canToggle ? 0 : -1}
-        aria-label="{s.enabled ? 'Turn off' : 'Turn on'} {s.name}"
-        title={canToggle ? (s.enabled ? 'Click to turn off' : 'Click to turn on') : ''}
-        onclick={() => { if (canToggle && !busy) toggle(s) }}
-        onkeydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && canToggle && !busy) { e.preventDefault(); toggle(s) } }}
-      >
-        <div class="sktop">
+      <div class="skcard" class:off={!s.enabled}>
+        <div
+          class="sktop" class:clickable={canToggle}
+          role="switch" aria-checked={s.enabled} aria-disabled={!canToggle}
+          tabindex={canToggle ? 0 : -1}
+          aria-labelledby="sk-{s.name}" aria-describedby="skd-{s.name}"
+          title={canToggle ? (s.enabled ? 'Click to turn off' : 'Click to turn on') : ''}
+          onclick={() => { if (canToggle) toggle(s) }}
+          onkeydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && canToggle) { e.preventDefault(); toggle(s) } }}
+        >
           <div class="skmain">
-            <span class="skname">{s.name}</span>
-            <p class="skdesc">{s.description}</p>
+            <span class="skname" id="sk-{s.name}">{s.name}</span>
+            <p class="skdesc" id="skd-{s.name}">{s.description}</p>
           </div>
           <div class="skctl">
-            <button class="setswitch" class:on={s.enabled} role="switch" aria-checked={s.enabled}
-              title={s.enabled ? 'On — available everywhere' : 'Off — dropped from every profile'}
-              disabled={rowBusy} onclick={(e) => { e.stopPropagation(); toggle(s) }} aria-label="{s.name} enabled"></button>
+            <span class="setswitch" class:on={s.enabled} class:busy={rowBusy} aria-hidden="true"></span>
           </div>
         </div>
         <div class="skmeta">
           {#if confirming === s.name}
             <span class="skconfirm">Delete {s.name}?</span>
-            <button class="linkbtn danger skmetabtn" disabled={rowBusy} onclick={(e) => { e.stopPropagation(); del(s) }}>Confirm</button>
-            <button class="linkbtn" disabled={rowBusy} onclick={(e) => { e.stopPropagation(); confirming = '' }}>Cancel</button>
+            <button class="linkbtn danger skmetabtn" disabled={rowBusy} onclick={() => del(s)}>Confirm</button>
+            <button class="linkbtn" disabled={rowBusy} onclick={() => (confirming = '')}>Cancel</button>
           {:else}
             <span class="skdot" class:third={s.origin !== 'bundled'}></span>
             {s.origin === 'bundled' ? 'First-party · ships with the app' : 'Installed · global'}
             {#if s.origin !== 'bundled'}
-              <button class="linkbtn quiet skmetabtn" disabled={rowBusy} onclick={(e) => { e.stopPropagation(); confirming = s.name }}>Delete</button>
+              <button class="linkbtn quiet skmetabtn" disabled={rowBusy} onclick={() => (confirming = s.name)}>Delete</button>
             {/if}
           {/if}
         </div>

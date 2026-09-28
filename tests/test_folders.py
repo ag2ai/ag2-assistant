@@ -1,7 +1,10 @@
 """FolderStore — the install-wide Folder registry + Grants (ADR 0006)."""
 
+import threading
+
 import pytest
 
+from assistant import folders
 from assistant.folders import NONE, READ, READ_WRITE, DuplicatePath, FolderStore
 
 
@@ -453,3 +456,70 @@ def test_drop_task_garbage_collects_task_only_folder(tmp_path):
     store.set_grant(f["id"], READ, profile="work", task_id="task-1")  # task-only Folder
     store.drop_task("task-1")
     assert store.get_folder(f["id"]) is None  # no grants left → GC'd, not orphaned
+
+
+# --- one instance, several threads (the gateway shares its store) ---------------
+
+
+def test_a_reader_mid_load_never_sees_an_empty_registry(tmp_path, monkeypatch):
+    """``_load`` must swap the registry in one assignment.
+
+    The gateway hands ONE FolderStore to both the API and the running task turn,
+    so a reload on the turn's thread happens while another thread is inside a
+    ``set_grant``. Clearing the lists before parsing made that reader conclude the
+    Folder did not exist — a KeyError on a Folder that was there all along.
+    """
+    store = _store(tmp_path)
+    d = tmp_path / "acme"
+    d.mkdir()
+    f = store.create_folder(str(d))
+    store.set_grant(f["id"], READ, profile="work")
+
+    mid_load = []
+    real_loads = folders.json.loads
+
+    def peek(text):
+        # Called from inside _load, i.e. exactly where another thread would look.
+        mid_load.append((list(store._folders), list(store._grants)))
+        return real_loads(text)
+
+    monkeypatch.setattr(folders.json, "loads", peek)
+    store._stat = None  # force the next refresh to re-read the file
+    store.list_folders()
+
+    assert mid_load, "the registry was never re-read — the test proves nothing"
+    for seen_folders, seen_grants in mid_load:
+        assert [x["id"] for x in seen_folders] == [f["id"]]
+        assert len(seen_grants) == 1
+
+
+def test_a_concurrent_reload_does_not_lose_the_grant_being_written(tmp_path):
+    """A reader thread reloading mid-write must not clobber the write.
+
+    ``_mutate`` holds the in-process guard, so the reload waits and the grant
+    written under it survives to the file.
+    """
+    store = _store(tmp_path)
+    d = tmp_path / "acme"
+    d.mkdir()
+    f = store.create_folder(str(d))
+
+    reader_ran = threading.Event()
+
+    def reload_from_another_thread():
+        store._stat = None  # pretend the file moved under us
+        store.list_folders()
+        reader_ran.set()
+
+    with store._mutate():
+        store._grants.append(
+            {"folder_id": f["id"], "profile": "work", "chat_id": "", "task_id": "", "mode": READ}
+        )
+        reader = threading.Thread(target=reload_from_another_thread)
+        reader.start()
+        assert not reader_ran.wait(0.2), "the reader got in mid-write — the guard is not held"
+        store._save()
+    reader.join(5)
+
+    assert store.mode_for(d, "work") == READ
+    assert FolderStore(path=tmp_path / "folders.json").mode_for(d, "work") == READ

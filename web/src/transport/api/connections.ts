@@ -1,8 +1,8 @@
 // Connections (GLOBAL, install-level): one configured instance of a messaging
 // platform, plus the three tables hung off it — which profiles it can reach, who
-// may speak to it, and where each of its group conversations lands (app.py
-// 2089-2300). A platform connects as many times as you want, so every route below
-// is keyed by a connection id, never by the platform.
+// may speak to it, and where each of its group conversations lands
+// (gateway/routes/connection.py). A platform connects as many times as you want,
+// so every route below is keyed by a connection id, never by the platform.
 import { globalApi as G } from '../../lib/profile.ts'
 import { del, get, post } from '../http.ts'
 import {

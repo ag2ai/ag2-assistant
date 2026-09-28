@@ -17,6 +17,8 @@
   import { secretsStore, loadSecrets, createOrSnap } from '../../lib/secrets.ts'
   import { autoSecretName, sortForProvider } from '../../lib/secretsUtil.ts'
   import { TYPE_LABEL } from '../../lib/providerLabels.ts'
+  import { llmConfigs } from '../../lib/llm.ts'
+  import { builtinToolText } from '../../lib/builtinTools.ts'
   import { API_INTERFACES, usesBaseUrl, offersApiInterface, settleWithoutBaseUrl } from '../../lib/apiInterface.ts'
   import { splitModelId, joinModelId, effortLabel, groupModels } from '../../lib/codexModels.ts'
   import { familyOf } from '../../lib/knownModels.ts'
@@ -64,6 +66,7 @@
       signedIn: !!config.signed_in,
       hasOptions,
       advText: hasOptions ? JSON.stringify(config.options, null, 2) : '',
+      builtinTools: { ...(config.builtin_tools || {}) },
     }
   })
 
@@ -76,6 +79,19 @@
   let pastedKey = $state('')            // non-empty → create-or-snap a Secret on save
   let advOpen = $state(init.hasOptions) // Advanced JSON escape hatch (extra provider kwargs)
   let advText = $state(init.advText)
+  // Provider-native tools switched on, as {tool id: options}. Options stay empty —
+  // every field on the offered tools is optional, so there is nothing to edit yet.
+  let builtinTools = $state<Record<string, Record<string, unknown>>>(init.builtinTools)
+
+  // Which provider tools THIS type offers. The server is the authority (it ships
+  // ids on the list payload); lib/builtinTools.ts supplies the words.
+  const builtinOffered = $derived($llmConfigs.builtinByType?.[type] || [])
+  function toggleBuiltin(id: string, on: boolean) {
+    const next = { ...builtinTools }
+    if (on) next[id] = next[id] || {}
+    else delete next[id]
+    builtinTools = next
+  }
 
   onMount(loadSecrets)
 
@@ -139,6 +155,13 @@
   function changeType(next: string) {
     if (next === type) return
     if (modelFamily(next) !== modelFamily(type)) model = ''
+    // Provider tools belong to the provider. Drop the ones the new type has no
+    // answer for, mirroring the server's own filter, so the form never shows a
+    // switch a save would silently strip.
+    const offered = $llmConfigs.builtinByType?.[next] || []
+    builtinTools = Object.fromEntries(
+      Object.entries(builtinTools).filter(([id]) => offered.includes(id)),
+    )
     type = next
   }
 
@@ -319,6 +342,10 @@
       secret_id: secretId,
       api_key: pastedKey.trim() || null,  // draft-test only; save creates a Secret first
       options,
+      // Always sent, even empty: the server reads an ABSENT field as "predates the
+      // feature" and seeds the type's old automatic behaviour, so omitting it here
+      // would resurrect a switch the user just turned off.
+      builtin_tools: builtinTools,
     }
   }
 
@@ -520,6 +547,32 @@
       </div>
       {#if config.secret_missing}<span class="llmhint">This model referenced a deleted secret.</span>{/if}
       <span class="llmhint">{keyUsage}</span>
+    </div>
+  {/if}
+
+  {#if builtinOffered.length}
+    <!-- Only for types that offer any: OpenAI Chat Completions, Ollama and the CLI
+         types map no server-side tool, so they show nothing rather than an empty
+         heading. Labels come from lib/builtinTools.ts — the same id reads as
+         "Web fetch" on Anthropic and "URL context" on Gemini. -->
+    <div class="llmfield">
+      <span class="llmlabel">Provider tools <span class="llmhint">what {TYPE_LABEL[type] || type} can do on its own servers</span></span>
+      {#each builtinOffered as id (id)}
+        {@const t = builtinToolText(type, id)}
+        <label class="llmtool">
+          <input
+            type="checkbox" checked={!!builtinTools[id]}
+            onchange={(e) => toggleBuiltin(id, e.currentTarget.checked)}
+          />
+          <span class="llmtoolbody">
+            <span class="llmtoolname">{t.label}</span>
+            <span class="llmhint">{t.description}</span>
+            <!-- The consequence appears the moment it becomes true; the off state
+                 stays quiet rather than warning about something not happening. -->
+            {#if builtinTools[id] && t.note}<span class="llmhint">{t.note}</span>{/if}
+          </span>
+        </label>
+      {/each}
     </div>
   {/if}
 

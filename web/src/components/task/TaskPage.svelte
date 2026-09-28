@@ -26,6 +26,7 @@
 import WriteSwitch from '../WriteSwitch.svelte'
   import FolderPicker from '../FolderPicker.svelte'
   import ScheduleField from './ScheduleField.svelte'
+  import RecallField from './RecallField.svelte'
   import { fmtStamp, fmtNextIn } from '../../lib/time.ts'
 
   const TERMINAL: RunStatus[] = ['completed', 'failed', 'cancelled']
@@ -52,6 +53,7 @@ import WriteSwitch from '../WriteSwitch.svelte'
   let eprompt = $state('')
   let emodel = $state<string | null>(null)
   let eschedule = $state<ScheduleValue>({ kind: 'manual', at: null, cron: null })
+  let erecall = $state(0)
   let efolders = $state<FolderRow[]>([])   // intended folder set
   let pickerOpen = $state(false)
   let modelOpen = $state(false)   // model-override popover (edit mode)
@@ -135,6 +137,20 @@ import WriteSwitch from '../WriteSwitch.svelte'
   const eTaskFolders = $derived(efolders.filter((f) => f.profileMode == null))
   const eProfileFolders = $derived(efolders.filter((f) => f.profileMode != null))
 
+  let markingRead = $state(false)
+  async function markAllRead() {
+    if (!task || markingRead) return
+    markingRead = true
+    // Reload rather than patch locally: the response is a bare Ok, so the task's own
+    // unread count and run rows are the authoritative redraw.
+    try {
+      await api.taskRunsSeen(task.id)
+      await load(task.id)
+    } finally {
+      markingRead = false
+    }
+  }
+
   // Monotonic token: fast task-A → task-B navigation can let A's load() await
   // resolve after B's has started. Each call claims the next token and checks
   // it's still current before committing ANY state.
@@ -205,6 +221,7 @@ import WriteSwitch from '../WriteSwitch.svelte'
     eprompt = t?.prompt || ''
     emodel = t?.model ?? null
     eschedule = t ? scheduleValue($state.snapshot(t.schedule)) : { kind: 'manual', at: null, cron: null }
+    erecall = t?.recall_depth ?? 0
     efolders = t ? currentFolderState().map((g) => ({ ...g, mode: g.taskMode ?? g.profileMode })) : createFolderSeed()
     pickerOpen = false
     modelOpen = false
@@ -292,13 +309,14 @@ import WriteSwitch from '../WriteSwitch.svelte'
           prompt: eprompt.trim(),
           model: emodel ?? '',
           schedule: $state.snapshot(eschedule),
+          recall_depth: erecall,
         })
         patchTaskInStore(created)
         try { await applyFolderOps(folderGrantDiff([], $state.snapshot(efolders)), created.id) } catch { /* task saved */ }
         go('/t/' + created.id)
       } else {
         // Edit: build a minimal PATCH of changed task fields, then reconcile folders.
-        const patch = taskEditPatch(cur, { name: ename, description: edesc, prompt: eprompt, model: emodel, schedule: $state.snapshot(eschedule) })
+        const patch = taskEditPatch(cur, { name: ename, description: edesc, prompt: eprompt, model: emodel, schedule: $state.snapshot(eschedule), recall_depth: erecall })
         const updated = Object.keys(patch).length ? await api.updateTask(cur.id, patch) : cur
         task = updated
         patchTaskInStore(updated)
@@ -348,6 +366,11 @@ import WriteSwitch from '../WriteSwitch.svelte'
     try { await api.deleteTaskPermission(cur.id, rule); perms = await api.taskPermissions(cur.id) }
     catch (e) { error = errText(e, 'revoke failed') }
   }
+
+  // Read-only prose for recall_depth, mirroring how Repeats reads schedule_desc.
+  // Anything that isn't a positive count reads as no recall — including the undefined
+  // a server predating the field sends.
+  const recallLabel = (d: number) => (!d ? '—' : d < 0 ? 'All previous runs' : `Last ${d} runs`)
 
   // Status → icon, matching Drawer.svelte's status-glyph conventions.
   const STAT_ICON: Record<RunStatus, string> = { running: 'spinner', needs_input: 'help-circle', completed: 'check', failed: 'x', cancelled: 'slash' }
@@ -413,7 +436,14 @@ import WriteSwitch from '../WriteSwitch.svelte'
       <div class="tpcols" class:single={isNew}>
         {#if !isNew && task}
           <section>
-            <h2>History</h2>
+            <div class="histhead">
+              <h2>History</h2>
+              {#if task.unread > 0}
+                <button class="markread" onclick={markAllRead} disabled={markingRead}>
+                  Mark all read
+                </button>
+              {/if}
+            </div>
             {#if !task.runs.length}<div class="none">No runs yet — hit Run now, or wait for the schedule.</div>{/if}
             <div class="runslist">
               {#each task.runs as r (r.id)}
@@ -572,6 +602,13 @@ import WriteSwitch from '../WriteSwitch.svelte'
             <p class="tpmeta">{task.schedule_desc}</p>
           {/if}
 
+          <h2>Recall earlier runs</h2>
+          {#if inEdit}
+            <RecallField bind:depth={erecall} />
+          {:else if task}
+            <p class="tpmeta">{recallLabel(task.recall_depth)}</p>
+          {/if}
+
           {#if !isNew}
             <h2>Always allowed</h2>
             {#if perms.length}
@@ -653,6 +690,10 @@ import WriteSwitch from '../WriteSwitch.svelte'
      a single centered column keeps the focus on the fields being filled (spec story 15). */
   .tpcols.single { grid-template-columns: minmax(0, 1fr); max-width: 640px; }
   @media (max-width: 760px) { .tpcols { grid-template-columns: 1fr; } }
+  .histhead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .markread { background: none; border: 0; padding: 0; font: inherit; font-size: 12px; color: var(--muted); cursor: pointer; }
+  .markread:hover:not(:disabled) { color: var(--ink); }
+  .markread:disabled { opacity: .5; cursor: default; }
   .tpcols h2 { margin: 20px 0 8px; font-size: 12px; font-weight: var(--fw-semibold); color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
   .tpcols section > h2:first-child { margin-top: 0; }
   .tpprompt { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.5; color: var(--ink); margin: 0; }
@@ -683,9 +724,8 @@ import WriteSwitch from '../WriteSwitch.svelte'
      canonical rules (app.css) — .open is scoped to .taskpage there, .iconbtn is a
      bare global. Nothing to reproduce here. */
 
-  /* Run rows: same bordered-card row vocabulary as Settings' .llmrow / .mcprow
-     (border + radius-sm + hover fill), with the .drow.unseen accent-tint treatment
-     for runs the user hasn't opened yet. */
+  /* Run rows: a bordered card that fills and brightens its border on hover, with the
+     .drow.unseen accent-tint treatment for runs the user hasn't opened yet. */
   .runslist { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
   .runrow {
     display: flex; gap: 10px; align-items: center; width: 100%; text-align: left;

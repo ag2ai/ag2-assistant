@@ -65,10 +65,18 @@ class Channel(ABC):
 
     platform: str
     connection: str
+    # The router `start` was handed; None until then.
+    _router: "ChannelRouter | None" = None
 
     @abstractmethod
     async def start(self, router: "ChannelRouter") -> None:
         """Connect to the platform and begin handling messages."""
+
+    def _require_router(self) -> "ChannelRouter":
+        """The router this adapter was started with."""
+        if self._router is None:
+            raise RuntimeError(f"{self.platform} channel is not started")
+        return self._router
 
     @abstractmethod
     async def stop(self) -> None:

@@ -107,7 +107,7 @@
   const ALIGN: Record<string, string> = { start: 'flex-start', center: 'center', end: 'flex-end', stretch: 'stretch' }
   const align = $derived(ALIGN[String(component.align ?? '')] || undefined)
 
-  // ── The styling vocabulary (ADR 0028) ──────────────────────────────────────
+  // ── The styling vocabulary (ADR 0037) ──────────────────────────────────────
   // A Card names a gap, an alignment, a size or a tone; each resolves to a token.
   const GAP: Record<string, string> = { none: '0', xs: 'var(--space-2)', sm: 'var(--space-3)', md: 'var(--space-5)', lg: 'var(--space-7)' }
   const gap = $derived(GAP[String(component.gap ?? '')] || undefined)

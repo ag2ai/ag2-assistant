@@ -19,11 +19,12 @@ export type LlmConfigsSnapshot = {
   active: string | null
   envOverride: LlmEnvOverride | null
   providerDeps: Record<string, DepsStatus>
+  builtinByType: Record<string, string[]>
   loaded: boolean
 }
 
 export const llmConfigs = writable<LlmConfigsSnapshot>({
-  configs: [], active: null, envOverride: null, providerDeps: {}, loaded: false,
+  configs: [], active: null, envOverride: null, providerDeps: {}, builtinByType: {}, loaded: false,
 })
 
 export async function loadLlmConfigs(): Promise<void> {
@@ -35,6 +36,9 @@ export async function loadLlmConfigs(): Promise<void> {
     // type -> {ok, extra, install}, for every type (the template grid reads types
     // no config uses yet).
     providerDeps: d.provider_deps || {},
+    // type -> the provider-native tool ids it offers, for every type (same reason
+    // as providerDeps: the form renders a type before any config uses it).
+    builtinByType: d.builtin_tools_by_type || {},
     loaded: true,
   })
 }

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ag2-assistant"
-version = "0.5.3"  # single source of truth (mirrors ag2's own pyproject); assistant.version reads it back from installed metadata
+version = "0.5.4"  # single source of truth (mirrors ag2's own pyproject); assistant.version reads it back from installed metadata
 description = "AG2 Assistant — a personal AI assistant powered by AG2's framework"
 readme = "README.md"
 license = "Apache-2.0"
@@ -39,7 +39,10 @@ dependencies = [
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.25.0",
-    "ruff>=0.15.18,<0.16",  # pinned line; matches .pre-commit-config.yaml + the CI lint gate
+    "pytest-cov>=6.0",
+    "ruff>=0.15.18,<0.17",  # pinned line; matches .pre-commit-config.yaml + the CI lint gate
+    "mypy>=2.3,<2.4",
+    "types-PyYAML>=6.0",
     "pre-commit>=4.0.0",
 ]
 # Provider client libraries not in the base install.
@@ -57,6 +60,10 @@ google = [
 
 [project.scripts]
 ag2-assistant = "assistant.cli:app"
+
+[tool.uv.sources]
+# Track ag2's main branch instead of a released version.
+ag2 = { git = "https://github.com/ag2ai/ag2.git", branch = "main" }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -80,14 +87,33 @@ ignore = ["E501"]
 [tool.ruff.format]
 quote-style = "double"
 
+[tool.mypy]
+# `files` is configured rather than passed on the command line so a bare `mypy`
+# means the same thing in a terminal, in the pre-commit hook and in CI.
+python_version = "3.12"
+mypy_path = "src"
+files = ["src/assistant"]
+plugins = ["pydantic.mypy"]
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+strict_equality = true
+check_untyped_defs = true
+
+# No stubs and no type marker. Named individually rather than with a global
+# ignore_missing_imports, which would also silence future unresolved imports.
+[[tool.mypy.overrides]]
+module = ["cron_descriptor.*", "googleapiclient.*", "google_auth_oauthlib.*"]
+ignore_missing_imports = true
+
 [tool.codespell]
 # The generated SPA bundle and lockfiles are machine-written — never spell-check them.
 skip = "*.lock,*package-lock.json,src/assistant/gateway/static/app/*,.venv,node_modules"
 # Not typos: `ans` (answer var), `hsi` (Hang Seng Index ticker), `protext` (a
 # camelCase identifier), `padd` (Profiles.svelte's `p`-prefixed CSS class naming,
-# i.e. "p-add"), plus valid hyphenations/spellings. Extend this list when
+# i.e. "p-add"), `sigit` (an ACP Registry agent name), plus valid hyphenations/spellings. Extend this list when
 # codespell flags a real term.
-ignore-words-list = "ans,hsi,thur,unparseable,pre-empt,pre-selects,protext,padd"
+ignore-words-list = "ans,hsi,thur,unparseable,pre-empt,pre-selects,protext,padd,sigit"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -131,7 +131,7 @@ def test_build_agent_tools_includes_coding_tool(paths, tmp_path):
     from assistant.tools import build_agent_tools
 
     config = Config.for_paths(paths, search_path=_bin(tmp_path, "claude-agent-acp"))
-    tools = build_agent_tools(provider="gemini", capabilities=["coding"], config=config)
+    tools = build_agent_tools("gemini", capabilities=["coding"], config=config)
     assert {getattr(t, "name", "") for t in tools} == {
         "code_with_cli_agent",
         "list_coding_agents",
