@@ -610,11 +610,7 @@ class Gateway:
             a2ui_runtime = None
             try:
                 a2ui_runtime = self._catalog.runtime()
-                prompt = [
-                    *prompt,
-                    a2ui_runtime.system_prompt_section,
-                    a2ui_runtime.capabilities_prompt(None),
-                ]
+                prompt = [*prompt, a2ui_runtime.capabilities_prompt(None)]
             except Exception as exc:
                 log_suppressed("a2ui runtime setup", exc, chat_id=chat_id)
             if a2ui_runtime is not None:

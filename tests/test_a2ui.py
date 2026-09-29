@@ -10,11 +10,11 @@ from ag2.events import ModelMessage, ModelResponse
 from assistant.a2ui import (
     CARD_VOCABULARY,
     CATALOG_ID,
+    CATALOG_RULES,
     WEATHER_CONDITIONS,
     CardCatalog,
     assistant_catalog,
     bundled_cards,
-    catalog_rules,
     durable_surfaces_from_messages,
     expand_card_messages,
     expanded_card_surface,
@@ -26,6 +26,7 @@ from assistant.coding.diff import FileDiff
 from assistant.coding.surface import card_fields
 from assistant.events import A2UISurface
 from assistant.tools.weather import condition_for
+from tests.support.cards import card_detail, skill_body
 
 
 def _runtime(config):
@@ -56,50 +57,49 @@ def test_assistant_catalog_declares_custom_components():
     ]
 
 
-def test_a2ui_runtime_prompt_exposes_schema_and_custom_contracts(config):
-    rt = _runtime(config)
-    prompt = rt.system_prompt_section
+async def test_the_skill_body_exposes_the_rules_and_the_card_index(config):
+    body = await skill_body(config)
 
-    assert rt.catalog_id == CATALOG_ID
-    assert "## A2UI Message Schema (v1.0)" in prompt
-    assert "## Available Components" in prompt
-    assert "**Custom components:**" in prompt
-    assert "WeatherPanel" in prompt
-    assert "LowdownPanel" not in prompt
-    assert 'root component="Column"' in prompt
-    assert "users do not need to ask for A2UI explicitly" in prompt
-    assert "Prefer an A2UI component" in prompt
-    assert "TaskPlan" in prompt
+    assert _runtime(config).catalog_id == CATALOG_ID
+    assert "## Available Components" in body
+    assert "**Custom components:**" in body
+    assert "WeatherPanel" in body
+    assert "LowdownPanel" not in body
+    assert 'root component="Column"' in body
+    assert "users do not need to ask for A2UI explicitly" in body
+    assert "Prefer an A2UI surface" in body
+    assert "TaskPlan" in body
     # Intent → COMPONENT. Which tool gathers the data is the tool's own business, so no
     # tool name appears here (see tests/test_capability_registry.py). The imperative to
     # actually EMIT the component must survive: dropping it silently cost us the
     # MarketBoard, which the model replaced with prose.
-    assert "EMIT that component" in prompt
+    assert "EMIT that component" in body
     # The weather and the news are files now, each routed by its own description.
-    assert "WeatherPanel — Use when the answer is the weather" in prompt
-    assert "NewsDigest — Use when the answer is the latest news" in prompt
+    assert "- **WeatherPanel**: Use when the answer is the weather" in body
+    assert "- **NewsDigest**: Use when the answer is the latest news" in body
     # MarketBoard is a file now: its own description is what routes the model to it.
-    assert "MarketBoard — Use when the answer is market prices" in prompt
-    assert "Gather the real data with your tools BEFORE you render" in prompt
-    assert "TaskPlan — Use when a task is being created" in prompt
+    assert "- **MarketBoard**: Use when the answer is market prices" in body
+    assert "Gather the real data with your tools BEFORE you render" in body
+    assert "- **TaskPlan**: Use when a task is being created" in body
     # The task board, the inbox and the agenda are files now, each routed by its own
     # description rather than by a bullet here.
-    assert "TaskProgress — Use when the answer is the state of the user's existing tasks" in prompt
+    assert "- **TaskProgress**: Use when the answer is the state of the user's existing" in body
     # The comparison table is a file now, routed by its own description too.
-    assert "DecisionMatrix — Use when the answer compares concrete alternatives" in prompt
-    assert "Use Divider for section separation when useful" in prompt
-    assert "A canvas is an A2UI surface, not a component" in prompt
-    assert "place that exact value in an Image component's required `url`" in prompt
-    assert '"component":"DateTimeInput"' in prompt
-    assert "Do not call tools to discover A2UI components" in prompt
-    assert 'Do not describe or print "corrected A2UI components"' in prompt
+    assert "- **DecisionMatrix**: Use when the answer compares concrete alternatives" in body
+    assert "Use Divider for section separation when useful" in body
+    assert "A canvas is an A2UI surface, not a component" in body
+    assert "place that exact value in an Image component's required `url`" in body
+    assert '"component":"DateTimeInput"' in body
+    assert "Read a custom component's own detail resource before you draw it" in body
+    assert 'Do not describe or print "corrected A2UI components"' in body
     assert (
-        "never mention schemas, validation, properties, components, or corrected/updated UI"
-        in prompt
+        "never mention schemas, validation, properties, components, or corrected/updated UI" in body
     )
-    assert '"createSurface"' in prompt
-    assert '"updateComponents"' in prompt
-    assert CATALOG_ID in prompt
+    assert '"createSurface"' in body
+    assert '"updateComponents"' in body
+    assert CATALOG_ID in body
+    # The message schema is not the body's: it costs nothing until a Card is drawn.
+    assert "## A2UI Message Schema" not in body
 
 
 def test_durable_surfaces_project_transient_a2ui_messages():
@@ -288,7 +288,7 @@ def _checklist_emit() -> list[dict]:
     )
 
 
-def test_the_checklist_card_is_offered_to_the_agent_from_its_file(config):
+async def test_the_checklist_card_is_offered_to_the_agent_from_its_file(config):
     card = bundled_cards()["Checklist"]
     schema = assistant_catalog()["components"]["Checklist"]
 
@@ -296,9 +296,9 @@ def test_the_checklist_card_is_offered_to_the_agent_from_its_file(config):
     assert schema["required"] == ["id", "component", "title", "items"]
     assert set(schema["properties"]) == {"id", "component", "title", "items"}
 
-    prompt = _runtime(config).system_prompt_section
-    assert card.description in prompt
-    assert '"component":"Checklist","title":"Ship the release"' in prompt
+    assert card.description in await skill_body(config)
+    detail = await card_detail(config, "Checklist")
+    assert '"component":"Checklist","title":"Ship the release"' in detail
 
 
 def test_the_model_emits_only_the_cards_fields_and_the_file_supplies_the_layout():
@@ -391,7 +391,7 @@ async def test_the_browser_is_asked_to_draw_primitives_not_a_card(config):
 
 def test_a_card_that_is_not_there_is_not_offered_and_not_drawable():
     assert "Checklist" not in assistant_catalog({})["components"]
-    assert "Checklist" not in catalog_rules({})
+    assert "Checklist" not in CATALOG_RULES
     unchanged = _checklist_emit()
 
     assert expand_card_messages(unchanged, {}) == unchanged
@@ -424,7 +424,7 @@ def _market_emit() -> list[dict]:
     )
 
 
-def test_the_market_board_is_offered_to_the_agent_from_its_file(config):
+async def test_the_market_board_is_offered_to_the_agent_from_its_file(config):
     card = bundled_cards()["MarketBoard"]
     schema = assistant_catalog()["components"]["MarketBoard"]
 
@@ -432,9 +432,8 @@ def test_the_market_board_is_offered_to_the_agent_from_its_file(config):
     assert schema["required"] == ["id", "component", "title", "quotes"]
     assert set(schema["properties"]) >= {"id", "component", "title", "quotes"}
 
-    prompt = _runtime(config).system_prompt_section
-    assert card.description in prompt
-    assert '"component":"MarketBoard"' in prompt
+    assert card.description in await skill_body(config)
+    assert '"component":"MarketBoard"' in await card_detail(config, "MarketBoard")
 
 
 def test_the_market_board_is_drawn_from_the_vocabulary_not_from_a_component():
@@ -527,16 +526,16 @@ def _brief_emit(sections: list[str] | None = None) -> list[dict]:
     )
 
 
-def test_the_task_plan_places_and_brief_are_offered_from_their_files(config):
-    prompt = _runtime(config).system_prompt_section
+async def test_the_task_plan_places_and_brief_are_offered_from_their_files(config):
+    body = await skill_body(config)
     catalog = assistant_catalog()
 
     for name in ("TaskPlan", "RestaurantFinder", "AnswerBrief"):
         card = bundled_cards()[name]
         assert catalog["components"][name]["description"] == card.description
         assert catalog["components"][name]["required"] == ["id", "component", *card.required]
-        assert card.description in prompt
-        assert f'"component":"{name}"' in prompt
+        assert card.description in body
+        assert f'"component":"{name}"' in await card_detail(config, name)
 
 
 def test_the_task_plan_places_and_brief_are_drawn_from_the_vocabulary():
@@ -609,10 +608,9 @@ def test_the_task_plan_places_and_brief_are_no_longer_catalog_literals():
 
     for name in ("TaskPlan", "RestaurantFinder", "AnswerBrief"):
         assert name not in bare["components"]
-    rules = catalog_rules({})
-    assert "render a TaskPlan" not in rules
-    assert "render a RestaurantFinder" not in rules
-    assert "render an AnswerBrief" not in rules
+    assert "render a TaskPlan" not in CATALOG_RULES
+    assert "render a RestaurantFinder" not in CATALOG_RULES
+    assert "render an AnswerBrief" not in CATALOG_RULES
 
 
 # --- The Cards that link to the app's own things (07) ---
@@ -683,16 +681,16 @@ def _agenda_emit(events: list[dict] | None = None) -> list[dict]:
     )
 
 
-def test_the_board_the_inbox_and_the_agenda_are_offered_from_their_files(config):
-    prompt = _runtime(config).system_prompt_section
+async def test_the_board_the_inbox_and_the_agenda_are_offered_from_their_files(config):
+    body = await skill_body(config)
     catalog = assistant_catalog()
 
     for name in ("TaskProgress", "InboxBrief", "AgendaCard"):
         card = bundled_cards()[name]
         assert catalog["components"][name]["description"] == card.description
         assert catalog["components"][name]["required"] == ["id", "component", *card.required]
-        assert card.description in prompt
-        assert f'"component":"{name}"' in prompt
+        assert card.description in body
+        assert f'"component":"{name}"' in await card_detail(config, name)
 
 
 def test_the_board_the_inbox_and_the_agenda_are_drawn_from_the_vocabulary():
@@ -790,10 +788,9 @@ def test_the_board_the_inbox_and_the_agenda_are_no_longer_catalog_literals():
 
     for name in ("TaskProgress", "InboxBrief", "AgendaCard"):
         assert name not in bare["components"]
-    rules = catalog_rules({})
-    assert "render a TaskProgress" not in rules
-    assert "render an InboxBrief" not in rules
-    assert "render an AgendaCard" not in rules
+    assert "render a TaskProgress" not in CATALOG_RULES
+    assert "render an InboxBrief" not in CATALOG_RULES
+    assert "render an AgendaCard" not in CATALOG_RULES
 
 
 # --- The Cards with the bespoke artwork (08) ---
@@ -843,16 +840,16 @@ def _news_emit(stories: list[dict] | None = None) -> list[dict]:
     )
 
 
-def test_the_weather_and_the_news_are_offered_from_their_files(config):
-    prompt = _runtime(config).system_prompt_section
+async def test_the_weather_and_the_news_are_offered_from_their_files(config):
+    body = await skill_body(config)
     catalog = assistant_catalog()
 
     for name in ("WeatherPanel", "NewsDigest"):
         card = bundled_cards()[name]
         assert catalog["components"][name]["description"] == card.description
         assert catalog["components"][name]["required"] == ["id", "component", *card.required]
-        assert card.description in prompt
-        assert f'"component":"{name}"' in prompt
+        assert card.description in body
+        assert f'"component":"{name}"' in await card_detail(config, name)
 
 
 def test_the_weather_and_the_news_are_drawn_from_the_vocabulary():
@@ -960,9 +957,8 @@ def test_the_weather_and_the_news_are_no_longer_catalog_literals():
 
     for name in ("WeatherPanel", "NewsDigest"):
         assert name not in bare["components"]
-    rules = catalog_rules({})
-    assert "render a WeatherPanel" not in rules
-    assert "render a NewsDigest" not in rules
+    assert "render a WeatherPanel" not in CATALOG_RULES
+    assert "render a NewsDigest" not in CATALOG_RULES
 
 
 def test_a_card_nested_in_a_layout_draws_what_it_draws_on_its_own():
@@ -1062,13 +1058,13 @@ def _decision_drawn(
     ]["components"]
 
 
-def test_the_decision_matrix_is_offered_to_the_agent_from_its_file(config):
-    prompt = _runtime(config).system_prompt_section
+async def test_the_decision_matrix_is_offered_to_the_agent_from_its_file(config):
+    body = await skill_body(config)
     card = bundled_cards()["DecisionMatrix"]
 
     assert assistant_catalog()["components"]["DecisionMatrix"]["description"] == card.description
-    assert "DecisionMatrix — Use when the answer compares" in prompt
-    assert '"component":"DecisionMatrix"' in prompt
+    assert "- **DecisionMatrix**: Use when the answer compares" in body
+    assert '"component":"DecisionMatrix"' in await card_detail(config, "DecisionMatrix")
 
 
 def test_the_decision_matrix_is_drawn_from_the_vocabulary_not_from_a_component():
@@ -1169,7 +1165,7 @@ def test_a_decision_matrix_stored_before_it_was_a_file_is_redrawn_on_read():
 
 def test_the_decision_matrix_is_no_longer_a_catalog_literal():
     assert "DecisionMatrix" not in assistant_catalog({})["components"]
-    assert "render a DecisionMatrix" not in catalog_rules({})
+    assert "render a DecisionMatrix" not in CATALOG_RULES
 
 
 # --- The coding session is a Card like any other (10) ---
@@ -1194,12 +1190,12 @@ def _coding_drawn(**over) -> list[dict]:
     ]
 
 
-def test_the_coding_session_is_a_card_in_the_catalog(config):
+async def test_the_coding_session_is_a_card_in_the_catalog(config):
     card = bundled_cards()["CodingSession"]
 
     assert assistant_catalog()["components"]["CodingSession"]["description"] == card.description
-    assert "CodingSession — Use when the answer is a coding agent's run" in (
-        _runtime(config).system_prompt_section
+    assert "- **CodingSession**: Use when the answer is a coding agent's run" in (
+        await skill_body(config)
     )
 
 

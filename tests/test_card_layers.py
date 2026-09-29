@@ -13,6 +13,7 @@ from assistant.permissions import PermissionManager, PermissionStore
 from assistant.profiles import ProfileRegistry
 from assistant.state_store import ORIGIN_BUNDLED, ORIGIN_GLOBAL, ORIGIN_PROFILE
 from assistant.tools.files import write_file_impl
+from tests.support.cards import a2ui_view, skill_body
 
 CARD = """
 name: RunTracker
@@ -205,25 +206,25 @@ def test_a_global_card_reaches_every_profile(paths):
         assert "Shelf" in _catalog(profile).cards()
 
 
-def test_the_agent_is_offered_an_edited_card_without_a_restart(config):
+async def test_the_agent_is_offered_an_edited_card_without_a_restart(config):
     path = _write(config.workspace_dir / "cards", "runs.card.yaml", _card("The first thing."))
-    catalog = _catalog(config)
-    assert "The first thing." in catalog.runtime().system_prompt_section
+    view = a2ui_view(config)
+    assert "The first thing." in await skill_body(config, view)
 
     path.write_text(_card("Something else entirely, and longer."))
 
-    prompt = catalog.runtime().system_prompt_section
-    assert "Something else entirely, and longer." in prompt
-    assert "The first thing." not in prompt
+    body = await skill_body(config, view)
+    assert "Something else entirely, and longer." in body
+    assert "The first thing." not in body
 
 
-def test_a_card_dropped_in_is_offered_to_the_agent_without_a_restart(config):
-    catalog = _catalog(config)
-    assert "Shelf" not in catalog.runtime().system_prompt_section
+async def test_a_card_dropped_in_is_offered_to_the_agent_without_a_restart(config):
+    view = a2ui_view(config)
+    assert "Shelf" not in await skill_body(config, view)
 
     _write(config.workspace_dir / "cards", "shelf.card.yaml", OTHER)
 
-    assert "Shelf" in catalog.runtime().system_prompt_section
+    assert "Shelf" in await skill_body(config, view)
 
 
 def test_repeated_asks_with_nothing_changed_on_disk_rebuild_nothing(config):

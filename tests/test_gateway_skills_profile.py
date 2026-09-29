@@ -7,7 +7,9 @@ through here too, and that a per-profile change reloads ONLY the active profile.
 
 from fastapi.testclient import TestClient
 
+from assistant.a2ui_skill import A2UI_SKILL, a2ui_available
 from assistant.gateway.app import create_app
+from assistant.profiles import ProfileRegistry
 from tests.support.apps import api, make_manager, make_profile_app
 from tests.support.fakes import skill_catalog_factory
 
@@ -151,3 +153,24 @@ def test_per_profile_change_reloads_only_active_profile(paths):
         assert "pdf-tools" in agents["work"][-1].catalog  # only the suppressed one goes
         assert len(agents["personal"]) == 1  # untouched: no fan-out
         assert "web-research" in agents["personal"][-1].catalog
+
+
+def test_the_a2ui_skill_is_suppressible_in_one_profile(paths):
+    """The Card catalog's Skill is Suppressed here like any other inherited Bundled
+    skill, and the profile's own turn resolves it off."""
+    client, pid = _client(paths)
+    with client:
+        rows = {s["name"]: s for s in client.get(api(pid, "/skills")).json()["skills"]}
+        assert rows[A2UI_SKILL]["origin"] == "bundled"
+        assert rows[A2UI_SKILL]["available"] is True
+
+        r = client.post(api(pid, f"/skills/{A2UI_SKILL}/suppress"))
+        assert r.status_code == 200
+        row = next(s for s in r.json()["skills"] if s["name"] == A2UI_SKILL)
+        assert row["suppressed"] is True
+        assert row["available"] is False
+        config = make_manager(paths).config.with_profile(ProfileRegistry(paths).get_profile(pid))
+        assert a2ui_available(config) is False
+
+        client.delete(api(pid, f"/skills/{A2UI_SKILL}/suppress"))
+        assert a2ui_available(config) is True

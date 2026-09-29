@@ -2,6 +2,7 @@
 
 from fastapi.testclient import TestClient
 
+from assistant.a2ui_skill import A2UI_SKILL
 from assistant.gateway.app import create_app
 from tests.support.apps import make_manager, make_profile_app
 from tests.support.fakes import skill_catalog_factory
@@ -82,3 +83,28 @@ def test_state_toggle_fans_out_to_all_runtimes(paths):
             # rebuilt, and the rebuild resolved the new state
             assert "email-drafting" not in agents[pid][-1].catalog
             assert "web-research" in agents[pid][-1].catalog  # only the toggled skill goes
+
+
+def test_the_a2ui_skill_sits_among_the_others_as_bundled(paths):
+    """The Card catalog's Skill (ADR 0038) is a row in Application → Skills like any
+    other Bundled one — disable-able there, and refused a delete as first-party."""
+    client, _pid = _client(paths)
+    with client:
+        row = next(s for s in client.get("/api/skills").json()["skills"] if s["name"] == A2UI_SKILL)
+        assert row["origin"] == "bundled"
+        assert row["enabled"] is True
+        assert row["description"]
+
+        r = client.post(f"/api/skills/{A2UI_SKILL}/state", json={"enabled": False})
+        assert r.status_code == 200
+        assert not next(s for s in r.json()["skills"] if s["name"] == A2UI_SKILL)["enabled"]
+
+        refused = client.delete(f"/api/skills/{A2UI_SKILL}")
+        assert refused.status_code == 409
+        assert "first-party" in refused.json()["error"]
+        assert A2UI_SKILL in {s["name"] for s in client.get("/api/skills").json()["skills"]}
+
+        client.post(f"/api/skills/{A2UI_SKILL}/state", json={"enabled": True})
+        assert next(
+            s for s in client.get("/api/skills").json()["skills"] if s["name"] == A2UI_SKILL
+        )["enabled"]

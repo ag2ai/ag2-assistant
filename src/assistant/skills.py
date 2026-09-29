@@ -23,9 +23,10 @@ from assistant.state_store import ORIGIN_BUNDLED, ORIGIN_GLOBAL, ORIGIN_PROFILE,
 def skill_origin(location: str | None, bundled_root: Path, profile_root: Path | None = None) -> str:
     """Classify a discovered skill's layer from its on-disk location: under the
     active profile skills dir → ``profile``; under the bundled first-party dir →
-    ``bundled``; otherwise → ``global``."""
+    ``bundled``; otherwise → ``global``. No location at all → ``bundled``: a skill
+    defined in code rather than installed ships with the app."""
     if not location:
-        return ORIGIN_GLOBAL
+        return ORIGIN_BUNDLED
     try:
         loc = Path(location).resolve()
         bundled = bundled_root.resolve()

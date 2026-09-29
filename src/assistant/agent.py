@@ -1,5 +1,6 @@
 """AG2 Assistant agent built on AG2."""
 
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal
@@ -17,6 +18,8 @@ from ag2.tools import SkillSearchToolkit
 from ag2.tools.skills import LocalRuntime, SkillPlugin
 from pydantic import Field
 
+from assistant.a2ui import CardCatalog
+from assistant.a2ui_skill import A2UISkillRuntime
 from assistant.codex_auth import BACKEND_BASE, CodexAuth, default_headers
 from assistant.config import Config, load_config
 from assistant.folders import FolderStore
@@ -35,7 +38,12 @@ from assistant.observers import build_observers
 from assistant.permissions import PermissionManager, PermissionStore
 from assistant.secrets import DEFAULT_OLLAMA_BASE, KEY_ENV, OLLAMA_BASE_ENV
 from assistant.settings import profile_settings
-from assistant.skills import FilteredSkillRuntime, SkillStateStore, skill_origin
+from assistant.skills import (
+    DiscoveredSkill,
+    FilteredSkillRuntime,
+    SkillStateStore,
+    skill_origin,
+)
 from assistant.tools import build_agent_tools
 from assistant.tools.docker_sandbox import build_docker_skill_runtime, docker_available
 
@@ -226,6 +234,19 @@ def build_skills_runtime(config: Config):
     return LocalRuntime(dir=str(config.skills_dir), blocked=_SKILL_BLOCKED, extra_paths=extra)
 
 
+def _availability(config: Config) -> Callable[[DiscoveredSkill], bool]:
+    """The availability predicate every skill view is filtered by, whichever runtime
+    discovered the skill: default-on unless the store turns the name off here."""
+    store = SkillStateStore(config.root_dir)
+    profile = config.data_dir.name
+    profile_root = config.skills_dir if config.data_dir != config.root_dir else None
+    return lambda skill: store.is_available(
+        skill.name,
+        profile,
+        origin=skill_origin(skill.location, bundled_skills_dir(), profile_root),
+    )
+
+
 def resolve_skills(config: Config, runtime):
     """`runtime` filtered down to the skills resolved available for `config`.
 
@@ -236,17 +257,18 @@ def resolve_skills(config: Config, runtime):
     off) — the inverse of a Folders Grant; see `SkillStateStore` for why not to
     "fix" that. `.skills` on the result is what an agent build would see.
     """
-    store = SkillStateStore(config.root_dir)
-    profile = config.data_dir.name
-    profile_root = config.skills_dir if config.data_dir != config.root_dir else None
-    return FilteredSkillRuntime(
-        runtime,
-        lambda skill: store.is_available(
-            skill.name,
-            profile,
-            origin=skill_origin(skill.location, bundled_skills_dir(), profile_root),
-        ),
-    )
+    return FilteredSkillRuntime(runtime, _availability(config))
+
+
+def resolve_a2ui_skill(config: Config):
+    """The A2UI Skill (ADR 0038) behind that same predicate, so the Card catalog is
+    disclosed — and turned off — exactly as any other Bundled skill is.
+
+    It owns its own `CardCatalog`: the gateway's is a turn's drawing, this one is a
+    read's disclosure, and both are lazily resolved, fingerprinted and per-profile
+    (ADR 0019).
+    """
+    return FilteredSkillRuntime(A2UISkillRuntime(CardCatalog(config)), _availability(config))
 
 
 def build_skills_plugin(config: Config, runtime):
@@ -264,8 +286,12 @@ def build_skills_plugin(config: Config, runtime):
     skill installed or toggled mid-session isn't reflected until the next agent
     build (a `ProfileManager.reload`) picks it up — which is exactly what the
     /api/skills routes trigger on every change.
+
+    The A2UI Skill goes FIRST because `SkillPlugin` resolves a name clash last-wins:
+    a user's own `rich-views` skill must shadow the bundled one, as it does for every
+    other Bundled skill.
     """
-    return SkillPlugin(resolve_skills(config, runtime))
+    return SkillPlugin(resolve_a2ui_skill(config), resolve_skills(config, runtime))
 
 
 def build_skills_install_tools(config: Config, runtime) -> list:

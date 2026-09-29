@@ -349,7 +349,7 @@ def assistant_catalog(cards: dict[str, Card] | None = None) -> dict:
 _CATALOG_RULES_TEMPLATE = """
 Prefer an A2UI surface when it would make the answer easier to scan; users do not need to ask for A2UI explicitly.
 Lead with a brief 1-2 sentence prose orientation, then make the A2UI surface the canonical structured view. The surface IS the answer — do NOT also restate its contents in prose (don't list the stories, rows, items, or details in text as well); that duplication is unwanted.
-Every component is fully defined by the schema and the worked examples below — gather the real data the user asked for (e.g. the actual weather), then populate the matching component and emit it directly.
+Every component is fully defined by the schema and the worked example in its own detail resource — gather the real data the user asked for (e.g. the actual weather), then populate the matching component and emit it directly.
 
 Gather the real data with your tools BEFORE you render — each tool's own description says what it covers. Never populate a component from memory, and never invent a value to fill a field: leave it out instead.
 
@@ -361,23 +361,15 @@ An interactive canvas is an A2UI surface, not a `Canvas` component. Build it fro
 For basic controls, use these exact property shapes: TextField `{"component":"TextField","label":"Name","value":{"path":"/name"}}`; ChoicePicker `{"component":"ChoicePicker","options":[{"label":"One","value":"one"}],"value":{"path":"/choice"},"variant":"mutuallyExclusive"}`; CheckBox `{"component":"CheckBox","label":"Enable","value":{"path":"/enabled"}}`; Slider `{"component":"Slider","label":"Level","max":100,"value":{"path":"/level"}}`; DateTimeInput `{"component":"DateTimeInput","label":"When","value":{"path":"/when"},"enableDate":true,"enableTime":true}`. Do not add undocumented properties. A Button needs a Text child and an action event.
 Interactive inputs (CheckBox, ChoicePicker, TextField, Slider, DateTimeInput) only update the local surface data model. If the user expects the assistant to use, submit, reveal, save, search, or otherwise act on those values, include a separate Button in the same layout. Its action must be an `event` with a specific verb-like name and a context object containing every required input as JSON Pointer bindings. For example: `{"id":"submit","component":"Button","child":"submit_text","variant":"primary","action":{"event":{"name":"apply_preferences","context":{"colours":{"path":"/selectedColours"}}}}}` followed by `{"id":"submit_text","component":"Text","text":"Apply"}`. Do not imply that choosing an option alone sends it to the assistant.
 Always emit createSurface followed by updateComponents for the same surfaceId. Use catalog id __CATALOG_ID__ and root id "root".
-Do not call tools to discover A2UI components or catalog contracts; use the schema and rules already provided in this prompt.
+Read a custom component's own detail resource before you draw it — it carries the exact fields that component accepts and a worked example. Never emit those fields from memory.
 Do not describe or print "corrected A2UI components"; emit valid A2UI messages directly.
 User-facing prose must describe the answer, not A2UI mechanics; never mention schemas, validation, properties, components, or corrected/updated UI.
 Keep surfaces concise, factual, and consistent with the prose.
-
-Worked examples (gather real data first, then emit exactly this shape):
-
 """
 
 # The catalog id is a constant, not a literal repeated through the prompt: keep the
 # rules and every worked example pointing at whatever CATALOG_ID currently is.
 CATALOG_RULES = _CATALOG_RULES_TEMPLATE.replace("__CATALOG_ID__", CATALOG_ID)
-
-
-def catalog_rules(cards: dict[str, Card]) -> str:
-    """The rules, plus what each Card file says about when to reach for it."""
-    return CATALOG_RULES + "".join(_offered(card) for card in cards.values())
 
 
 def _offered(card: Card) -> str:
@@ -472,7 +464,7 @@ class _AssistantA2UIRuntime:
         self.schema_manager = _build_schema_manager(
             protocol_version="v1.0",
             custom_catalog=assistant_catalog(self.cards),
-            custom_catalog_rules=catalog_rules(self.cards),
+            custom_catalog_rules=CATALOG_RULES,
         )
         self.catalog_id = self.schema_manager.catalog_id
         self.parser = A2UIResponseParser(
@@ -483,23 +475,31 @@ class _AssistantA2UIRuntime:
             catalog_id=self.schema_manager.catalog_id,
         )
         self.actions = collect_action_declarations(A2UI_ACTIONS)
-        prompt = self.schema_manager.generate_prompt_section(
-            include_schema=True,
+        # The Skill body: the rules, the index of the Cards, and the actions — but no
+        # component schema and no worked example, which are one Card's detail each.
+        self.skill_body = self.schema_manager.generate_prompt_section(
+            include_schema=False,
             include_rules=True,
             actions=list(self.actions),
-        )
-        self.system_prompt_section = (
-            "You can generate rich A2UI interfaces for the AG2 Assistant web UI. "
-            "Prefer an A2UI component whenever structure makes an answer easier to "
-            "scan than prose would; the catalog describes what each one is for. "
-            "Users do not need to mention A2UI for you to use it.\n\n"
-            f"{prompt}"
         )
         self._middleware = CardValidationMiddleware(self.parser, self.cards, 1)
 
     @property
     def version_string(self) -> str:
         return self.schema_manager.version_string
+
+    def card_detail(self, name: str) -> str | None:
+        """One Card's own contract: the schema its instance is validated against, and
+        the messages that draw it. ``None`` for a Card this profile is not offered."""
+        card = self.cards.get(name)
+        if card is None:
+            return None
+        schema = _component_schema(card.name, card.description, card.fields, list(card.required))
+        return (
+            f"# {card.name}\n\nEmit exactly these fields; a value you do not have is "
+            f"left out, never invented.\n\n```json\n{json.dumps(schema, indent=2)}\n```\n"
+            f"{_offered(card)}"
+        )
 
     def middleware_factories(self):
         return [self._middleware]

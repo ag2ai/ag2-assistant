@@ -20,9 +20,10 @@ def test_skill_origin_classifies_by_location(tmp_path):
     bundled = tmp_path / "bundled"
     (bundled / "web-research").mkdir(parents=True)
     assert skill_origin(str(bundled / "web-research" / "SKILL.md"), bundled) == ORIGIN_BUNDLED
-    # Anywhere outside the bundled dir → global; a missing location → global.
+    # Anywhere outside the bundled dir → global; no location at all → bundled, since a
+    # skill defined in code rather than installed ships with the app.
     assert skill_origin(str(tmp_path / "elsewhere" / "SKILL.md"), bundled) == ORIGIN_GLOBAL
-    assert skill_origin(None, bundled) == ORIGIN_GLOBAL
+    assert skill_origin(None, bundled) == ORIGIN_BUNDLED
 
 
 def _store(tmp_path):

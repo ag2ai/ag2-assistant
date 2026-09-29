@@ -149,8 +149,8 @@ glossary the rendered thing is a Card instance)
 **Card catalog**:
 The set of Cards the agent is offered — what it may render into. Resolved for one
 profile from the three card layers, minus whatever is **Disabled** or
-**Suppressed**. The agent meets it as an index of names and descriptions, and asks
-for a Card's detail once it has decided to draw one.
+**Suppressed**. The agent meets it through the `rich-views` **Skill** as an index of
+names and descriptions, and asks for a Card's detail once it has decided to draw one.
 _Avoid_: component catalog (the A2UI protocol's own name for the primitive
 vocabulary every Card is drawn from)
 
@@ -190,6 +190,15 @@ Open to every Card, whatever its layer. A target that is no longer there is draw
 the plain text it wraps.
 _Avoid_: **File reference** (the `@`-pointer into a message), **Mentioned in** (the
 backlink from a file to the conversations touching it)
+
+**Rich view** (the `rich-views` **Skill**):
+The Bundled Skill the **Card catalog** is disclosed through. Its description is the only
+A2UI text a turn carries at all; its body is the drawing rules plus the index of this
+profile's Cards; one Card's schema and worked example are a resource read once the agent
+has decided to draw. "Rich view" is what it is called where a user meets it, because the
+switch is theirs: turned off, the profile is offered no Card at all.
+_Avoid_: A2UI skill (the protocol's name, not the user's), Card skill (that is the Skill
+that *writes* Cards)
 
 **Permissions**:
 The security policy of allowed commands (command-prefix and whole-tool grants).

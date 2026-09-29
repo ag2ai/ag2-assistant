@@ -11,6 +11,7 @@ from assistant.config import Config
 from assistant.profiles import ProfileRegistry
 from assistant.skills import SkillStateStore
 from assistant.state_store import DISABLE_OWN, SUPPRESS_SHARED
+from tests.support.cards import skill_body
 
 SHELF = """
 name: Shelf
@@ -176,14 +177,14 @@ def test_card_state_is_its_own_document(paths):
     assert not (paths.root / "skills.json").exists()
 
 
-def test_a_disabled_card_is_neither_offered_nor_valid_to_emit(config, paths):
+async def test_a_disabled_card_is_neither_offered_nor_valid_to_emit(config, paths):
     _shared(paths)
     catalog = CardCatalog(config)
     assert catalog.runtime().parser.validate(_emit("Shelf")).is_valid
 
     CardStateStore(paths.root).set_enabled("Shelf", False)
 
-    assert "Shelf" not in catalog.runtime().system_prompt_section
+    assert "Shelf" not in await skill_body(config)
     assert not catalog.runtime().parser.validate(_emit("Shelf")).is_valid
 
 
