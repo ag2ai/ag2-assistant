@@ -43,7 +43,7 @@ from pathlib import Path
 from secrets import token_hex
 
 from assistant.builtin_tools import builtin_ids_for
-from assistant.config import read_global_config, update_global_section
+from assistant.config import apply_provider_defaults, read_global_config, update_global_section
 from assistant.paths import Paths
 from assistant.secrets import SecretStore
 
@@ -434,6 +434,9 @@ class LlmConfigStore:
         # config resets it to key auth. The AG2ASSISTANT_OPENAI_AUTH_MODE env
         # override still wins last (applied after apply_active in resolve_config).
         cfg.llm.auth_mode = "subscription" if entry["type"] == "openai_subscription" else "api_key"
+        # The entry names a model but never a key env var, so that one follows the
+        # provider (unless the install pinned it).
+        apply_provider_defaults(cfg.llm)
 
     def apply_active(self, cfg, override_id: str | None = None) -> None:
         """Derive the active configuration onto the flat ``cfg.llm`` fields, in place.
