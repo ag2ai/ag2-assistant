@@ -4,12 +4,16 @@ demand, and one Card's schema and example fetched only once it is being drawn.""
 import pytest
 from ag2.exceptions import SkillNotFoundError
 
-from assistant.a2ui import bundled_cards
+from assistant.a2ui import CARD_VOCABULARY, bundled_cards
 from assistant.a2ui_skill import A2UI_SKILL, A2UI_SKILL_DESCRIPTION, a2ui_available
 from assistant.agent import BEHAVIOR_GUIDANCE, build_skills_plugin, build_skills_runtime
 from assistant.cards import CARDS_DIR, CardStateStore
+from assistant.coding.diff import FileDiff
+from assistant.coding.surface import build_surface, card_fields
 from assistant.config import Config
+from assistant.events import A2UISurface
 from assistant.gateway.core import Gateway
+from assistant.gateway.stream_bridge import StreamBridge
 from assistant.profiles import ProfileRegistry
 from assistant.skills import SkillStateStore
 from assistant.state_store import SUPPRESS_SHARED
@@ -24,15 +28,28 @@ def _resident(config) -> str:
 
 
 class _TurnAgent(FakeRunMixin):
-    """A fake agent that keeps the prompt each of its turns was built with."""
+    """A fake agent that keeps what each of its turns was built with — the prompt it
+    was handed and the middleware that would run over its answer."""
 
     def __init__(self):
         self.tools = []
         self.prompts: list = []
+        self.middleware: list = []
 
-    async def ask(self, *msg, stream=None, prompt=None, **kwargs) -> FakeReply:
+    async def ask(self, *msg, stream=None, prompt=None, middleware=(), **kwargs) -> FakeReply:
         self.prompts.append(prompt or [])
+        self.middleware.append(tuple(middleware))
         return FakeReply("done")
+
+
+class _ClientSocket:
+    """A client's WebSocket: keeps the frames the bridge sent it."""
+
+    def __init__(self):
+        self.sent: list = []
+
+    async def send_json(self, frame) -> None:
+        self.sent.append(frame)
 
 
 async def _started(config, agent) -> Gateway:
@@ -47,6 +64,12 @@ def _profile(paths, name: str) -> Config:
     meta = ProfileRegistry(paths).create_profile(name, "#109e91")
     paths.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
     return Config.for_paths(paths).with_profile(meta)
+
+
+def _turn_middleware(agent) -> tuple:
+    """What the agent's last turn was built to run over the model's answer — the only
+    place a rich view is parsed, validated or recovered."""
+    return agent.middleware[-1]
 
 
 # --- the resident line -------------------------------------------------------
@@ -255,3 +278,97 @@ async def test_a_turn_no_longer_carries_the_whole_catalog(paths, tmp_path):
     assert "createSurface" not in prompt
     for name in bundled_cards():
         assert name not in prompt
+
+
+# --- the turn, with the Skill off --------------------------------------------
+
+
+async def test_off_leaves_nothing_in_the_turn_that_parses_a_rich_view(paths, tmp_path):
+    """Disabled install-wide, a turn carries no A2UI middleware — nothing parses,
+    validates or recovers a rich view; enabled again, the next message draws."""
+    agent = _TurnAgent()
+    gateway = await _started(Config.for_paths(paths, data_dir=tmp_path), agent)
+
+    await gateway.send_message("what is the weather", chat_id="c1")
+    assert _turn_middleware(agent) != ()
+
+    SkillStateStore(paths.root).set_enabled(A2UI_SKILL, False)
+    await gateway.send_message("and tomorrow", chat_id="c1")
+
+    assert _turn_middleware(agent) == ()
+
+    SkillStateStore(paths.root).set_enabled(A2UI_SKILL, True)
+    await gateway.send_message("and the day after", chat_id="c1")
+
+    assert _turn_middleware(agent) != ()
+
+
+async def test_a_profile_it_is_suppressed_in_stops_drawing_and_the_other_does_not(paths):
+    """Suppressed in one profile, that profile's turns carry no A2UI at all while the
+    other profile goes on drawing."""
+    work, personal = _profile(paths, "Work"), _profile(paths, "Personal")
+    SkillStateStore(paths.root).set_suppressed(
+        A2UI_SKILL, work.data_dir.name, True, SUPPRESS_SHARED
+    )
+    at_work, at_home = _TurnAgent(), _TurnAgent()
+
+    await (await _started(work, at_work)).send_message("what is the weather", chat_id="c1")
+    await (await _started(personal, at_home)).send_message("what is the weather", chat_id="c1")
+
+    assert _turn_middleware(at_work) == ()
+    assert _turn_middleware(at_home) != ()
+
+
+async def test_a_card_the_model_drew_is_still_replayed_with_the_skill_off(paths, tmp_path):
+    """A Card instance a model drew into a chat before the switch moved still reaches
+    the client as the primitives its layout declares."""
+    SkillStateStore(paths.root).set_enabled(A2UI_SKILL, False)
+    gateway = await _started(Config.for_paths(paths, data_dir=tmp_path), _TurnAgent())
+    await gateway.emit_event(
+        "c1",
+        A2UISurface(
+            "s1",
+            component={"id": "root", "component": "Checklist", "title": "Ship it"},
+            data={"title": "Ship it", "items": ["Tag the release"]},
+            title="Ship it",
+        ),
+    )
+    socket = _ClientSocket()
+
+    bridge = StreamBridge(gateway, socket, "c1")
+    await bridge.open()
+    bridge.close()
+
+    drawn = [frame["event"] for frame in socket.sent if "event" in frame][0]
+    assert drawn["data"]["component"]["component"] == "Card"
+    assert {node["component"] for node in drawn["data"]["component"]["_components"]} <= (
+        CARD_VOCABULARY
+    )
+
+
+async def test_the_coding_session_is_the_servers_to_draw_whatever_the_switch_says(paths, tmp_path):
+    """The switch governs the rich views the agent draws. A Card the server fills — the
+    coding session — is the app's own panel for a run, and goes on drawing."""
+    SkillStateStore(paths.root).set_enabled(A2UI_SKILL, False)
+    gateway = await _started(Config.for_paths(paths, data_dir=tmp_path), _TurnAgent())
+    await gateway.emit_event(
+        "c1",
+        build_surface(
+            "cs1",
+            card_fields(
+                agent_label="Claude Code",
+                directory="/repo",
+                task="add hello",
+                status="done",
+                files=[FileDiff("hello.py", "added", "@@ -0,0 +1 @@\n+hi\n", 1, 0)],
+            ),
+        ),
+    )
+    socket = _ClientSocket()
+
+    bridge = StreamBridge(gateway, socket, "c1")
+    await bridge.open()
+    bridge.close()
+
+    drawn = [frame["event"] for frame in socket.sent if "event" in frame]
+    assert [event["data"]["component"]["component"] for event in drawn] == ["Card"]

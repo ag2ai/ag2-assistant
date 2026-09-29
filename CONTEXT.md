@@ -196,7 +196,9 @@ The Bundled Skill the **Card catalog** is disclosed through. Its description is 
 A2UI text a turn carries at all; its body is the drawing rules plus the index of this
 profile's Cards; one Card's schema and worked example are a resource read once the agent
 has decided to draw. "Rich view" is what it is called where a user meets it, because the
-switch is theirs: turned off, the profile is offered no Card at all.
+switch is theirs: turned off, the profile is offered no Card and its turns carry no A2UI
+runtime — while a Card instance already in a **Thread**, and a Card the server fills for
+itself, go on drawing.
 _Avoid_: A2UI skill (the protocol's name, not the user's), Card skill (that is the Skill
 that *writes* Cards)
 
