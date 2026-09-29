@@ -16,7 +16,7 @@ coding session, or one stored before that Card was a file — is drawn on every 
 from ag2.events._serialization import qualified_name
 from ag2.events.voice import RecordedAudioEvent, SynthesizedAudioEvent
 
-from assistant.a2ui import bundled_cards, expanded_card_surface
+from assistant.a2ui import CardCatalog, expanded_card_surface
 from assistant.events import A2UISurface
 from assistant.observability import log_suppressed
 
@@ -34,13 +34,13 @@ def to_wire(event) -> dict:
     return {"type": qualified_name(event), "data": event.to_dict()}
 
 
-def as_drawn(event):
+def as_drawn(event, catalog: CardCatalog):
     """One event as a client should be sent it: an A2UI surface carrying a Card
-    instance comes back as the primitives that Card's layout declares."""
+    instance comes back as the primitives ``catalog``'s layout for it declares."""
     if not isinstance(event, A2UISurface):
         return event
     try:
-        return expanded_card_surface(event, bundled_cards())
+        return expanded_card_surface(event, catalog.cards())
     except Exception as exc:  # noqa: BLE001 — a Card that won't draw isn't a dead turn
         log_suppressed("a2ui card expansion", exc, surface_id=event.surface_id)
         return event

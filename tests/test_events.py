@@ -9,7 +9,7 @@ import pytest
 from ag2.events.voice import SynthesizedAudioEvent
 from ag2.knowledge.log import import_event_class
 
-from assistant.a2ui import CARD_VOCABULARY
+from assistant.a2ui import CARD_VOCABULARY, CardCatalog, card_layers
 from assistant.coding.diff import FileDiff
 from assistant.coding.surface import build_surface, card_fields
 from assistant.events import (
@@ -91,16 +91,16 @@ def test_a_card_instance_is_stored_as_the_fields_its_author_filled_in():
     assert stored["data"]["agent"] == "Claude Code"
 
 
-def test_a_card_instance_reaches_a_client_drawn_as_its_layout_declares():
+def test_a_card_instance_reaches_a_client_drawn_as_its_layout_declares(config):
     # Every projection asks `as_drawn`, so a Card the browser was never taught
     # arrives as primitives whether it came over the chat socket or the voice one.
-    sent = to_wire(as_drawn(_coding_instance()))["data"]
+    sent = to_wire(as_drawn(_coding_instance(), CardCatalog(card_layers(config))))["data"]
 
     assert sent["component"]["component"] == "Card"
     assert {node["component"] for node in sent["component"]["_components"]} <= CARD_VOCABULARY
 
 
-def test_anything_that_is_not_a_surface_is_passed_through_untouched():
+def test_anything_that_is_not_a_surface_is_passed_through_untouched(config):
     event = TaskCreated("task-1", title="Weather report", kind="scheduled")
 
-    assert as_drawn(event) is event
+    assert as_drawn(event, CardCatalog(card_layers(config))) is event

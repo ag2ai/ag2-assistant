@@ -1,7 +1,10 @@
 """A2UI configuration for AG2 Assistant's chat/task surfaces."""
 
 import json
+import os
+from collections.abc import Iterable
 from functools import lru_cache
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ag2.a2ui import a2ui_action
@@ -10,13 +13,17 @@ from ag2.a2ui.middleware import A2UIValidationMiddleware, _A2UIValidationMiddlew
 from ag2.a2ui.parser import A2UIResponseParser
 
 from assistant.cards import (
+    CARDS_DIR,
     Card,
     bundled_cards_dir,
+    cards_fingerprint,
     expand_card_messages,
     expand_components,
     load_cards,
+    resolve_cards,
     root_component,
 )
+from assistant.config import Config
 from assistant.events import A2UISurface
 
 if TYPE_CHECKING:
@@ -80,6 +87,16 @@ CARD_VOCABULARY = SUPPORTED_BASIC_COMPONENTS | CARD_PRIMITIVES
 def bundled_cards() -> dict[str, Card]:
     """The Cards shipped with the app, read once from their files."""
     return load_cards(bundled_cards_dir(), components=CARD_VOCABULARY)
+
+
+def card_layers(config: Config) -> tuple[Path, ...]:
+    """The three Card directories, lowest precedence first: the Bundled ones, the
+    Global ones at the Root, and the profile's own inside its Files space."""
+    return (
+        bundled_cards_dir(),
+        config.paths.cards_dir,
+        config.workspace_dir / CARDS_DIR,
+    )
 
 
 def _build_schema_manager(*args: Any, **kwargs: Any) -> "A2UISchemaManager":
@@ -450,8 +467,8 @@ A2UI_SERVER_ACTIONS = collect_server_actions(A2UI_ACTIONS)
 class _AssistantA2UIRuntime:
     """AG2 runtime using the assistant's filtered Basic Catalog."""
 
-    def __init__(self, cards: dict[str, Card] | None = None) -> None:
-        self.cards = bundled_cards() if cards is None else cards
+    def __init__(self, cards: dict[str, Card]) -> None:
+        self.cards = cards
         self.schema_manager = _build_schema_manager(
             protocol_version="v1.0",
             custom_catalog=assistant_catalog(self.cards),
@@ -493,16 +510,36 @@ class _AssistantA2UIRuntime:
         return capabilities_to_prompt(caps, catalog_id=self.schema_manager.catalog_id)
 
 
-@lru_cache(maxsize=1)
-def runtime():
-    """Return the configured beta A2UI runtime.
+class CardCatalog:
+    """The Cards one profile is offered, and the A2UI runtime built from them —
+    both re-read when a Card file in ``layers`` changes."""
 
-    The public A2UIServer wraps this runtime internally; for AG2 Assistant's
-    existing WebSocket stream we use the same beta runtime/middleware directly
-    so A2UIMessageEvent is emitted on the normal chat stream.
-    """
+    def __init__(self, layers: Iterable[str | os.PathLike[str]]) -> None:
+        self._layers = tuple(Path(layer) for layer in layers)
+        self._fingerprint: tuple | None = None
+        self._cards: dict[str, Card] = {}
+        self._runtime: _AssistantA2UIRuntime | None = None
 
-    return _AssistantA2UIRuntime()
+    def cards(self) -> dict[str, Card]:
+        """The Cards on offer, Profile over Global over Bundled."""
+        fingerprint = cards_fingerprint(self._layers)
+        if fingerprint != self._fingerprint:
+            self._fingerprint = fingerprint
+            self._cards = resolve_cards(self._layers, components=CARD_VOCABULARY)
+            self._runtime = None
+        return dict(self._cards)
+
+    def runtime(self) -> "_AssistantA2UIRuntime":
+        """The configured beta A2UI runtime over those Cards.
+
+        The public A2UIServer wraps this runtime internally; for AG2 Assistant's
+        existing WebSocket stream we use the same beta runtime/middleware directly
+        so A2UIMessageEvent is emitted on the normal chat stream.
+        """
+        cards = self.cards()
+        if self._runtime is None:
+            self._runtime = _AssistantA2UIRuntime(cards)
+        return self._runtime
 
 
 def wrap_bare_a2ui(text: str) -> str | None:

@@ -823,7 +823,7 @@ def create_app(
             # StreamBridge) so the voice client folds it with the one shared reducer
             # → tool chips/cards, task cards, deliverables, all "for free".
             with contextlib.suppress(Exception):
-                await websocket.send_json({"event": to_wire(as_drawn(event))})
+                await websocket.send_json({"event": to_wire(as_drawn(event, gateway.catalog))})
 
         # The voice agent can hang up the call itself via its end_call tool, which
         # trips this event; wait_end() (below) then ends the job race → teardown.

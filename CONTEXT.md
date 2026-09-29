@@ -159,14 +159,14 @@ First-party Cards that ship with the app, available from first run. Read-only: t
 can be **Disabled** install-wide or **Suppressed** per profile, never **Deleted**.
 
 **Global cards**:
-Cards installed once at the Root, available to every profile. Managed install-wide
-(Enable/Disable/Delete affects every profile) and individually **Suppressed** by any
-profile.
+Cards installed once at the Root's `cards/`, available to every profile. Managed
+install-wide (Enable/Disable/Delete affects every profile) and individually
+**Suppressed** by any profile.
 
 **Profile cards**:
-Cards belonging to one profile, kept in that profile's **Files** space — so the
-agent writes one with the ordinary file tools and the user finds it in the Files
-tree. On a name clash, the Profile card wins over the Global one.
+Cards belonging to one profile, kept in `cards/` inside that profile's **Files**
+space — so the agent writes one with the ordinary file tools and the user finds it
+in the Files tree. On a name clash, the Profile card wins over the Global one.
 
 **Card state** (Enabled / Disabled):
 Whether a Card appears in the **Card catalog**. The same shape as **Skill state**,

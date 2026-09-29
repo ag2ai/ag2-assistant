@@ -1,5 +1,6 @@
 """Cards as files: what the loader offers, and what the expansion draws."""
 
+import logging
 from pathlib import Path
 
 from assistant.cards import expand_card_messages, expand_components, load_cards
@@ -52,11 +53,14 @@ def test_renaming_a_card_file_changes_nothing_about_the_card(tmp_path):
     assert load_cards(tmp_path)["RunTracker"] == before
 
 
-def test_a_file_without_the_card_suffix_is_not_a_card(tmp_path):
+def test_a_file_without_the_card_suffix_is_passed_over_without_a_word(tmp_path, caplog):
     _write(tmp_path, "notes.yaml", CARD)
     _write(tmp_path, "readme.md", "not a card")
 
-    assert load_cards(tmp_path) == {}
+    with caplog.at_level(logging.WARNING):
+        assert load_cards(tmp_path) == {}
+
+    assert caplog.text == ""
 
 
 def test_a_missing_card_directory_means_no_cards(tmp_path):
@@ -238,14 +242,17 @@ def test_the_layouts_root_is_named_not_positional(tmp_path):
     assert "root__body" in by_id
 
 
-def test_a_card_whose_description_busts_its_budget_is_skipped(tmp_path):
-    _write(
+def test_a_card_whose_description_busts_its_budget_is_skipped_not_truncated(tmp_path, caplog):
+    path = _write(
         tmp_path,
         "wordy.card.yaml",
         CARD.replace("Use when the user asks about their runs or weekly mileage.", "x" * 201),
     )
 
-    assert load_cards(tmp_path) == {}
+    with caplog.at_level(logging.WARNING):
+        assert load_cards(tmp_path) == {}
+
+    assert str(path) in caplog.text
 
 
 def test_a_card_whose_example_busts_its_budget_is_skipped(tmp_path):
@@ -257,3 +264,12 @@ def test_a_card_whose_example_busts_its_budget_is_skipped(tmp_path):
     )
 
     assert load_cards(tmp_path) == {}
+
+
+def test_a_card_suffixed_file_too_big_to_be_a_card_is_never_parsed(tmp_path, caplog):
+    path = _write(tmp_path, "video.card.yaml", CARD + "# " + "x" * 64 * 1024)
+
+    with caplog.at_level(logging.WARNING):
+        assert load_cards(tmp_path) == {}
+
+    assert str(path) in caplog.text

@@ -3,6 +3,7 @@ binary audio, and runs turns through the gateway."""
 
 from ag2.events.voice import SynthesizedAudioEvent
 
+from assistant.a2ui import CardCatalog
 from assistant.events import TaskCreated
 from assistant.gateway.stream_bridge import StreamBridge
 
@@ -40,6 +41,8 @@ class _GW:
 
     async def stream_for(self, sid):
         return self._stream
+
+    catalog = CardCatalog(())
 
     async def send_message(
         self,

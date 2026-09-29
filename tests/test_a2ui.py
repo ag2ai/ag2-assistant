@@ -11,13 +11,14 @@ from assistant.a2ui import (
     CARD_VOCABULARY,
     CATALOG_ID,
     WEATHER_CONDITIONS,
+    CardCatalog,
     assistant_catalog,
     bundled_cards,
+    card_layers,
     catalog_rules,
     durable_surfaces_from_messages,
     expand_card_messages,
     expanded_card_surface,
-    runtime,
     update_data_value,
     wrap_bare_a2ui,
 )
@@ -26,6 +27,11 @@ from assistant.coding.diff import FileDiff
 from assistant.coding.surface import card_fields
 from assistant.events import A2UISurface
 from assistant.tools.weather import condition_for
+
+
+def _runtime(config):
+    """The A2UI runtime one profile's Cards build — bundled only, on an empty root."""
+    return CardCatalog(card_layers(config)).runtime()
 
 
 def test_assistant_catalog_declares_custom_components():
@@ -51,9 +57,8 @@ def test_assistant_catalog_declares_custom_components():
     ]
 
 
-def test_a2ui_runtime_prompt_exposes_schema_and_custom_contracts():
-    runtime.cache_clear()
-    rt = runtime()
+def test_a2ui_runtime_prompt_exposes_schema_and_custom_contracts(config):
+    rt = _runtime(config)
     prompt = rt.system_prompt_section
 
     assert rt.catalog_id == CATALOG_ID
@@ -284,7 +289,7 @@ def _checklist_emit() -> list[dict]:
     )
 
 
-def test_the_checklist_card_is_offered_to_the_agent_from_its_file():
+def test_the_checklist_card_is_offered_to_the_agent_from_its_file(config):
     card = bundled_cards()["Checklist"]
     schema = assistant_catalog()["components"]["Checklist"]
 
@@ -292,8 +297,7 @@ def test_the_checklist_card_is_offered_to_the_agent_from_its_file():
     assert schema["required"] == ["id", "component", "title", "items"]
     assert set(schema["properties"]) == {"id", "component", "title", "items"}
 
-    runtime.cache_clear()
-    prompt = runtime().system_prompt_section
+    prompt = _runtime(config).system_prompt_section
     assert card.description in prompt
     assert '"component":"Checklist","title":"Ship the release"' in prompt
 
@@ -345,9 +349,8 @@ def test_a_checklist_stored_before_it_was_a_file_is_redrawn_on_read():
     assert expanded_card_surface(redrawn, bundled_cards()) is redrawn
 
 
-def test_a_checklist_is_validated_against_the_schema_its_own_file_declares():
-    runtime.cache_clear()
-    parser = runtime().parser
+def test_a_checklist_is_validated_against_the_schema_its_own_file_declares(config):
+    parser = _runtime(config).parser
 
     assert parser.validate(_checklist_emit()).is_valid
 
@@ -370,15 +373,14 @@ class _CollectingContext:
         self.sent.append(event)
 
 
-async def test_the_browser_is_asked_to_draw_primitives_not_a_card():
-    runtime.cache_clear()
+async def test_the_browser_is_asked_to_draw_primitives_not_a_card(config):
     reply = A2UI_JSON_OPEN_TAG + json.dumps(_checklist_emit()) + A2UI_JSON_CLOSE_TAG
     context = _CollectingContext()
 
     async def call_next(events, ctx):
         return ModelResponse(ModelMessage("Here is the plan. " + reply))
 
-    middleware = runtime().middleware_factories()[0](None, context)
+    middleware = _runtime(config).middleware_factories()[0](None, context)
     response = await middleware.on_llm_call(call_next, [], context)
 
     published = [event.message for event in context.sent]
@@ -423,7 +425,7 @@ def _market_emit() -> list[dict]:
     )
 
 
-def test_the_market_board_is_offered_to_the_agent_from_its_file():
+def test_the_market_board_is_offered_to_the_agent_from_its_file(config):
     card = bundled_cards()["MarketBoard"]
     schema = assistant_catalog()["components"]["MarketBoard"]
 
@@ -431,8 +433,7 @@ def test_the_market_board_is_offered_to_the_agent_from_its_file():
     assert schema["required"] == ["id", "component", "title", "quotes"]
     assert set(schema["properties"]) >= {"id", "component", "title", "quotes"}
 
-    runtime.cache_clear()
-    prompt = runtime().system_prompt_section
+    prompt = _runtime(config).system_prompt_section
     assert card.description in prompt
     assert '"component":"MarketBoard"' in prompt
 
@@ -527,9 +528,8 @@ def _brief_emit(sections: list[str] | None = None) -> list[dict]:
     )
 
 
-def test_the_task_plan_places_and_brief_are_offered_from_their_files():
-    runtime.cache_clear()
-    prompt = runtime().system_prompt_section
+def test_the_task_plan_places_and_brief_are_offered_from_their_files(config):
+    prompt = _runtime(config).system_prompt_section
     catalog = assistant_catalog()
 
     for name in ("TaskPlan", "RestaurantFinder", "AnswerBrief"):
@@ -684,9 +684,8 @@ def _agenda_emit(events: list[dict] | None = None) -> list[dict]:
     )
 
 
-def test_the_board_the_inbox_and_the_agenda_are_offered_from_their_files():
-    runtime.cache_clear()
-    prompt = runtime().system_prompt_section
+def test_the_board_the_inbox_and_the_agenda_are_offered_from_their_files(config):
+    prompt = _runtime(config).system_prompt_section
     catalog = assistant_catalog()
 
     for name in ("TaskProgress", "InboxBrief", "AgendaCard"):
@@ -845,9 +844,8 @@ def _news_emit(stories: list[dict] | None = None) -> list[dict]:
     )
 
 
-def test_the_weather_and_the_news_are_offered_from_their_files():
-    runtime.cache_clear()
-    prompt = runtime().system_prompt_section
+def test_the_weather_and_the_news_are_offered_from_their_files(config):
+    prompt = _runtime(config).system_prompt_section
     catalog = assistant_catalog()
 
     for name in ("WeatherPanel", "NewsDigest"):
@@ -1065,9 +1063,8 @@ def _decision_drawn(
     ]["components"]
 
 
-def test_the_decision_matrix_is_offered_to_the_agent_from_its_file():
-    runtime.cache_clear()
-    prompt = runtime().system_prompt_section
+def test_the_decision_matrix_is_offered_to_the_agent_from_its_file(config):
+    prompt = _runtime(config).system_prompt_section
     card = bundled_cards()["DecisionMatrix"]
 
     assert assistant_catalog()["components"]["DecisionMatrix"]["description"] == card.description
@@ -1198,13 +1195,12 @@ def _coding_drawn(**over) -> list[dict]:
     ]
 
 
-def test_the_coding_session_is_a_card_in_the_catalog():
-    runtime.cache_clear()
+def test_the_coding_session_is_a_card_in_the_catalog(config):
     card = bundled_cards()["CodingSession"]
 
     assert assistant_catalog()["components"]["CodingSession"]["description"] == card.description
     assert "CodingSession — Use when the answer is a coding agent's run" in (
-        runtime().system_prompt_section
+        _runtime(config).system_prompt_section
     )
 
 

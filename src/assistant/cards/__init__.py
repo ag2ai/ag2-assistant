@@ -1,9 +1,10 @@
-"""Cards as files: loading the Bundled layer, and drawing a Card instance.
+"""Cards as files: loading them from their layers, and drawing a Card instance.
 
 A **Card** is a file declaring its name, the line the agent is offered, the fields the
 model fills in, the layout, and one worked example; its identity is the ``name`` inside
-the file. ``expand_card_messages`` replaces every Card instance with the ordinary A2UI
-primitives its layout declares plus the data-model writes its fields make.
+the file. ``load_cards`` reads one directory, ``resolve_cards`` stacks the layers a
+profile is offered, and ``expand_card_messages`` replaces every Card instance with the
+ordinary A2UI primitives its layout declares plus the data-model writes its fields make.
 """
 
 import json
@@ -22,6 +23,9 @@ logger = logging.getLogger(__name__)
 # Card. Anything else in there is passed over in silence.
 CARD_SUFFIX = ".card.yaml"
 
+# The Card directory's name, at the install Root and inside a profile's Files space.
+CARDS_DIR = "cards"
+
 # Where a nested Card instance's fields land in the surface's data model. A Card drawn
 # as the whole surface keeps its fields at the root, where the model emitted them.
 CARD_DATA_ROOT = "_cards"
@@ -30,6 +34,10 @@ CARD_DATA_ROOT = "_cards"
 # only once a Card is being drawn. A Card over budget is skipped, never truncated.
 DESCRIPTION_BUDGET = 200
 EXAMPLE_BUDGET = 2000
+
+# The largest a Card-suffixed file may be before it is skipped unparsed — a bound on
+# what a renamed video in the user's own Card directory costs.
+FILE_BUDGET = 64 * 1024
 
 # The layout id a Card is rooted at. Its instance takes this id; every other layout id
 # is namespaced under it.
@@ -83,8 +91,37 @@ def load_cards(
     return cards
 
 
+def resolve_cards(
+    directories: Iterable[str | os.PathLike[str]], components: Iterable[str] = ()
+) -> dict[str, Card]:
+    """The Cards across ``directories``, a later one's Card winning by name."""
+    cards: dict[str, Card] = {}
+    for directory in directories:
+        cards.update(load_cards(directory, components))
+    return cards
+
+
+def cards_fingerprint(directories: Iterable[str | os.PathLike[str]]) -> tuple:
+    """What the Card files across ``directories`` look like right now — one
+    ``(name, mtime, size)`` per file, so an untouched set fingerprints the same."""
+    return tuple(_layer_fingerprint(Path(directory)) for directory in directories)
+
+
+def _layer_fingerprint(directory: Path) -> tuple:
+    prints = []
+    for path in sorted(directory.glob(f"*{CARD_SUFFIX}")):
+        try:
+            info = path.stat()
+        except OSError:
+            continue
+        prints.append((path.name, info.st_mtime_ns, info.st_size))
+    return tuple(prints)
+
+
 def _read_card(path: Path, components: frozenset[str]) -> Card:
     try:
+        if (size := path.stat().st_size) > FILE_BUDGET:
+            raise CardError(f"file is {size} bytes, over {FILE_BUDGET}")
         raw = yaml.safe_load(path.read_text())
     except (OSError, yaml.YAMLError) as exc:
         raise CardError(f"unreadable: {exc}") from exc
