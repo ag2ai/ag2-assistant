@@ -40,7 +40,7 @@ def as_drawn(event, catalog: CardCatalog):
     if not isinstance(event, A2UISurface):
         return event
     try:
-        return expanded_card_surface(event, catalog.cards())
+        return expanded_card_surface(event, catalog.drawable())
     except Exception as exc:  # noqa: BLE001 — a Card that won't draw isn't a dead turn
         log_suppressed("a2ui card expansion", exc, surface_id=event.surface_id)
         return event

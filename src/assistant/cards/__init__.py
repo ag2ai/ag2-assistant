@@ -17,6 +17,8 @@ from typing import Any
 
 import yaml
 
+from assistant.state_store import ORIGIN_GLOBAL, StateStore
+
 logger = logging.getLogger(__name__)
 
 # Place and marker both: only a file with this suffix, inside a Card directory, is a
@@ -25,6 +27,11 @@ CARD_SUFFIX = ".card.yaml"
 
 # The Card directory's name, at the install Root and inside a profile's Files space.
 CARDS_DIR = "cards"
+
+# The install-wide document recording which Cards are turned off, beside the Skill
+# one at the Root: a Skill and a Card may share a name and must not share a switch.
+CARDS_DOCUMENT = "cards.json"
+
 
 # Where a nested Card instance's fields land in the surface's data model. A Card drawn
 # as the whole surface keeps its fields at the root, where the model emitted them.
@@ -48,8 +55,20 @@ LAYOUT_ROOT = "root"
 TEMPLATE_IDS = {"Table": ("header", "lead", "cell")}
 
 
+# A Card directory with the layer it is, lowest precedence first.
+CardLayers = tuple[tuple[str, Path], ...]
+
+
 class CardError(ValueError):
     """A Card-suffixed file that cannot be loaded."""
+
+
+class CardStateStore(StateStore):
+    """Card state over the install-wide ``cards.json`` document at ``root_dir``:
+    which Cards are Disabled, and which are turned off for one profile alone."""
+
+    def __init__(self, root_dir: Path | None) -> None:
+        super().__init__(Path(root_dir) / CARDS_DOCUMENT if root_dir is not None else None)
 
 
 @dataclass(frozen=True)
@@ -63,6 +82,7 @@ class Card:
     layout: tuple[dict[str, Any], ...]
     example: dict[str, Any]
     path: Path | None = field(default=None, compare=False)
+    origin: str = field(default=ORIGIN_GLOBAL, compare=False)
 
 
 def bundled_cards_dir() -> Path:
@@ -71,9 +91,12 @@ def bundled_cards_dir() -> Path:
 
 
 def load_cards(
-    directory: str | os.PathLike[str], components: Iterable[str] = ()
+    directory: str | os.PathLike[str],
+    components: Iterable[str] = (),
+    origin: str = ORIGIN_GLOBAL,
 ) -> dict[str, Card]:
-    """The Cards in ``directory``, keyed by the name inside each file.
+    """The Cards in ``directory``, keyed by the name inside each file and stamped
+    with the layer ``origin`` they were read from.
 
     ``components`` is the primitive vocabulary a layout may draw from; empty accepts
     any. A missing directory means no Cards; a Card-suffixed file that fails to load
@@ -83,7 +106,7 @@ def load_cards(
     cards: dict[str, Card] = {}
     for path in sorted(Path(directory).glob(f"*{CARD_SUFFIX}")):
         try:
-            card = _read_card(path, allowed)
+            card = _read_card(path, allowed, origin)
         except CardError as exc:
             logger.warning("Skipping card file %s: %s", path, exc)
             continue
@@ -91,20 +114,18 @@ def load_cards(
     return cards
 
 
-def resolve_cards(
-    directories: Iterable[str | os.PathLike[str]], components: Iterable[str] = ()
-) -> dict[str, Card]:
-    """The Cards across ``directories``, a later one's Card winning by name."""
+def resolve_cards(layers: "CardLayers", components: Iterable[str] = ()) -> dict[str, Card]:
+    """The Cards across ``layers``, a later layer's Card winning by name."""
     cards: dict[str, Card] = {}
-    for directory in directories:
-        cards.update(load_cards(directory, components))
+    for origin, directory in layers:
+        cards.update(load_cards(directory, components, origin))
     return cards
 
 
-def cards_fingerprint(directories: Iterable[str | os.PathLike[str]]) -> tuple:
-    """What the Card files across ``directories`` look like right now — one
+def cards_fingerprint(layers: "CardLayers") -> tuple:
+    """What the Card files across ``layers`` look like right now — one
     ``(name, mtime, size)`` per file, so an untouched set fingerprints the same."""
-    return tuple(_layer_fingerprint(Path(directory)) for directory in directories)
+    return tuple(_layer_fingerprint(Path(directory)) for _origin, directory in layers)
 
 
 def _layer_fingerprint(directory: Path) -> tuple:
@@ -118,7 +139,7 @@ def _layer_fingerprint(directory: Path) -> tuple:
     return tuple(prints)
 
 
-def _read_card(path: Path, components: frozenset[str]) -> Card:
+def _read_card(path: Path, components: frozenset[str], origin: str) -> Card:
     try:
         if (size := path.stat().st_size) > FILE_BUDGET:
             raise CardError(f"file is {size} bytes, over {FILE_BUDGET}")
@@ -158,6 +179,7 @@ def _read_card(path: Path, components: frozenset[str]) -> Card:
         layout=_layout(raw.get("layout"), components),
         example=dict(example),
         path=path,
+        origin=origin,
     )
 
 

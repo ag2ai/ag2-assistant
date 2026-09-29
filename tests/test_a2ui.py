@@ -14,7 +14,6 @@ from assistant.a2ui import (
     CardCatalog,
     assistant_catalog,
     bundled_cards,
-    card_layers,
     catalog_rules,
     durable_surfaces_from_messages,
     expand_card_messages,
@@ -31,7 +30,7 @@ from assistant.tools.weather import condition_for
 
 def _runtime(config):
     """The A2UI runtime one profile's Cards build — bundled only, on an empty root."""
-    return CardCatalog(card_layers(config)).runtime()
+    return CardCatalog(config).runtime()
 
 
 def test_assistant_catalog_declares_custom_components():

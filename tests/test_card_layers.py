@@ -11,6 +11,7 @@ from assistant.config import Config
 from assistant.folders import FolderStore
 from assistant.permissions import PermissionManager, PermissionStore
 from assistant.profiles import ProfileRegistry
+from assistant.state_store import ORIGIN_BUNDLED, ORIGIN_GLOBAL, ORIGIN_PROFILE
 from assistant.tools.files import write_file_impl
 
 CARD = """
@@ -50,17 +51,25 @@ def _card(description: str) -> str:
 
 
 def _catalog(config) -> CardCatalog:
-    return CardCatalog(card_layers(config))
+    return CardCatalog(config)
 
 
 @pytest.fixture
-def layers(tmp_path) -> tuple[Path, Path, Path]:
-    """Three Card directories, lowest precedence first — none of them created."""
-    return (tmp_path / "bundled", tmp_path / "global", tmp_path / "profile")
+def layers(tmp_path):
+    """Three Card directories with the layer each is — none of them created."""
+    return (
+        (ORIGIN_BUNDLED, tmp_path / "bundled"),
+        (ORIGIN_GLOBAL, tmp_path / "global"),
+        (ORIGIN_PROFILE, tmp_path / "profile"),
+    )
+
+
+def _dirs(layers) -> tuple[Path, Path, Path]:
+    return tuple(directory for _origin, directory in layers)
 
 
 def test_a_profile_card_wins_over_a_global_one_over_a_bundled_one(layers):
-    bundled, glob, profile = layers
+    bundled, glob, profile = _dirs(layers)
     _write(bundled, "runs.card.yaml", _card("The bundled one."))
     _write(glob, "runs.card.yaml", _card("The global one."))
     _write(profile, "runs.card.yaml", _card("The profile's own."))
@@ -69,7 +78,7 @@ def test_a_profile_card_wins_over_a_global_one_over_a_bundled_one(layers):
 
 
 def test_a_global_card_wins_over_a_bundled_one(layers):
-    bundled, glob, _ = layers
+    bundled, glob, _ = _dirs(layers)
     _write(bundled, "runs.card.yaml", _card("The bundled one."))
     _write(glob, "runs.card.yaml", _card("The global one."))
 
@@ -77,7 +86,7 @@ def test_a_global_card_wins_over_a_bundled_one(layers):
 
 
 def test_every_layer_contributes_the_names_no_other_layer_claims(layers):
-    bundled, _, profile = layers
+    bundled, _, profile = _dirs(layers)
     _write(bundled, "runs.card.yaml", _card("The bundled one."))
     _write(profile, "shelf.card.yaml", OTHER)
 
@@ -85,7 +94,7 @@ def test_every_layer_contributes_the_names_no_other_layer_claims(layers):
 
 
 def test_a_card_dropped_into_a_layer_is_offered_the_next_time_it_is_asked_for(layers):
-    _, _, profile = layers
+    _, _, profile = _dirs(layers)
     assert resolve_cards(layers) == {}
 
     _write(profile, "shelf.card.yaml", OTHER)
@@ -94,7 +103,7 @@ def test_a_card_dropped_into_a_layer_is_offered_the_next_time_it_is_asked_for(la
 
 
 def test_editing_a_card_file_changes_what_is_offered(layers):
-    _, _, profile = layers
+    _, _, profile = _dirs(layers)
     path = _write(profile, "runs.card.yaml", _card("The first thing it said."))
     assert resolve_cards(layers)["RunTracker"].description == "The first thing it said."
 
@@ -104,7 +113,7 @@ def test_editing_a_card_file_changes_what_is_offered(layers):
 
 
 def test_deleting_a_profile_card_uncovers_the_layer_below(layers):
-    bundled, _, profile = layers
+    bundled, _, profile = _dirs(layers)
     _write(bundled, "runs.card.yaml", _card("The bundled one."))
     path = _write(profile, "runs.card.yaml", _card("The profile's own."))
     assert resolve_cards(layers)["RunTracker"].description == "The profile's own."
@@ -115,7 +124,7 @@ def test_deleting_a_profile_card_uncovers_the_layer_below(layers):
 
 
 def test_a_broken_card_in_one_layer_costs_that_card_and_nothing_else(layers, caplog):
-    _, glob, profile = layers
+    _, glob, profile = _dirs(layers)
     _write(glob, "shelf.card.yaml", OTHER)
     broken = _write(profile, "runs.card.yaml", "name: RunTracker\nfields: [not, a, mapping]\n")
 
@@ -127,7 +136,7 @@ def test_a_broken_card_in_one_layer_costs_that_card_and_nothing_else(layers, cap
 
 
 def test_a_card_a_layer_cannot_draw_leaves_the_layer_below_showing(layers):
-    bundled, _, profile = layers
+    bundled, _, profile = _dirs(layers)
     _write(bundled, "runs.card.yaml", _card("The bundled one."))
     _write(profile, "runs.card.yaml", _card("The profile's own.").replace("Text", "Kandinsky"))
 
@@ -157,8 +166,10 @@ async def test_the_agent_writing_a_card_creates_the_directory_it_belongs_in(conf
 
 
 def test_the_layers_are_bundled_then_the_root_then_the_profiles_files_space(config):
-    bundled, glob, profile = card_layers(config)
+    layers = card_layers(config)
+    bundled, glob, profile = _dirs(layers)
 
+    assert [origin for origin, _ in layers] == [ORIGIN_BUNDLED, ORIGIN_GLOBAL, ORIGIN_PROFILE]
     assert bundled.is_dir() and (bundled / "checklist.card.yaml").exists()
     assert glob == config.root_dir / "cards"
     assert profile == config.workspace_dir / "cards"

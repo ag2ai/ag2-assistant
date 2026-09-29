@@ -170,9 +170,10 @@ in the Files tree. On a name clash, the Profile card wins over the Global one.
 
 **Card state** (Enabled / Disabled):
 Whether a Card appears in the **Card catalog**. The same shape as **Skill state**,
-including the per-profile **Suppression** override, but recorded separately: a Skill
-and a Card may share a name and must not share a switch. A change reaches the agent
-on its next message, not its next build.
+including the per-profile **Suppression** override, but recorded separately in its
+own `cards.json` at the Root: a Skill and a Card may share a name and must not share
+a switch. A change reaches the agent on its next message, not its next build — but a
+Card instance already in a **Thread** goes on drawing, whatever the switch now says.
 
 **Card vocabulary**:
 The primitives and styling words a **Card**'s layout is composed from — the visual

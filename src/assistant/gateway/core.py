@@ -43,7 +43,6 @@ from assistant import onboarding
 from assistant import title as title_mod
 from assistant.a2ui import (
     CardCatalog,
-    card_layers,
     durable_surfaces_from_messages,
     tolerant_a2ui_middleware,
 )
@@ -187,7 +186,7 @@ class Gateway:
         self._config_factory = config_factory or load_config
         # This profile's Cards and the A2UI runtime over them; both re-read from
         # the three Card directories whenever one of their files changes.
-        self._catalog = CardCatalog(card_layers(self._config))
+        self._catalog = CardCatalog(self._config)
         self._onboarding_done = False
         self._agent: Agent | None = None
         # Last ChatGPT-subscription access token baked into the agent, so a pre-turn
@@ -426,7 +425,7 @@ class Gateway:
         # Re-resolve via the injected factory (a profile runtime's factory re-reads
         # the profile's registry entry + settings; the default is load_config).
         self._config = self._config_factory()
-        self._catalog = CardCatalog(card_layers(self._config))
+        self._catalog = CardCatalog(self._config)
         # A turn already running captured the old agent and finishes on it, but
         # its ACP subprocesses must not outlive the swap: close them now (aclose
         # is safe/idempotent; non-ACP configs have no aclose and are skipped).

@@ -158,6 +158,12 @@ class StateStore:
 
     # --- reads ---
 
+    def revision(self) -> tuple[int, int] | None:
+        """What the document is at right now — it changes whenever the document does,
+        so a caller caching a resolution can tell whether to redo it."""
+        self._refresh()
+        return self._stat
+
     def disabled_names(self) -> set[str]:
         """The install-wide Disabled names (a copy)."""
         self._refresh()

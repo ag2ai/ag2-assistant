@@ -1,10 +1,7 @@
 """A2UI configuration for AG2 Assistant's chat/task surfaces."""
 
 import json
-import os
-from collections.abc import Iterable
 from functools import lru_cache
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ag2.a2ui import a2ui_action
@@ -15,6 +12,8 @@ from ag2.a2ui.parser import A2UIResponseParser
 from assistant.cards import (
     CARDS_DIR,
     Card,
+    CardLayers,
+    CardStateStore,
     bundled_cards_dir,
     cards_fingerprint,
     expand_card_messages,
@@ -25,6 +24,7 @@ from assistant.cards import (
 )
 from assistant.config import Config
 from assistant.events import A2UISurface
+from assistant.state_store import ORIGIN_BUNDLED, ORIGIN_GLOBAL, ORIGIN_PROFILE
 
 if TYPE_CHECKING:
     from ag2.a2ui.schema_manager import A2UISchemaManager
@@ -86,16 +86,16 @@ CARD_VOCABULARY = SUPPORTED_BASIC_COMPONENTS | CARD_PRIMITIVES
 @lru_cache(maxsize=1)
 def bundled_cards() -> dict[str, Card]:
     """The Cards shipped with the app, read once from their files."""
-    return load_cards(bundled_cards_dir(), components=CARD_VOCABULARY)
+    return load_cards(bundled_cards_dir(), CARD_VOCABULARY, ORIGIN_BUNDLED)
 
 
-def card_layers(config: Config) -> tuple[Path, ...]:
-    """The three Card directories, lowest precedence first: the Bundled ones, the
-    Global ones at the Root, and the profile's own inside its Files space."""
+def card_layers(config: Config) -> CardLayers:
+    """The three Card directories with the layer each one is, lowest precedence
+    first: Bundled, Global at the Root, and the profile's own in its Files space."""
     return (
-        bundled_cards_dir(),
-        config.paths.cards_dir,
-        config.workspace_dir / CARDS_DIR,
+        (ORIGIN_BUNDLED, bundled_cards_dir()),
+        (ORIGIN_GLOBAL, config.paths.cards_dir),
+        (ORIGIN_PROFILE, config.workspace_dir / CARDS_DIR),
     )
 
 
@@ -511,23 +511,42 @@ class _AssistantA2UIRuntime:
 
 
 class CardCatalog:
-    """The Cards one profile is offered, and the A2UI runtime built from them —
-    both re-read when a Card file in ``layers`` changes."""
+    """One profile's Cards and the A2UI runtime built from them — re-read when a
+    Card file changes, or when the state document turns one off or back on."""
 
-    def __init__(self, layers: Iterable[str | os.PathLike[str]]) -> None:
-        self._layers = tuple(Path(layer) for layer in layers)
+    def __init__(self, config: Config) -> None:
+        self._layers = card_layers(config)
+        self._state = CardStateStore(config.root_dir)
+        self._profile = config.data_dir.name
         self._fingerprint: tuple | None = None
+        self._drawable: dict[str, Card] = {}
         self._cards: dict[str, Card] = {}
         self._runtime: _AssistantA2UIRuntime | None = None
 
     def cards(self) -> dict[str, Card]:
-        """The Cards on offer, Profile over Global over Bundled."""
-        fingerprint = cards_fingerprint(self._layers)
-        if fingerprint != self._fingerprint:
-            self._fingerprint = fingerprint
-            self._cards = resolve_cards(self._layers, components=CARD_VOCABULARY)
-            self._runtime = None
+        """The Cards the agent is offered — Profile over Global over Bundled, minus
+        whatever is Disabled install-wide or Suppressed for this profile."""
+        self._resolve()
         return dict(self._cards)
+
+    def drawable(self) -> dict[str, Card]:
+        """Every Card on disk, whatever its state — a Card instance already in a
+        Thread goes on drawing however its Card is switched now."""
+        self._resolve()
+        return dict(self._drawable)
+
+    def _resolve(self) -> None:
+        fingerprint = (cards_fingerprint(self._layers), self._state.revision())
+        if fingerprint == self._fingerprint:
+            return
+        self._fingerprint = fingerprint
+        self._drawable = resolve_cards(self._layers, components=CARD_VOCABULARY)
+        self._cards = {
+            name: card
+            for name, card in self._drawable.items()
+            if self._state.is_available(name, self._profile, origin=card.origin)
+        }
+        self._runtime = None
 
     def runtime(self) -> "_AssistantA2UIRuntime":
         """The configured beta A2UI runtime over those Cards.
