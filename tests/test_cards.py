@@ -273,3 +273,14 @@ def test_a_card_suffixed_file_too_big_to_be_a_card_is_never_parsed(tmp_path, cap
         assert load_cards(tmp_path) == {}
 
     assert str(path) in caplog.text
+
+
+def test_a_second_file_claiming_a_name_already_taken_is_skipped_with_a_warning(tmp_path, caplog):
+    _write(tmp_path, "a.card.yaml", CARD)
+    twin = _write(tmp_path, "b.card.yaml", CARD.replace("weekly mileage", "their shoes"))
+
+    with caplog.at_level(logging.WARNING):
+        cards = load_cards(tmp_path)
+
+    assert cards["RunTracker"].description.endswith("weekly mileage.")
+    assert str(twin) in caplog.text

@@ -99,8 +99,8 @@ def load_cards(
     with the layer ``origin`` they were read from.
 
     ``components`` is the primitive vocabulary a layout may draw from; empty accepts
-    any. A missing directory means no Cards; a Card-suffixed file that fails to load
-    is skipped with a warning and the rest of the catalog still loads.
+    any. A missing directory means no Cards; a file that fails to load, or names a Card
+    an earlier file already does, is skipped with a warning.
     """
     allowed = frozenset(components)
     cards: dict[str, Card] = {}
@@ -109,6 +109,12 @@ def load_cards(
             card = _read_card(path, allowed, origin)
         except CardError as exc:
             logger.warning("Skipping card file %s: %s", path, exc)
+            continue
+        taken = cards.get(card.name)
+        if taken is not None:
+            logger.warning(
+                "Skipping card file %s: %s already names %s", path, taken.path, card.name
+            )
             continue
         cards[card.name] = card
     return cards
