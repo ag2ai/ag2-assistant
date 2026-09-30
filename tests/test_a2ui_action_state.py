@@ -9,6 +9,8 @@ import json
 
 from fastapi.testclient import TestClient
 
+from assistant.a2ui_skill import A2UI_SKILL
+from assistant.skills import SkillStateStore
 from tests.support.apps import api, make_profile_app
 from tests.support.fakes import FakeReply, FakeRunMixin, fake_agent_factory
 
@@ -306,3 +308,43 @@ def test_the_bound_is_on_the_model_not_the_whole_frame(paths):
 
     assert len(json.dumps({"holdings": rows})) < 256 * 1024
     assert _models(events) == [{"holdings": rows}]
+
+
+def test_a_click_on_a_drawn_card_still_works_with_rich_views_off(paths):
+    """Turning the feature off stops new Cards, never the ones a chat already has:
+    the click keeps its model and still reaches the agent."""
+    SkillStateStore(paths.root).set_enabled(A2UI_SKILL, False)
+    agent = RecordingAgent()
+    app, pid = make_profile_app(paths, agent_factory=fake_agent_factory(agent))
+    with TestClient(app) as client:
+        with client.websocket_connect(api(pid, "/stream?chat=c1")) as ws:
+            _ready(ws)
+            ws.send_json(
+                {
+                    "type": "a2ui",
+                    "message": _click("apply", context={"colours": ["red"]}),
+                    "state": {"surfaceId": SURFACE, "data": {"colours": ["red"], "size": "m"}},
+                }
+            )
+            events = _events_until_turn_end(ws)
+
+    assert _models(events) == [{"colours": ["red"], "size": "m"}]
+    assert len(agent.asked) == 1 and "apply" in agent.asked[0]
+
+
+def test_a_saved_surface_still_saves_with_rich_views_off(paths):
+    SkillStateStore(paths.root).set_enabled(A2UI_SKILL, False)
+    app, pid = make_profile_app(paths)
+    with TestClient(app) as client:
+        with client.websocket_connect(api(pid, "/stream?chat=c1")) as ws:
+            _ready(ws)
+            ws.send_json(
+                {
+                    "type": "a2ui",
+                    "message": _click("save_surface", context={"data": {"kept": "yes"}}),
+                }
+            )
+            ws.send_json({"text": "ping"})
+            events = _events_until_turn_end(ws)
+
+    assert _models(events) == [{"kept": "yes"}]
