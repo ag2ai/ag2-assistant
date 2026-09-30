@@ -4,8 +4,9 @@ import json
 from pathlib import Path
 
 import pytest
+from ag2.events import ModelMessage, ModelResponse
 
-from assistant.a2ui import CATALOG_ID, CardCatalog
+from assistant.a2ui import CATALOG_ID, CardCatalog, tolerant_a2ui_middleware
 from assistant.cards import CARDS_DIR, CARDS_DOCUMENT, CardStateStore
 from assistant.config import Config
 from assistant.profiles import ProfileRegistry
@@ -186,6 +187,39 @@ async def test_a_disabled_card_is_neither_offered_nor_valid_to_emit(config, path
 
     assert "Shelf" not in await skill_body(config)
     assert not catalog.runtime().parser.validate(_emit("Shelf")).is_valid
+
+
+class _CollectingContext:
+    """A turn context that records what a middleware publishes to the client."""
+
+    def __init__(self) -> None:
+        self.sent: list = []
+
+    async def send(self, event) -> None:
+        self.sent.append(event)
+
+
+async def _bare_reply_published(catalog: CardCatalog, component: str) -> list:
+    """What a turn publishes when the model writes a Card without the wrapper tags."""
+    runtime = catalog.runtime()
+    context = _CollectingContext()
+
+    async def call_next(events, ctx):
+        return ModelResponse(ModelMessage("Here it is. " + json.dumps(_emit(component))))
+
+    middleware = tolerant_a2ui_middleware(runtime.parser, runtime.cards)(None, context)
+    await middleware.on_llm_call(call_next, [], context)
+    return context.sent
+
+
+async def test_a_disabled_card_is_not_drawn_from_a_reply_missing_its_wrapper(config, paths):
+    _shared(paths)
+    catalog = CardCatalog(config)
+    assert await _bare_reply_published(catalog, "Shelf")
+
+    CardStateStore(paths.root).set_enabled("Shelf", False)
+
+    assert await _bare_reply_published(catalog, "Shelf") == []
 
 
 def test_turning_a_card_off_and_back_on_reaches_the_agent_without_a_restart(config, paths):

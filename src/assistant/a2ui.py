@@ -619,6 +619,8 @@ def tolerant_a2ui_middleware(parser, cards: dict[str, Card]):
                 wrapped = wrap_bare_a2ui(text)
                 if wrapped is not None:
                     recovered = parser.parse(wrapped)
+                    if not parser.validate(recovered.operations).is_valid:
+                        return response  # held to the same schema as a wrapped emit
                     recovered.operations[:] = expand_card_messages(recovered.operations, cards)
                     await _publish_a2ui(recovered, response, context)
             return response
