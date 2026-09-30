@@ -342,6 +342,23 @@ async def test_a_turn_no_longer_carries_the_whole_catalog(paths, tmp_path):
         assert name not in prompt
 
 
+async def test_a_turn_carries_the_skill_catalog_the_agent_was_built_with(paths, tmp_path):
+    """The per-turn prompt adds to the agent's own, never replaces it: the skills
+    catalog — and with it the rich-views line naming every case — reaches the model."""
+    config = Config.for_paths(paths, data_dir=tmp_path)
+    agent = _TurnAgent()
+    agent.system_prompt = ("You are the assistant.", _resident(config))
+    gateway = await _started(config, agent)
+
+    await gateway.send_message("what is the weather", chat_id="c1")
+
+    prompt = "\n".join(str(part) for part in agent.prompts[0])
+    assert "<available_skills>" in prompt
+    assert "the weather" in prompt and A2UI_SKILL in prompt
+    assert BEHAVIOR_GUIDANCE in prompt
+    assert prompt.count("You are the assistant.") == 1
+
+
 # --- the turn, with the Skill off --------------------------------------------
 
 

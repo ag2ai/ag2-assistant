@@ -70,6 +70,9 @@ class FakeRunMixin:
     """Gives an ``ask``-only fake agent the ``run()`` surface the gateway drives, so a
     fake still only has to define ``ask`` (AG2's ``ask`` is likewise ``run`` + result)."""
 
+    # The static prompt a real agent is built with: its persona and its plugins' text.
+    system_prompt: tuple[str, ...] = ()
+
     def run(self, *msg, **kwargs) -> FakeRun:
         return FakeRun(self, msg, kwargs)
 

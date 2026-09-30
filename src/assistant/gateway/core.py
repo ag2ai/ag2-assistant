@@ -607,7 +607,9 @@ class Gateway:
             # the web page's local state and vanishes on a profile switch (full-page
             # nav). The completed-turn write below stays the authority (§_persist_turn).
             await self._ensure_transcript_stub(chat_id, text, chat_model)
-            prompt = universal_turn_prompt(self._config, surface)  # refresh per turn
+            # A turn's prompt replaces the agent's own, so it opens with it: the persona
+            # and the plugins' text, the skills catalog among them.
+            prompt = [*agent.system_prompt, *universal_turn_prompt(self._config, surface)]
             a2ui_runtime = None
             # The Skill's switch, read per turn: turned off, this turn is built with no
             # A2UI at all, so nothing in it parses, validates or recovers a rich view.

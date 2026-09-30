@@ -40,5 +40,11 @@ The body was ~10.4k characters, two thirds of it AG2's generic protocol text —
   switches in #87 must trigger that reload, as the Skill switches do.
 - Settings shows the fixed opening sentence, not the per-profile list — the row is read
   without resolving a catalog.
-- Whether this is enough to make models draw unasked is a measurement, not a given; the
-  fallback is a resident index of Card names.
+- A turn's prompt replaces the agent's own (AG2 seeds the agent's only when the caller
+  passes none), so the gateway opens every turn with the agent's system prompt — the
+  persona and the skills catalog — before its per-turn guidance. Until then no Skill's
+  description reached a web chat, and moving the catalog into a Skill had left the turn
+  with no A2UI text at all.
+- Measured on seven prompts (six with a Card, one control) through a real gateway turn:
+  GPT-5.6 Luna went from 1/7 to 14/14 over two runs; GPT-5.4 Mini reaches 2/7. A weaker
+  model may still need a resident index of Card names.

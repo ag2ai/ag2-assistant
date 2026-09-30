@@ -552,15 +552,15 @@ def turn_prompt(
 
 
 def universal_turn_prompt(config: Config, surface: str = "") -> list[str]:
-    """Per-turn prompt for the universal agent: persona + behaviour + capability
-    map + (Google when signed in) + the SURFACE it's being addressed on + live env.
+    """Per-turn prompt for the universal agent: behaviour + capability map + (Google
+    when signed in) + the SURFACE it's being addressed on + live env. It follows the
+    agent's own system prompt (persona + plugins), which the caller puts first.
 
     `surface` is a short paragraph the caller builds describing where the user is
     (web chat / new-task box / a specific task + its state / a channel) so the one
     agent has the right local context without changing identity.
     """
     parts = [
-        config.agent.system_prompt,
         BEHAVIOR_GUIDANCE,
         CAPABILITY_GUIDANCE,
         chat_turn_timeout_guidance(config),
