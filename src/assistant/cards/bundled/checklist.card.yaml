@@ -2,6 +2,7 @@ name: Checklist
 description: Use when the answer is multi-step operational work — a short sequence of
   actions to carry out, in order.
 
+topic: a checklist of steps to carry out
 fields:
   title:
     type: string

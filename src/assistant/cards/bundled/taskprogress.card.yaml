@@ -2,6 +2,7 @@ name: TaskProgress
 description: Use when the answer is the state of the user's existing tasks — what is
   running or scheduled, how it is going, and what it has delivered.
 
+topic: the state of the user's tasks
 fields:
   title:
     type: string

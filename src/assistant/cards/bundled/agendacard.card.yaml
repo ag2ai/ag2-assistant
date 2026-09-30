@@ -2,6 +2,7 @@ name: AgendaCard
 description: Use when the answer is the user's real calendar — what is on today or on
   a given day, in the order it happens.
 
+topic: the user's calendar for a day
 fields:
   title:
     type: string

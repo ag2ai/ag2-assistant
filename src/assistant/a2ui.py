@@ -347,13 +347,8 @@ def assistant_catalog(cards: dict[str, Card] | None = None) -> dict:
 
 
 _CATALOG_RULES_TEMPLATE = """
-Prefer an A2UI surface when it would make the answer easier to scan; users do not need to ask for A2UI explicitly.
-Lead with a brief 1-2 sentence prose orientation, then make the A2UI surface the canonical structured view. The surface IS the answer — do NOT also restate its contents in prose (don't list the stories, rows, items, or details in text as well); that duplication is unwanted.
-Every component is fully defined by the schema and the worked example in its own detail resource — gather the real data the user asked for (e.g. the actual weather), then populate the matching component and emit it directly.
-
-Gather the real data with your tools BEFORE you render — each tool's own description says what it covers. Never populate a component from memory, and never invent a value to fill a field: leave it out instead.
-
-When an answer matches one of the components below, EMIT that component — the surface is the answer itself, not an optional garnish, so do not settle for prose alone.
+Lead with a brief 1-2 sentence prose orientation, then make the A2UI surface the canonical structured view; do not restate its contents in prose.
+Gather the real data with your tools BEFORE you render. Never populate a component from memory, and never invent a value to fill a field: leave it out instead.
 
 For mixed requests, compose multiple components with basic layout components: root component="Column" or "Row", with children referencing component ids from the same updateComponents.components array. Use Divider for section separation when useful.
 A Column, Row or List can repeat one written component instead of listing every child: `"children":{"componentId":"run_row","path":"/runs"}` draws `run_row` once per item of the array at `/runs`. Inside that component a path opening with `./` reads the item (`{"path":"./day"}`, or `{"path":"."}` for the whole item) and an absolute path still reads the whole data model, so one written row serves three items or thirty.
@@ -477,9 +472,9 @@ class _AssistantA2UIRuntime:
             catalog_id=self.schema_manager.catalog_id,
         )
         self.actions = collect_action_declarations(A2UI_ACTIONS)
-        # The Skill body: the rules, the index of the Cards, and the actions — but no
-        # component schema and no worked example, which are one Card's detail each.
-        self.skill_body = self.schema_manager.generate_prompt_section(
+        # The protocol reference: the message format, composition rules and actions —
+        # no component schema and no worked example, which are one Card's detail each.
+        self.protocol = self.schema_manager.generate_prompt_section(
             include_schema=False,
             include_rules=True,
             actions=list(self.actions),

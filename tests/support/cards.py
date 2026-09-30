@@ -9,7 +9,7 @@ from pathlib import Path
 from ag2.context import ConversationContext
 from ag2.stream import MemoryStream
 
-from assistant.a2ui_skill import A2UI_SKILL, card_resource
+from assistant.a2ui_skill import A2UI_SKILL, PROTOCOL_RESOURCE, card_resource
 from assistant.agent import resolve_a2ui_skill
 from assistant.config import Config
 from assistant.skills import FilteredSkillRuntime
@@ -17,7 +17,7 @@ from assistant.skills import FilteredSkillRuntime
 # One minimal Card: a title drawn in a Card, which is the smallest file that loads.
 CARD = """
 name: {name}
-description: {description}
+description: {description}{topic}
 fields:
   title: {{type: string}}
 required: [title]
@@ -33,11 +33,13 @@ def write_card(
     name: str,
     description: str = "Use when the user asks what is on their shelf.",
     example: str = "Paperbacks",
+    topic: str | None = None,
 ) -> Path:
     """Write one Card file into ``directory``, creating the directory if needed."""
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{name.lower()}.card.yaml"
-    path.write_text(CARD.format(name=name, description=description, example=example))
+    line = "" if topic is None else f"\ntopic: {topic}"
+    path.write_text(CARD.format(name=name, description=description, example=example, topic=line))
     return path
 
 
@@ -61,3 +63,8 @@ async def card_detail(config: Config, name: str, view: FilteredSkillRuntime | No
     return await (view or a2ui_view(config)).read_resource(
         A2UI_SKILL, card_resource(name), context()
     )
+
+
+async def protocol(config: Config, view: FilteredSkillRuntime | None = None) -> str:
+    """The A2UI protocol reference: composing views and drawing from the basic components."""
+    return await (view or a2ui_view(config)).read_resource(A2UI_SKILL, PROTOCOL_RESOURCE, context())

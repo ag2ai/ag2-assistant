@@ -2,6 +2,7 @@ name: AnswerBrief
 description: Use when the answer is a structured brief — a research summary, a
   recommendation or a set of tradeoffs — with no competing options to compare.
 
+topic: a research summary or a recommendation
 fields:
   topic:
     type: string

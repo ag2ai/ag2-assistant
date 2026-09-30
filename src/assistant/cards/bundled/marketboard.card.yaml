@@ -2,6 +2,7 @@ name: MarketBoard
 description: Use when the answer is market prices — stocks, shares, ETFs, funds,
   indices or crypto. The first quote is the lead; the rest are the movers.
 
+topic: stock, fund or crypto prices
 fields:
   title:
     type: string

@@ -2,6 +2,7 @@ name: RestaurantFinder
 description: Use when the answer is places to go — restaurants, cafes, bars, open now,
   lunch or dinner — as a search with its active filters and its results.
 
+topic: places to eat or drink
 fields:
   query:
     type: string

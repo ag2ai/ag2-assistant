@@ -2,6 +2,7 @@ name: TaskPlan
 description: Use when a task is being created, scheduled or planned — its objective,
   how often it runs, what it will deliver and what happens next.
 
+topic: creating or scheduling a task
 fields:
   objective:
     type: string

@@ -5,8 +5,18 @@ import pytest
 from ag2.exceptions import SkillNotFoundError
 
 from assistant.a2ui import CARD_VOCABULARY, bundled_cards
-from assistant.a2ui_skill import A2UI_SKILL, A2UI_SKILL_DESCRIPTION, a2ui_available
-from assistant.agent import BEHAVIOR_GUIDANCE, build_skills_plugin, build_skills_runtime
+from assistant.a2ui_skill import (
+    A2UI_SKILL,
+    PROTOCOL_RESOURCE,
+    SKILL_DESCRIPTION_LIMIT,
+    a2ui_available,
+)
+from assistant.agent import (
+    BEHAVIOR_GUIDANCE,
+    build_skills_plugin,
+    build_skills_runtime,
+    resolve_a2ui_skill,
+)
 from assistant.cards import CARDS_DIR, CardStateStore
 from assistant.coding.diff import FileDiff
 from assistant.coding.surface import build_surface, card_fields
@@ -17,8 +27,13 @@ from assistant.gateway.stream_bridge import StreamBridge
 from assistant.profiles import ProfileRegistry
 from assistant.skills import SkillStateStore
 from assistant.state_store import SUPPRESS_SHARED
-from tests.support.cards import a2ui_view, card_detail, skill_body, write_card
+from tests.support.cards import a2ui_view, card_detail, protocol, skill_body, write_card
 from tests.support.fakes import FakeReply, FakeRunMixin, fake_agent_factory
+
+
+def build_skills_runtime_with_a2ui(config) -> list:
+    """The A2UI Skill's catalog entries, as the plugin describes them to the agent."""
+    return resolve_a2ui_skill(config).skills
 
 
 def _resident(config) -> str:
@@ -81,7 +96,6 @@ def test_the_agent_is_told_about_rich_views_by_one_line(config):
     resident = _resident(config)
 
     assert A2UI_SKILL in resident
-    assert A2UI_SKILL_DESCRIPTION in resident
     for name in bundled_cards():
         assert name not in resident
     assert "createSurface" not in resident
@@ -89,13 +103,40 @@ def test_the_agent_is_told_about_rich_views_by_one_line(config):
     assert "**Custom components:**" not in resident
 
 
-def test_the_resident_line_still_pushes_the_agent_to_draw(config):
-    """Behaviour stays resident: the agent is told to prefer a rich view unasked, or
-    it would never fetch what it does not know is appropriate."""
+def test_the_resident_line_names_every_case_a_card_is_ready_for(config):
+    """The agent is told, on every turn, which questions already have a view."""
     resident = _resident(config)
 
-    assert "rich view" in resident
-    assert "do not ask" in resident.lower()
+    for card in bundled_cards().values():
+        if card.topic:
+            assert card.topic in resident
+    assert "the weather" in resident
+    assert "never ask" in resident.lower()
+
+
+def test_a_card_with_no_topic_is_not_advertised_but_is_still_drawable(config):
+    """The server-filled coding session names no case: the model is not invited to
+    draw it, though it stays in the index a loaded Skill reads."""
+    card = bundled_cards()["CodingSession"]
+
+    assert card.topic == ""
+    assert "coding agent" not in _resident(config)
+
+
+def test_the_resident_line_follows_the_cards_this_profile_has(config, paths):
+    write_card(paths.root / CARDS_DIR, "Shelf", topic="what is on a shelf")
+    assert "what is on a shelf" in _resident(config)
+
+    CardStateStore(paths.root).set_enabled("Shelf", False)
+    assert "what is on a shelf" not in _resident(config)
+
+
+def test_the_resident_line_stays_within_the_skill_description_limit(config):
+    for i in range(80):
+        write_card(config.workspace_dir / CARDS_DIR, f"Shelf{i}", topic=f"shelf number {i:02d}")
+
+    described = [s for s in build_skills_runtime_with_a2ui(config) if s.name == A2UI_SKILL]
+    assert len(described[0].metadata.description) <= SKILL_DESCRIPTION_LIMIT
 
 
 # --- the body ----------------------------------------------------------------
@@ -107,8 +148,29 @@ async def test_the_body_lists_exactly_the_available_cards(config):
 
     for name, card in bundled_cards().items():
         assert f"- **{name}**: {card.description}" in body
-    assert "EMIT that component" in body
     assert 'read_skill_resource(name="rich-views", resource="cards/<CardName>.md")' in body
+
+
+async def test_the_body_says_how_to_draw_a_card_and_nothing_of_the_protocol(config):
+    """The body is about the Cards; the protocol at large is a reference, read only
+    to compose views or to draw one from the basic components."""
+    body = await skill_body(config)
+
+    assert "<a2ui-json>" in body
+    assert "do not restate" in body
+    assert PROTOCOL_RESOURCE in body
+    assert "## A2UI Message Types" not in body
+    assert "callFunction" not in body
+    assert "ChoicePicker" not in body
+
+
+async def test_the_protocol_reference_carries_composition_and_the_basic_components(config):
+    reference = await protocol(config)
+
+    assert "## A2UI Message Types" in reference
+    assert 'root component="Column"' in reference
+    assert "ChoicePicker" in reference
+    assert "save_surface" in reference
 
 
 async def test_the_body_carries_no_cards_worked_example(config):

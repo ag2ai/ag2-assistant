@@ -284,3 +284,26 @@ def test_a_second_file_claiming_a_name_already_taken_is_skipped_with_a_warning(t
 
     assert cards["RunTracker"].description.endswith("weekly mileage.")
     assert str(twin) in caplog.text
+
+
+def test_a_card_names_the_case_it_is_ready_for(tmp_path):
+    _write(tmp_path, "runs.card.yaml", CARD.replace("fields:", "topic: weekly mileage\nfields:"))
+
+    assert load_cards(tmp_path)["RunTracker"].topic == "weekly mileage"
+
+
+def test_a_card_with_no_topic_names_no_case(tmp_path):
+    _write(tmp_path, "runs.card.yaml", CARD)
+
+    assert load_cards(tmp_path)["RunTracker"].topic == ""
+
+
+def test_a_card_whose_topic_busts_its_budget_is_skipped(tmp_path, caplog):
+    path = _write(
+        tmp_path, "runs.card.yaml", CARD.replace("fields:", f"topic: {'x' * 61}\nfields:")
+    )
+
+    with caplog.at_level(logging.WARNING):
+        assert load_cards(tmp_path) == {}
+
+    assert str(path) in caplog.text

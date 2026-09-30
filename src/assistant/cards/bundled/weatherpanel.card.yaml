@@ -2,6 +2,7 @@ name: WeatherPanel
 description: Use when the answer is the weather — the conditions at one place now,
   and what the rest of today holds.
 
+topic: the weather
 fields:
   location:
     type: string

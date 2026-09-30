@@ -1,5 +1,8 @@
 # The Card catalog is disclosed through a Skill, not carried in the prompt
 
+> Amended by ADR 0039: the description is rendered from the Cards' topics, and the
+> protocol at large moved from the body to a resource.
+
 The A2UI catalog stops being resident system-prompt text. It becomes a **Skill**: one line
 in the agent's skill catalog, a body holding the rules plus an index of every available
 **Card** by name and description, and one resource per Card carrying its schema and worked

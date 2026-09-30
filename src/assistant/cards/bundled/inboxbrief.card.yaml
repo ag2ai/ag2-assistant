@@ -2,6 +2,7 @@ name: InboxBrief
 description: Use when the answer is the user's real mail — the inbox, what is unread,
   what needs a reply. Most important thread first.
 
+topic: the user's inbox
 fields:
   title:
     type: string

@@ -26,7 +26,7 @@ from assistant.coding.diff import FileDiff
 from assistant.coding.surface import card_fields
 from assistant.events import A2UISurface
 from assistant.tools.weather import condition_for
-from tests.support.cards import card_detail, skill_body
+from tests.support.cards import card_detail, protocol, skill_body
 
 
 def _runtime(config):
@@ -57,49 +57,40 @@ def test_assistant_catalog_declares_custom_components():
     ]
 
 
-async def test_the_skill_body_exposes_the_rules_and_the_card_index(config):
+async def test_the_skill_body_exposes_the_card_index_and_how_to_draw(config):
     body = await skill_body(config)
 
     assert _runtime(config).catalog_id == CATALOG_ID
-    assert "## Available Components" in body
-    assert "**Custom components:**" in body
-    assert "WeatherPanel" in body
     assert "LowdownPanel" not in body
-    assert 'root component="Column"' in body
-    assert "users do not need to ask for A2UI explicitly" in body
-    assert "Prefer an A2UI surface" in body
-    assert "TaskPlan" in body
-    # Intent → COMPONENT. Which tool gathers the data is the tool's own business, so no
-    # tool name appears here (see tests/test_capability_registry.py). The imperative to
-    # actually EMIT the component must survive: dropping it silently cost us the
-    # MarketBoard, which the model replaced with prose.
-    assert "EMIT that component" in body
-    # The weather and the news are files now, each routed by its own description.
+    # Each Card is routed by its own description; the imperative to answer with the
+    # view must survive — dropping it silently cost us the MarketBoard to prose.
+    assert "the view IS the answer — do not settle for prose" in body
     assert "- **WeatherPanel**: Use when the answer is the weather" in body
     assert "- **NewsDigest**: Use when the answer is the latest news" in body
-    # MarketBoard is a file now: its own description is what routes the model to it.
     assert "- **MarketBoard**: Use when the answer is market prices" in body
-    assert "Gather the real data with your tools BEFORE you render" in body
     assert "- **TaskPlan**: Use when a task is being created" in body
-    # The task board, the inbox and the agenda are files now, each routed by its own
-    # description rather than by a bullet here.
     assert "- **TaskProgress**: Use when the answer is the state of the user's existing" in body
-    # The comparison table is a file now, routed by its own description too.
     assert "- **DecisionMatrix**: Use when the answer compares concrete alternatives" in body
-    assert "Use Divider for section separation when useful" in body
-    assert "A canvas is an A2UI surface, not a component" in body
-    assert "place that exact value in an Image component's required `url`" in body
-    assert '"component":"DateTimeInput"' in body
-    assert "Read a custom component's own detail resource before you draw it" in body
-    assert 'Do not describe or print "corrected A2UI components"' in body
-    assert (
-        "never mention schemas, validation, properties, components, or corrected/updated UI" in body
-    )
-    assert '"createSurface"' in body
-    assert '"updateComponents"' in body
-    assert CATALOG_ID in body
-    # The message schema is not the body's: it costs nothing until a Card is drawn.
-    assert "## A2UI Message Schema" not in body
+    assert "Gather the real data with your tools first" in body
+    assert "never mention A2UI, schemas or components to the user" in body
+    assert '`createSurface` (catalogId "' + CATALOG_ID + '")' in body
+
+
+async def test_the_protocol_reference_holds_the_rules_for_building_from_primitives(config):
+    reference = await protocol(config)
+
+    assert "## Available Components" in reference
+    assert 'root component="Column"' in reference
+    assert "Use Divider for section separation when useful" in reference
+    assert "A canvas is an A2UI surface, not a component" in reference
+    assert "place that exact value in an Image component's required `url`" in reference
+    assert '"component":"DateTimeInput"' in reference
+    assert "Read a custom component's own detail resource before you draw it" in reference
+    assert 'Do not describe or print "corrected A2UI components"' in reference
+    assert '"createSurface"' in reference
+    assert CATALOG_ID in reference
+    # The message schema costs nothing until a Card is drawn.
+    assert "## A2UI Message Schema" not in reference
 
 
 def test_durable_surfaces_project_transient_a2ui_messages():

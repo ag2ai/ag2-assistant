@@ -1,8 +1,8 @@
 """Cards as files: loading them from their layers, and drawing a Card instance.
 
-A **Card** is a file declaring its name, the line the agent is offered, the fields the
-model fills in, the layout, and one worked example; its identity is the ``name`` inside
-the file. ``load_cards`` reads one directory, ``resolve_cards`` stacks the layers a
+A **Card** is a file declaring its name, the line the agent is offered, optionally the
+``topic`` it is ready for, the fields the model fills in, the layout, and one worked example;
+its identity is the ``name`` inside the file. ``load_cards`` reads one directory, ``resolve_cards`` stacks the layers a
 profile is offered, and ``expand_card_messages`` replaces every Card instance with the
 ordinary A2UI primitives its layout declares plus the data-model writes its fields make.
 """
@@ -41,6 +41,9 @@ CARD_DATA_ROOT = "_cards"
 # only once a Card is being drawn. A Card over budget is skipped, never truncated.
 DESCRIPTION_BUDGET = 200
 EXAMPLE_BUDGET = 2000
+
+# The case a Card is ready for, named in the Skill's always-present description.
+TOPIC_BUDGET = 60
 
 # The largest a Card-suffixed file may be before it is skipped unparsed — a bound on
 # what a renamed video in the user's own Card directory costs.
@@ -81,6 +84,7 @@ class Card:
     required: tuple[str, ...]
     layout: tuple[dict[str, Any], ...]
     example: dict[str, Any]
+    topic: str = ""
     path: Path | None = field(default=None, compare=False)
     origin: str = field(default=ORIGIN_GLOBAL, compare=False)
 
@@ -162,6 +166,9 @@ def _read_card(path: Path, components: frozenset[str], origin: str) -> Card:
         raise CardError("no description")
     if len(description) > DESCRIPTION_BUDGET:
         raise CardError(f"description is {len(description)} characters, over {DESCRIPTION_BUDGET}")
+    topic = " ".join(str(raw.get("topic") or "").split())
+    if len(topic) > TOPIC_BUDGET:
+        raise CardError(f"topic is {len(topic)} characters, over {TOPIC_BUDGET}")
     fields = raw.get("fields")
     if not isinstance(fields, dict) or not fields:
         raise CardError("no fields")
@@ -184,6 +191,7 @@ def _read_card(path: Path, components: frozenset[str], origin: str) -> Card:
         required=required,
         layout=_layout(raw.get("layout"), components),
         example=dict(example),
+        topic=topic,
         path=path,
         origin=origin,
     )

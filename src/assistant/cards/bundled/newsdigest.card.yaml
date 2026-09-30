@@ -2,6 +2,7 @@ name: NewsDigest
 description: Use when the answer is the latest news — headlines or recent
   developments on one topic. The first story is the lead; the rest are the ranking.
 
+topic: the latest news on a topic
 fields:
   topic:
     type: string
