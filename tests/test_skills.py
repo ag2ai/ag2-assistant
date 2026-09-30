@@ -259,3 +259,16 @@ async def test_a_disabled_skill_cannot_be_loaded_through_the_filtered_view(paths
     assert "web-research" not in [skill.name for skill in view.skills]
     with pytest.raises(SkillNotFoundError):
         await view.read("web-research", context)
+
+
+async def test_a_script_call_for_a_skill_the_view_does_not_hold_passes_on(paths, tmp_path):
+    """A name the disk runtime does not own reads as absent, whatever the arguments'
+    shape, so the toolkit hands the call to the runtime that does own it."""
+    config = Config.for_paths(paths)
+    config.skills_dir = tmp_path / "skills"
+    config.root_dir = tmp_path / "root"
+    view = resolve_skills(config, build_skills_runtime(config))
+    context = ConversationContext(stream=MemoryStream())
+
+    with pytest.raises(SkillNotFoundError):
+        await view.execute("rich-views", "WeatherPanel", context, {"location": "Berlin"})

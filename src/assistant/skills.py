@@ -91,7 +91,11 @@ class FilteredSkillRuntime:
 
     def _guard(self, name: str) -> None:
         skill = next((item for item in self._inner.skills if item.name == name), None)
-        if skill is not None and not self._is_available(skill):
+        if skill is None:
+            # Not this runtime's: the toolkit's "not mine" signal, raised before the
+            # inner runtime can reject the arguments of a call meant for another.
+            raise SkillNotFoundError(f"Skill {name!r} not found")
+        if not self._is_available(skill):
             # Same signal the toolkit's multi-runtime chain uses for "not mine",
             # so a disabled skill reads exactly like an absent one.
             raise SkillNotFoundError(f"Skill {name!r} is not available")
