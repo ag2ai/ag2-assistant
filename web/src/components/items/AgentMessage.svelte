@@ -34,8 +34,8 @@
   const request = $derived(requestContext($thread.items, item, $runInfo))
 </script>
 
-<!-- An A2UI-only reply (payload, no prose) has nothing to put in the bubble yet. -->
-{#if displayText || !composing}
+<!-- An A2UI-only reply (payload, no prose) has nothing to put in the bubble. -->
+{#if displayText || item.empty || (item.streaming && !composing)}
   <div class="msg agent"><div class="bubble" class:voice={item.voice} class:empty={item.empty} bind:this={el}></div></div>
 {/if}
 {#if composing && !replacesCanvas}
