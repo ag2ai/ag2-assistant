@@ -1,6 +1,6 @@
 name: WeatherPanel
-description: Use when the answer is the weather — the conditions at one place now,
-  and what the rest of today holds.
+description: Use when the answer is the weather — the conditions at one place for
+  the day.
 
 topic: the weather
 fields:
