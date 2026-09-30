@@ -194,6 +194,11 @@ export async function build(ctx: SceneContext): Promise<SceneHandle> {
     camera.position.y = 0.24 + Math.sin(t * 0.11) * 0.05
     camera.lookAt(cx, 0.0, BOX_CENTER.z)
 
+    // sky plane follows the pan and widens to cover the frame at any aspect
+    const halfWs = k * (camera.position.z - sky.position.z) * camera.aspect
+    sky.position.x = cx
+    sky.scale.x = Math.max(1, (halfWs * 2.1) / 48)
+
     // temperature: vertically centred, half the panel height, and horizontally
     // centred in the free region between the left frame edge and the cloud's
     // visible left extent (the ellipsoid envelope fades before its ±halfx tips)
