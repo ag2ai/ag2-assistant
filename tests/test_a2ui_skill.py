@@ -1,8 +1,13 @@
 """The Card catalog disclosed through a Skill: one resident line, an index read on
 demand, and one Card's schema and example fetched only once it is being drawn."""
 
+import json
+from contextlib import AsyncExitStack
+
 import pytest
 from ag2.exceptions import SkillNotFoundError
+from ag2.tools.skills import SkillsToolkit
+from ag2.utils import CONTEXT_OPTION_NAME
 
 from assistant.a2ui import CARD_VOCABULARY, bundled_cards
 from assistant.a2ui_skill import (
@@ -16,6 +21,7 @@ from assistant.agent import (
     build_skills_plugin,
     build_skills_runtime,
     resolve_a2ui_skill,
+    resolve_skills,
 )
 from assistant.cards import CARDS_DIR, CardStateStore
 from assistant.coding.diff import FileDiff
@@ -27,7 +33,15 @@ from assistant.gateway.stream_bridge import StreamBridge
 from assistant.profiles import ProfileRegistry
 from assistant.skills import SkillStateStore
 from assistant.state_store import SUPPRESS_SHARED
-from tests.support.cards import a2ui_view, card_detail, protocol, skill_body, write_card
+from tests.support.cards import (
+    a2ui_view,
+    card_detail,
+    context,
+    draw,
+    protocol,
+    skill_body,
+    write_card,
+)
 from tests.support.fakes import FakeReply, FakeRunMixin, fake_agent_factory
 
 
@@ -156,7 +170,7 @@ async def test_the_body_says_how_to_draw_a_card_and_nothing_of_the_protocol(conf
     to compose views or to draw one from the basic components."""
     body = await skill_body(config)
 
-    assert "<a2ui-json>" in body
+    assert 'run_skill_script(name="rich-views"' in body
     assert "do not restate" in body
     assert PROTOCOL_RESOURCE in body
     assert "## A2UI Message Types" not in body
@@ -202,7 +216,7 @@ async def test_a_cards_schema_and_example_are_fetched_one_at_a_time(config):
 
     assert '"title"' in detail
     assert '"items"' in detail
-    assert '"component":"Checklist","title":"Ship the release"' in detail
+    assert 'script="Checklist", args={"title":"Ship the release"' in detail
     assert "MarketBoard" not in detail
 
 
@@ -212,7 +226,7 @@ async def test_a_cards_detail_matches_its_file(config):
     detail = await card_detail(config, "Shelf")
 
     assert "Use when the user asks what is on their shelf." in detail
-    assert '"component":"Shelf","title":"Hardbacks"' in detail
+    assert 'script="Shelf", args={"title":"Hardbacks"}' in detail
 
 
 async def test_a_card_nobody_has_has_no_detail(config):
@@ -247,6 +261,76 @@ async def test_a_card_dropped_in_is_disclosed_without_a_rebuild(config):
 
     assert "Shelf" in await skill_body(config, view)
     assert "Shelf" in await card_detail(config, "Shelf", view)
+
+
+# --- drawing a Card through its script ---------------------------------------
+
+CHECKLIST = {"title": "Ship it", "items": ["Tag the release", "Deploy"]}
+
+
+async def test_a_cards_script_draws_it_as_primitives_with_its_fields_as_data(config):
+    reply, published = await draw(config, "Checklist", CHECKLIST)
+
+    assert "drawn" in reply
+    drawn = next(m for m in published if "updateComponents" in m)["updateComponents"]
+    assert all(c["component"] != "Checklist" for c in drawn["components"])
+    written = {m["updateDataModel"]["path"] for m in published if "updateDataModel" in m}
+    assert written == {"/title", "/items"}
+
+
+async def test_fields_the_card_does_not_accept_draw_nothing_and_name_the_fields(config):
+    reply, published = await draw(config, "Checklist", {"title": "Ship it"})
+
+    assert reply.startswith("Not drawn") and '"items"' in reply
+    assert published == []
+
+
+async def test_every_shape_a_model_sends_its_fields_in_draws_the_card(config):
+    """Models pass the fields as an object, as one JSON object in a list, or as
+    ``--name value`` pairs (ag2ai/ag2#3327); each draws the same Card."""
+    shapes = [
+        CHECKLIST,
+        [json.dumps(CHECKLIST)],
+        ["--title", "Ship it", "--items", json.dumps(CHECKLIST["items"])],
+    ]
+    for args in shapes:
+        _, published = await draw(config, "Checklist", args)
+        assert any("updateComponents" in m for m in published), args
+
+
+async def test_a_disabled_card_has_no_script(config, paths):
+    write_card(paths.root / CARDS_DIR, "Shelf")
+    view = a2ui_view(config)
+    assert "drawn" in (await draw(config, "Shelf", {"title": "Paperbacks"}, view))[0]
+
+    CardStateStore(paths.root).set_enabled("Shelf", False)
+
+    [skill] = view.skills
+    assert "Shelf" not in [script.name for script in skill.scripts]
+    with pytest.raises(FileNotFoundError):
+        await draw(config, "Shelf", {"title": "Paperbacks"}, view)
+
+
+async def test_a_card_is_drawn_through_the_agents_own_script_tool(config):
+    """The call reaches the rich-views runtime past the skills on disk, even with its
+    fields as an object — which a disk runtime rejects when it is asked first."""
+    tool = SkillsToolkit(
+        resolve_a2ui_skill(config), resolve_skills(config, build_skills_runtime(config))
+    ).run_skill_script()
+    ctx = context()
+
+    async with AsyncExitStack() as stack:
+        reply = await tool.model.asolve(
+            name=A2UI_SKILL,
+            script="Checklist",
+            args=CHECKLIST,
+            stack=stack,
+            cache_dependencies={},
+            dependency_provider=ctx.dependency_provider,
+            **{CONTEXT_OPTION_NAME: ctx},
+        )
+
+    assert "drawn" in reply
 
 
 # --- a Card that is turned off ----------------------------------------------

@@ -73,7 +73,7 @@ async def test_the_skill_body_exposes_the_card_index_and_how_to_draw(config):
     assert "- **DecisionMatrix**: Use when the answer compares concrete alternatives" in body
     assert "Gather the real data with your tools first" in body
     assert "never mention A2UI, schemas or components to the user" in body
-    assert '`createSurface` (catalogId "' + CATALOG_ID + '")' in body
+    assert 'run_skill_script(name="rich-views", script="<CardName>"' in body
 
 
 async def test_the_protocol_reference_holds_the_rules_for_building_from_primitives(config):
@@ -289,7 +289,7 @@ async def test_the_checklist_card_is_offered_to_the_agent_from_its_file(config):
 
     assert card.description in await skill_body(config)
     detail = await card_detail(config, "Checklist")
-    assert '"component":"Checklist","title":"Ship the release"' in detail
+    assert 'script="Checklist", args={"title":"Ship the release"' in detail
 
 
 def test_the_model_emits_only_the_cards_fields_and_the_file_supplies_the_layout():
@@ -424,7 +424,7 @@ async def test_the_market_board_is_offered_to_the_agent_from_its_file(config):
     assert set(schema["properties"]) >= {"id", "component", "title", "quotes"}
 
     assert card.description in await skill_body(config)
-    assert '"component":"MarketBoard"' in await card_detail(config, "MarketBoard")
+    assert 'script="MarketBoard"' in await card_detail(config, "MarketBoard")
 
 
 def test_the_market_board_is_drawn_from_the_vocabulary_not_from_a_component():
@@ -526,7 +526,7 @@ async def test_the_task_plan_places_and_brief_are_offered_from_their_files(confi
         assert catalog["components"][name]["description"] == card.description
         assert catalog["components"][name]["required"] == ["id", "component", *card.required]
         assert card.description in body
-        assert f'"component":"{name}"' in await card_detail(config, name)
+        assert f'script="{name}"' in await card_detail(config, name)
 
 
 def test_the_task_plan_places_and_brief_are_drawn_from_the_vocabulary():
@@ -681,7 +681,7 @@ async def test_the_board_the_inbox_and_the_agenda_are_offered_from_their_files(c
         assert catalog["components"][name]["description"] == card.description
         assert catalog["components"][name]["required"] == ["id", "component", *card.required]
         assert card.description in body
-        assert f'"component":"{name}"' in await card_detail(config, name)
+        assert f'script="{name}"' in await card_detail(config, name)
 
 
 def test_the_board_the_inbox_and_the_agenda_are_drawn_from_the_vocabulary():
@@ -840,7 +840,7 @@ async def test_the_weather_and_the_news_are_offered_from_their_files(config):
         assert catalog["components"][name]["description"] == card.description
         assert catalog["components"][name]["required"] == ["id", "component", *card.required]
         assert card.description in body
-        assert f'"component":"{name}"' in await card_detail(config, name)
+        assert f'script="{name}"' in await card_detail(config, name)
 
 
 def test_the_weather_and_the_news_are_drawn_from_the_vocabulary():
@@ -1055,7 +1055,7 @@ async def test_the_decision_matrix_is_offered_to_the_agent_from_its_file(config)
 
     assert assistant_catalog()["components"]["DecisionMatrix"]["description"] == card.description
     assert "- **DecisionMatrix**: Use when the answer compares" in body
-    assert '"component":"DecisionMatrix"' in await card_detail(config, "DecisionMatrix")
+    assert 'script="DecisionMatrix"' in await card_detail(config, "DecisionMatrix")
 
 
 def test_the_decision_matrix_is_drawn_from_the_vocabulary_not_from_a_component():

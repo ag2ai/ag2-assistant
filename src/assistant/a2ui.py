@@ -367,16 +367,6 @@ Keep surfaces concise, factual, and consistent with the prose.
 CATALOG_RULES = _CATALOG_RULES_TEMPLATE.replace("__CATALOG_ID__", CATALOG_ID)
 
 
-def _offered(card: Card) -> str:
-    """One Card offered to the model: when to reach for it, and the shape it emits."""
-    emit = json.dumps({"id": "root", "component": card.name, **card.example}, separators=(",", ":"))
-    return (
-        f"\n{card.name} — {card.description} Render it like this:\n"
-        f'{{"version":"v1.0","createSurface":{{"surfaceId":"s1","catalogId":"{CATALOG_ID}"}}}}\n'
-        f'{{"version":"v1.0","updateComponents":{{"surfaceId":"s1","components":[{emit}]}}}}\n'
-    )
-
-
 class _CardValidationMiddleware(_A2UIValidationMiddleware):
     """The per-turn instance: AG2's validation, then the Card instances drawn."""
 
@@ -484,19 +474,6 @@ class _AssistantA2UIRuntime:
     @property
     def version_string(self) -> str:
         return self.schema_manager.version_string
-
-    def card_detail(self, name: str) -> str | None:
-        """One Card's own contract: the schema its instance is validated against, and
-        the messages that draw it. ``None`` for a Card this profile is not offered."""
-        card = self.cards.get(name)
-        if card is None:
-            return None
-        schema = _component_schema(card.name, card.description, card.fields, list(card.required))
-        return (
-            f"# {card.name}\n\nEmit exactly these fields; a value you do not have is "
-            f"left out, never invented.\n\n```json\n{json.dumps(schema, indent=2)}\n```\n"
-            f"{_offered(card)}"
-        )
 
     def middleware_factories(self):
         return [self._middleware]

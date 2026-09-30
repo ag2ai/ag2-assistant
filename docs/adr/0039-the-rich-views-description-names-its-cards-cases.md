@@ -6,7 +6,8 @@ a short `topic`, the case it is ready for ("the weather", "stock, fund or crypto
 the description lists them. The body shrinks to what a Card needs — the index and how to draw
 one — and the A2UI protocol at large becomes a resource, `reference/protocol.md`.
 
-Amends ADR 0038: the catalog entry no longer "never changes".
+Amends ADR 0038: the catalog entry no longer "never changes". Amended by ADR 0040: a Card is
+drawn by a Skill script.
 
 ## Context
 

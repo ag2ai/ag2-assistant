@@ -6,6 +6,7 @@ plugin is built from, so what a test reads is what a turn would be handed.
 
 from pathlib import Path
 
+from ag2.a2ui import A2UIMessageEvent
 from ag2.context import ConversationContext
 from ag2.stream import MemoryStream
 
@@ -68,3 +69,20 @@ async def card_detail(config: Config, name: str, view: FilteredSkillRuntime | No
 async def protocol(config: Config, view: FilteredSkillRuntime | None = None) -> str:
     """The A2UI protocol reference: composing views and drawing from the basic components."""
     return await (view or a2ui_view(config)).read_resource(A2UI_SKILL, PROTOCOL_RESOURCE, context())
+
+
+async def draw(
+    config: Config, card: str, args, view: FilteredSkillRuntime | None = None
+) -> tuple[str, list[dict]]:
+    """Run a Card's drawing script the way the agent does; its reply and the A2UI
+    messages it published."""
+    ctx = context()
+    published: list[dict] = []
+
+    async def collect(event) -> None:
+        if isinstance(event, A2UIMessageEvent):
+            published.append(event.message)
+
+    ctx.stream.subscribe(collect)
+    reply = await (view or a2ui_view(config)).execute(A2UI_SKILL, card, ctx, args)
+    return reply, published

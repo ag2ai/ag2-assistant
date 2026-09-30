@@ -194,8 +194,9 @@ backlink from a file to the conversations touching it)
 **Rich view** (the `rich-views` **Skill**):
 The Bundled Skill the **Card catalog** is disclosed through. Its description is the only
 A2UI text a turn carries at all, and names each Card's **topic** — the case it is ready
-for; its body is the index of this profile's Cards and how to draw one; one Card's schema
-and worked example, and the A2UI protocol at large, are resources read on demand. "Rich view" is what it is called where a user meets it, because the
+for; its body is the index of this profile's Cards and how to draw one; each Card is a
+script of the Skill that draws it (ADR 0040); one Card's schema and worked call, and the
+A2UI protocol at large, are resources read on demand. "Rich view" is what it is called where a user meets it, because the
 switch is theirs: turned off, the profile is offered no Card and its turns carry no A2UI
 runtime — while a Card instance already in a **Thread**, and a Card the server fills for
 itself, go on drawing.
