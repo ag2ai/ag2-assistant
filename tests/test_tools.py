@@ -16,16 +16,18 @@ from ag2.tools import MCPStdioServerConfig
 from mcp.types import CallToolResult, ListToolsResult, TextContent
 from mcp.types import Tool as McpTool
 
+from assistant.a2ui import WEATHER_CONDITIONS, bundled_cards
 from assistant.agent import ask
 from assistant.config import Config
 from assistant.permissions import ALLOW_ONCE
 from assistant.settings import Settings
-from assistant.tools import build_agent_tools, web_fetch_tool
+from assistant.tools import CAPABILITIES, build_agent_tools, web_fetch_tool
 from assistant.tools.mcp import (
     NamespacedMCPToolkit,
     describe_mcp_error,
     namespaced_tool_name,
 )
+from assistant.tools.weather import get_weather
 from assistant.tools.web_fetch import web_fetch
 
 
@@ -387,3 +389,22 @@ def test_no_workspace_dir_means_no_fs_tools():
     names = [t.name for t in tools if getattr(t, "name", None)]
     assert {"read_file", "list_folder", "write_file"} <= set(names)
     assert "update_file" not in names  # no workspace → no AG2 FS toolkit
+
+
+def test_no_tool_tells_the_model_about_cards():
+    """What a Card is for lives in the Card: a tool describes its data, never the view
+    it might be drawn as, so turning rich views off leaves nothing pointing at them."""
+    tools = build_agent_tools("", capabilities=list(CAPABILITIES), config=None)
+    described = [str(tool.schema) for tool in tools if hasattr(tool, "schema")]
+
+    assert described
+    for text in described:
+        assert "A2UI" not in text and "render" not in text.lower()
+        for name in bundled_cards():
+            assert name not in text
+
+
+def test_the_weather_tool_names_every_condition_it_reports():
+    description = get_weather.schema.function.description
+    for condition in WEATHER_CONDITIONS:
+        assert condition in description

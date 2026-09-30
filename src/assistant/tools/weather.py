@@ -1,9 +1,7 @@
-"""Weather tool — one deterministic call for current weather + a short forecast,
-already mapped to the vocabulary the WeatherGlyph primitive draws.
+"""Weather tool — one deterministic call for current weather + a short forecast.
 
 Source: wttr.in (?format=j1), the same provider the bundled `weather` skill uses.
-The returned `condition` is one the glyph can draw, so the agent never has to
-guess it.
+The returned `condition` is one word from a fixed vocabulary (ADR 0037).
 """
 
 import json
@@ -208,8 +206,8 @@ def get_weather(location: str, units: str = "celsius") -> str:
 
     This covers today at one place. Research anything beyond that (the days ahead,
     severe-weather warnings, marine, alpine, historical) the way you would any other
-    fact. The returned `condition`, `temperature` and `rows` are ready to render;
-    `summary` is one honest line for the surface and for your prose.
+    fact. `condition` is one of sunny, partly-cloudy, cloudy, foggy, rainy,
+    thunderstorm, snow or windy; `summary` is the whole reading in one line.
 
     Args:
         location: City, region, airport code, or "lat,lon".

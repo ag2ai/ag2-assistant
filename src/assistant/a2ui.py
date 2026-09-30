@@ -67,7 +67,7 @@ CARD_PRIMITIVES = frozenset(
 )
 
 # The conditions the WeatherGlyph primitive draws — its vocabulary, not any Card's.
-# The weather tool maps into it; mirrored in web/src/lib/weather/conditions.ts.
+# The weather tool reports in it; mirrored in web/src/lib/weather/conditions.ts.
 WEATHER_CONDITIONS = [
     "sunny",
     "partly-cloudy",
@@ -352,7 +352,7 @@ Gather the real data with your tools BEFORE you render. Never populate a compone
 
 For mixed requests, compose multiple components with basic layout components: root component="Column" or "Row", with children referencing component ids from the same updateComponents.components array. Use Divider for section separation when useful.
 A Column, Row or List can repeat one written component instead of listing every child: `"children":{"componentId":"run_row","path":"/runs"}` draws `run_row` once per item of the array at `/runs`. Inside that component a path opening with `./` reads the item (`{"path":"./day"}`, or `{"path":"."}` for the whole item) and an absolute path still reads the whole data model, so one written row serves three items or thirty.
-An interactive canvas is an A2UI surface, not a `Canvas` component. Build it from Card, Column, Row, and List. When `generate_image` returns an A2UI image URL, place that exact value in an Image component's required `url`; do not substitute the workspace path or invent image properties.
+An interactive canvas is an A2UI surface, not a `Canvas` component. Build it from Card, Column, Row, and List. To show an image `generate_image` made, place the exact URL it says the image is served at in an Image component's required `url`; do not substitute the workspace path or invent image properties.
 For basic controls, use these exact property shapes: TextField `{"component":"TextField","label":"Name","value":{"path":"/name"}}`; ChoicePicker `{"component":"ChoicePicker","options":[{"label":"One","value":"one"}],"value":{"path":"/choice"},"variant":"mutuallyExclusive"}`; CheckBox `{"component":"CheckBox","label":"Enable","value":{"path":"/enabled"}}`; Slider `{"component":"Slider","label":"Level","max":100,"value":{"path":"/level"}}`; DateTimeInput `{"component":"DateTimeInput","label":"When","value":{"path":"/when"},"enableDate":true,"enableTime":true}`. Do not add undocumented properties. A Button needs a Text child and an action event.
 Interactive inputs (CheckBox, ChoicePicker, TextField, Slider, DateTimeInput) only update the local surface data model. If the user expects the assistant to use, submit, reveal, save, search, or otherwise act on those values, include a separate Button in the same layout. Its action must be an `event` with a specific verb-like name and a context object containing every required input as JSON Pointer bindings. For example: `{"id":"submit","component":"Button","child":"submit_text","variant":"primary","action":{"event":{"name":"apply_preferences","context":{"colours":{"path":"/selectedColours"}}}}}` followed by `{"id":"submit_text","component":"Text","text":"Apply"}`. Do not imply that choosing an option alone sends it to the assistant.
 Always emit createSurface followed by updateComponents for the same surfaceId. Use catalog id __CATALOG_ID__ and root id "root".

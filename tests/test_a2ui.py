@@ -83,7 +83,7 @@ async def test_the_protocol_reference_holds_the_rules_for_building_from_primitiv
     assert 'root component="Column"' in reference
     assert "Use Divider for section separation when useful" in reference
     assert "A canvas is an A2UI surface, not a component" in reference
-    assert "place that exact value in an Image component's required `url`" in reference
+    assert "place the exact URL it says the image is served at in an Image" in reference
     assert '"component":"DateTimeInput"' in reference
     assert "Read a custom component's own detail resource before you draw it" in reference
     assert 'Do not describe or print "corrected A2UI components"' in reference
