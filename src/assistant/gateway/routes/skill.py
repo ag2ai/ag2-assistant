@@ -95,9 +95,8 @@ def _skill_store(d: GatewayDeps) -> SkillStateStore:
 
 
 def _shared_skills(config) -> list:
-    """Every skill the shared layers offer: the ones on disk, plus the A2UI Skill —
-    defined in code, so no runtime discovers it and its descriptor stands in. It goes
-    FIRST, so a same-named skill on disk shadows it as it shadows any Bundled skill."""
+    """Every skill the shared layers offer: the A2UI Skill's descriptor first, then
+    the ones on disk, so a same-named skill on disk shadows it."""
     merged = {s.name: s for s in [a2ui_skill_descriptor(), *build_skills_runtime(config).skills]}
     return list(merged.values())
 

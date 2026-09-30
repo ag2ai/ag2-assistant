@@ -53,8 +53,8 @@ Fix in a patch release, whichever is quicker:
 
 `AgentExecutor._dispatch` hard-wires human-input rejection — `executor.py:283`:
 
-```python
-hitl_hook = (_reject_human_input,)
+```
+hitl_hook=_reject_human_input,
 ```
 
 `_reject_human_input` (`executor.py:398`) raises `HumanInputUnsupportedError`, failing the turn

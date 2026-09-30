@@ -261,13 +261,8 @@ def resolve_skills(config: Config, runtime):
 
 
 def resolve_a2ui_skill(config: Config):
-    """The A2UI Skill (ADR 0038) behind that same predicate, so the Card catalog is
-    disclosed — and turned off — exactly as any other Bundled skill is.
-
-    It owns its own `CardCatalog`: the gateway's is a turn's drawing, this one is a
-    read's disclosure, and both are lazily resolved, fingerprinted and per-profile
-    (ADR 0019).
-    """
+    """The A2UI Skill (ADR 0038) behind that same predicate, over its own
+    `CardCatalog`, so the Card catalog is disclosed and turned off like any Bundled skill."""
     return FilteredSkillRuntime(A2UISkillRuntime(CardCatalog(config)), _availability(config))
 
 
@@ -287,9 +282,7 @@ def build_skills_plugin(config: Config, runtime):
     build (a `ProfileManager.reload`) picks it up — which is exactly what the
     /api/skills routes trigger on every change.
 
-    The A2UI Skill goes FIRST because `SkillPlugin` resolves a name clash last-wins:
-    a user's own `rich-views` skill must shadow the bundled one, as it does for every
-    other Bundled skill.
+    The A2UI Skill comes first, so a same-named skill on disk shadows it (last wins).
     """
     return SkillPlugin(resolve_a2ui_skill(config), resolve_skills(config, runtime))
 

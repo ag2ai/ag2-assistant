@@ -1,14 +1,5 @@
-"""The Card catalog as a Bundled Skill (ADR 0038).
-
-The Skill's description is the only A2UI text resident in a turn; its body carries the
-rules plus an index of the Cards this profile can draw; one Card's schema and worked
-example are a Resource, read once the agent has decided to draw it. Body and Resources
-render per read, so the index is whatever is on disk now.
-
-Classified Bundled, so install-wide Disable and per-profile Suppression turn it off with
-the same switch every other Skill answers to — and a turn it is off in is built with no
-A2UI runtime and no middleware at all.
-"""
+"""The Card catalog as a Bundled Skill (ADR 0038): the rules and the Card index as
+its body, one Card's schema and example as a Resource, all rendered per read."""
 
 from dataclasses import replace
 
@@ -102,26 +93,18 @@ class _A2UISkill(MemorySkill):
         )
 
 
-class A2UISkillRuntime:
-    """The ``SkillRuntime`` owning the A2UI Skill.
-
-    Everything but ``read_resource`` is the ``MemoryRuntime``'s: only a Card's detail
-    needs the catalog, and a Card that is Disabled or Suppressed has none.
-    """
+class A2UISkillRuntime(MemoryRuntime):
+    """The runtime owning the A2UI Skill; a Card's detail is read from the catalog,
+    so a Card that is Disabled or Suppressed has none."""
 
     def __init__(self, catalog: CardCatalog) -> None:
+        super().__init__(_A2UISkill(catalog))
         self._catalog = catalog
-        self._inner = MemoryRuntime(_A2UISkill(catalog))
 
     async def read_resource(self, name: str, resource: str, context: ConversationContext) -> str:
         if name != A2UI_SKILL:
-            return await self._inner.read_resource(name, resource, context)
+            return await super().read_resource(name, resource, context)
         detail = self._catalog.runtime().card_detail(_card_named(resource))
         if detail is None:
             raise FileNotFoundError(f"resource {resource!r} not found in skill {name!r}")
         return detail
-
-    def __getattr__(self, item):
-        # Delegate the rest of the SkillRuntime protocol (skills, read, execute,
-        # cleanup, invalidate, ensure_storage, …) to the MemoryRuntime.
-        return getattr(self._inner, item)
