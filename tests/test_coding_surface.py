@@ -181,3 +181,14 @@ def test_a_run_stored_before_the_card_was_a_file_draws_its_headline_and_its_file
     assert drawn.data["files"][0]["full"] == "/repo/app.py"
     assert (drawn.data["added"], drawn.data["removed"]) == ("+3", "−1")
     assert drawn.data["summary"] == "Done."
+
+
+def test_a_redrawn_run_keeps_the_moment_it_was_recorded(config):
+    stored = _stored_before_the_card_was_a_file()
+    stored.created_at = 1_758_555_420.0
+
+    assert as_drawn(stored, CardCatalog(config)).created_at == 1_758_555_420.0
+
+    current = surfmod.build_surface("cs2", surfmod.card_fields(**_state()))
+    current.created_at = 1_758_555_420.0
+    assert as_drawn(current, CardCatalog(config)).created_at == 1_758_555_420.0

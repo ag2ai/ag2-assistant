@@ -148,4 +148,6 @@ def adopted_surface(surface: A2UISurface) -> A2UISurface:
         summary=str(root.get("summary", "")),
         error=str(root.get("error", "")),
     )
-    return build_surface(surface.surface_id, fields)
+    adopted = build_surface(surface.surface_id, fields)
+    adopted.created_at = surface.created_at
+    return adopted

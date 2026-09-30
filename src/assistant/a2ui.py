@@ -431,7 +431,7 @@ def expanded_card_surface(surface: A2UISurface, cards: dict[str, Card]) -> A2UIS
     for path, value in writes:
         data = update_data_value(data, path, value)
     root = root_component(expanded)
-    return A2UISurface(
+    redrawn = A2UISurface(
         surface.surface_id,
         catalog_id=surface.catalog_id,
         version=surface.version,
@@ -440,6 +440,8 @@ def expanded_card_surface(surface: A2UISurface, cards: dict[str, Card]) -> A2UIS
         title=surface.title,
         intent=surface.intent,
     )
+    redrawn.created_at = surface.created_at
+    return redrawn
 
 
 @a2ui_action(
