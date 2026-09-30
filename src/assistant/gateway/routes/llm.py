@@ -176,6 +176,8 @@ def build_router(
         # reports a bare "[Errno 2]" instead of testing the host CLI at all.
         probe.acp_bridge = d.manager.config.acp_bridge
         probe.acp_bridge_token = d.manager.config.acp_bridge_token
+        # The shared provider keys a real turn resolves (saved secrets over ambient env).
+        probe.secret_env = secret_env()
         probe.llm.streaming = False
         probe.llm.provider = llm_configs.PROVIDER_OF[entry["type"]]
         probe.llm.model = entry["model"]
