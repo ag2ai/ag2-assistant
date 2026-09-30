@@ -5,10 +5,11 @@ fields the server fills, not the primitives they are drawn as; that drawing is t
 Card file's and is covered in ``test_a2ui``.
 """
 
-from assistant.a2ui import CATALOG_ID, bundled_cards, expanded_card_surface
+from assistant.a2ui import CATALOG_ID, CardCatalog, bundled_cards, expanded_card_surface
 from assistant.coding import surface as surfmod
 from assistant.coding.diff import FileDiff
 from assistant.events import A2UISurface, A2UISurfaceDataUpdated
+from assistant.gateway.wire import as_drawn
 
 
 def _files():
@@ -142,3 +143,41 @@ def test_a_later_emit_is_data_only_so_the_layout_is_not_re_sent():
     assert update.data["summary"] == "changed 2 files"
     # Same fields as the first emit carried, so nothing about the Card is re-sent.
     assert update.data == surfmod.build_surface("cs1", fields).data
+
+
+def _stored_before_the_card_was_a_file() -> A2UISurface:
+    """A coding run as a thread persisted it when the session had its own renderer."""
+    root = {
+        "id": "root",
+        "component": "CodingSession",
+        "agent": "Claude Code",
+        "directory": "/repo",
+        "task": "Add a /health endpoint. Then cover it with a test.",
+        "status": "done",
+        "plan": [],
+        "files": [
+            {"path": "app.py", "status": "modified", "added": 3, "removed": 1, "hunks": "@@"}
+        ],
+        "summary": "Done.",
+    }
+    data = {key: value for key, value in root.items() if key not in ("id", "component")}
+    return A2UISurface(
+        "cs1",
+        catalog_id=CATALOG_ID,
+        version="v1.0",
+        component={**root, "_components": [root]},
+        data=data,
+        title="Coding session",
+        intent="generated-ui",
+    )
+
+
+def test_a_run_stored_before_the_card_was_a_file_draws_its_headline_and_its_files(config):
+    drawn = as_drawn(_stored_before_the_card_was_a_file(), CardCatalog(config))
+
+    assert drawn.component["component"] == "Card"
+    assert drawn.data["title"] == "Add a /health endpoint."
+    assert drawn.data["brief"] == "Then cover it with a test."
+    assert drawn.data["files"][0]["full"] == "/repo/app.py"
+    assert (drawn.data["added"], drawn.data["removed"]) == ("+3", "−1")
+    assert drawn.data["summary"] == "Done."

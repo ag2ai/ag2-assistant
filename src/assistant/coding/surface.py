@@ -51,8 +51,7 @@ def _file_dict(diff: FileDiff, directory: str) -> dict:
     """One changed file: what it is called, what opens it, and what changed in it."""
     entry = {
         "path": diff.path,
-        # The folder was approved for the run, so its files are reachable by the
-        # absolute path the Files rail resolves a granted Folder's file by.
+        # The absolute path the Files rail opens a granted Folder's file by.
         "full": str(PurePosixPath(directory) / diff.path),
         "status": diff.status,
         "added": f"+{diff.added}",
@@ -120,3 +119,33 @@ def build_surface(surface_id: str, fields: dict) -> A2UISurface:
 def surface_data(surface_id: str, fields: dict) -> A2UISurfaceDataUpdated:
     """A later emit: the run's state as a data-model snapshot, layout untouched."""
     return A2UISurfaceDataUpdated(surface_id, data=fields)
+
+
+def adopted_surface(surface: A2UISurface) -> A2UISurface:
+    """A run stored as its raw task, before the Card was a file, re-filled as the
+    Card's fields; any other surface comes back unchanged."""
+    root = surface.component
+    if root.get("component") != CARD or "task" not in root or "title" in root:
+        return surface
+    files = [
+        FileDiff(
+            str(entry.get("path", "")),
+            str(entry.get("status", "")),
+            str(entry.get("hunks") or ""),
+            int(entry.get("added") or 0),
+            int(entry.get("removed") or 0),
+        )
+        for entry in root.get("files") or []
+        if isinstance(entry, dict)
+    ]
+    fields = card_fields(
+        agent_label=str(root.get("agent", "")),
+        directory=str(root.get("directory", "")),
+        task=str(root.get("task", "")),
+        status=str(root.get("status", "")),
+        files=files,
+        plan=root.get("plan") or [],
+        summary=str(root.get("summary", "")),
+        error=str(root.get("error", "")),
+    )
+    return build_surface(surface.surface_id, fields)

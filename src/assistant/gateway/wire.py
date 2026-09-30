@@ -17,6 +17,7 @@ from ag2.events._serialization import qualified_name
 from ag2.events.voice import RecordedAudioEvent, SynthesizedAudioEvent
 
 from assistant.a2ui import CardCatalog, expanded_card_surface
+from assistant.coding.surface import adopted_surface
 from assistant.events import A2UISurface
 from assistant.observability import log_suppressed
 
@@ -40,7 +41,7 @@ def as_drawn(event, catalog: CardCatalog):
     if not isinstance(event, A2UISurface):
         return event
     try:
-        return expanded_card_surface(event, catalog.drawable())
+        return expanded_card_surface(adopted_surface(event), catalog.drawable())
     except Exception as exc:  # noqa: BLE001 — a Card that won't draw isn't a dead turn
         log_suppressed("a2ui card expansion", exc, surface_id=event.surface_id)
         return event
