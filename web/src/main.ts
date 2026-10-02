@@ -1,7 +1,6 @@
 import './design/styles.css'
 import './design/palette.ts'
 import './app.css'
-import './components/items/broadsheet.css' // shared editorial-surface shell (.bs / .bs-*)
 import { mount } from 'svelte'
 import App from './App.svelte'
 

@@ -66,6 +66,7 @@ Route map:
 import asyncio
 import base64
 import contextlib
+import json
 import uuid
 from collections.abc import Callable, Mapping
 from collections.abc import Set as AbstractSet
@@ -155,7 +156,7 @@ from assistant.gateway.routes.common import chat_asker
 from assistant.gateway.routes.deps import GatewayDeps
 from assistant.gateway.schemas import ERROR_RESPONSES
 from assistant.gateway.stream_bridge import StreamBridge
-from assistant.gateway.wire import to_wire
+from assistant.gateway.wire import as_drawn, to_wire
 from assistant.hitl import add_hitl_routes
 from assistant.integrations.google_auth import GoogleAuth
 from assistant.live_configs import LiveConfigStore
@@ -213,6 +214,27 @@ def _origin_ok(
     if origin in allowed:
         return True
     return bool(host) and urlsplit(origin).netloc == host
+
+
+# Cap on the data model a click carries, bounding any client-supplied body.
+_MAX_A2UI_STATE_BYTES = 256 * 1024
+
+
+def _clicked_instance_model(state, surface_id: str) -> dict | None:
+    """The data model a click sends for the Card instance `surface_id` — None when it
+    sends none, or names a different instance."""
+    if not isinstance(state, dict) or state.get("surfaceId") != surface_id:
+        return None
+    data = state.get("data")
+    return data if isinstance(data, dict) else None
+
+
+def _oversized_model(model: dict) -> bool:
+    """Whether a client-supplied data model exceeds the bound on a persisted body."""
+    try:
+        return len(json.dumps(model, ensure_ascii=False).encode()) > _MAX_A2UI_STATE_BYTES
+    except (TypeError, ValueError):
+        return True
 
 
 # Surface context the client can request by token (kept server-side, not in the UI).
@@ -566,16 +588,19 @@ def create_app(
                         )
                         continue
                     if action is None:
-                        # AG2's standard fallback for an undeclared Button action is
-                        # an agent turn. Preserve its supplied state first, then give
-                        # the agent a concise, structured description of the click.
-                        await gateway.emit_event(
-                            chat_id,
-                            A2UISurfaceDataUpdated(
-                                click.surface_id,
-                                data=click.context if isinstance(click.context, dict) else {},
-                            ),
-                        )
+                        # An undeclared Button action falls back to an agent turn:
+                        # persist the model the client holds, then describe the click.
+                        model = _clicked_instance_model(data.get("state"), click.surface_id)
+                        if model is not None and _oversized_model(model):
+                            await websocket.send_json(
+                                {"type": "error", "message": "A2UI state too large to store."}
+                            )
+                            model = None
+                        if model is not None:
+                            await gateway.emit_event(
+                                chat_id,
+                                A2UISurfaceDataUpdated(click.surface_id, data=model),
+                            )
                         await gateway.emit_event(
                             chat_id,
                             A2UIActionSubmitted(click.surface_id, action_name=click.name),
@@ -798,7 +823,7 @@ def create_app(
             # StreamBridge) so the voice client folds it with the one shared reducer
             # → tool chips/cards, task cards, deliverables, all "for free".
             with contextlib.suppress(Exception):
-                await websocket.send_json({"event": to_wire(event)})
+                await websocket.send_json({"event": to_wire(as_drawn(event, gateway.catalog))})
 
         # The voice agent can hang up the call itself via its end_call tool, which
         # trips this event; wait_end() (below) then ends the job race → teardown.

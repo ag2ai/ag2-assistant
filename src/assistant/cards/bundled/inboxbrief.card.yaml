@@ -1,0 +1,75 @@
+name: InboxBrief
+description: Use when the answer is the user's real mail — the inbox, what is unread,
+  what needs a reply. Most important thread first.
+
+topic: the user's inbox
+fields:
+  title:
+    type: string
+    description: Board heading, e.g. 'Inbox this morning'.
+  summary:
+    type: string
+    description: "One honest line, e.g. '3 unread, 1 needs a reply.'"
+  threads:
+    type: array
+    description: Most important first.
+    items:
+      type: object
+      properties:
+        from: {type: string, description: "Sender name, e.g. 'Priya Nair'."}
+        subject: {type: string}
+        when: {type: string, description: "e.g. '2h ago' or 'Mon'."}
+        gist: {type: string, description: One honest line on the content.}
+        unread: {type: boolean}
+        needsReply:
+          type: boolean
+          description: Only when the mail clearly asks the user for something.
+        url: {type: string, description: Where the thread can be read.}
+      required: [from, subject]
+      additionalProperties: false
+required: [title, threads]
+
+layout:
+  - {id: root, component: Card, variant: feature, child: post}
+  - {id: post, component: Column, gap: lg, children: [masthead, deck, rule_mast, threads]}
+
+  - {id: masthead, component: Column, gap: none, children: [kicker, post_title]}
+  - {id: kicker, component: Text, text: Inbox, variant: eyebrow, tone: accent}
+  - {id: post_title, component: Text, text: {path: /title}, variant: h1}
+  - {id: deck, component: Text, text: {path: /summary}, tone: muted}
+  - {id: rule_mast, component: Divider, emphasis: strong}
+
+  - {id: threads, component: List, gap: none, children: {componentId: thread, path: /threads}}
+  - {id: thread, component: Column, gap: sm, children: [thread_row, thread_rule]}
+  - {id: thread_row, component: Row, gap: md, align: start, children: [thread_from, thread_main, thread_when]}
+  - {id: thread_from, component: Text, text: {path: ./from}, variant: caption, emphasis: strong}
+
+  - {id: thread_main, component: Column, gap: xs, grow: true, children: [thread_subject_row, thread_gist]}
+  - {id: thread_subject_row, component: Row, gap: sm, align: center, children: [thread_unread, thread_link, thread_reply]}
+  - {id: thread_unread, component: Text, text: New, variant: badge, tone: accent, when: {path: ./unread}}
+  # The mail itself, wherever it lives — the link the tool handed back.
+  - {id: thread_link, component: Link, url: {path: ./url}, child: thread_subject}
+  - {id: thread_subject, component: Text, text: {path: ./subject}, variant: h4}
+  - {id: thread_reply, component: Text, text: 'Reply?', variant: badge, tone: accent, when: {path: ./needsReply}}
+  - {id: thread_gist, component: Text, text: {path: ./gist}, variant: caption, tone: muted}
+
+  - {id: thread_when, component: Text, text: {path: ./when}, variant: caption, tone: muted}
+  - {id: thread_rule, component: Divider}
+
+example:
+  title: Inbox this morning
+  summary: 3 new since yesterday — one needs a reply.
+  threads:
+    - from: Priya Nair
+      subject: Q3 roadmap review — your slot
+      when: 2h ago
+      gist: Asks you to confirm Thursday 10 AM for the review.
+      unread: true
+      needsReply: true
+      url: https://mail.google.com/mail/u/0/#all/19a
+    - from: GitHub
+      subject: 'PR #42 merged'
+      when: 5h ago
+      gist: Your fix landed on main.
+      unread: true
+      url: https://mail.google.com/mail/u/0/#all/19b

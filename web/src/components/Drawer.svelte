@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { get } from 'svelte/store'
-  import { chats, tasks, profiles, profileEpoch, pendingTaskEdit } from '../store.ts'
+  import { chats, tasks, listsLoaded, profiles, profileEpoch, pendingTaskEdit } from '../store.ts'
   import { route, go, goTab, newChatId, openOverlay } from '../router.ts'
   import { api } from '../transport/api/index.ts'
   import { switchProfile } from '../controller.ts'
@@ -89,9 +89,6 @@
     switchProfile(res.profile.id)
   }
 
-  // False until the active profile's first refresh lands — the list shows a loader
-  // instead of the "no conversations" empty state. Reset on every profile switch.
-  let loaded = $state(false)
   let usageAll = $state<UsageRollup | null>(null) // install-wide roll-up
   // The active profile's own totals, derived from the roll-up (one request, not two).
   const usage = $derived((usageAll?.profiles || []).find((p) => p.pid === $profiles.activeId) || null)
@@ -115,7 +112,7 @@
     } catch {}
     try { const all = await api.tasks(); if (get(profileEpoch) === epoch) $tasks = all } catch {}
     // First fetch for this profile has settled — clears the drawer's loading state.
-    if (get(profileEpoch) === epoch) loaded = true
+    if (get(profileEpoch) === epoch) $listsLoaded = true
     // One global roll-up serves both the active profile's line and the install-wide
     // "all" total; the per-profile /usage route stays for API users.
     try { usageAll = await api.usageAll() } catch {}
@@ -181,7 +178,7 @@
     if (lastEpoch === -1) { lastEpoch = e; return }  // initial load is onMount's job
     if (e === lastEpoch) return
     lastEpoch = e
-    loaded = false
+    $listsLoaded = false
     refresh()
   })
 
@@ -615,7 +612,7 @@
   <div class="dlist" onscroll={() => { menuChat = ''; menuTask = '' }}>
     {#if $route.tab === 'chats'}
       <button class="newrow" onclick={newChat}><Icon name="plus" size={15} /> New chat</button>
-      {#if !$chats.length}<div class="none">{loaded ? 'No conversations yet.' : 'Loading…'}</div>{/if}
+      {#if !$chats.length}<div class="none">{$listsLoaded ? 'No conversations yet.' : 'Loading…'}</div>{/if}
       {#if starredChats.length}
         <div class="datesep">Starred</div>
         {#each starredChats as s (s.chat_id)}{@render chatRow(s)}{/each}
@@ -626,7 +623,7 @@
       {/each}
     {:else}
       <button class="newrow" onclick={() => openTask('new')}><Icon name="plus" size={15} /> New task</button>
-      {#if !$tasks.length}<div class="none">{loaded ? 'No tasks yet.' : 'Loading…'}</div>{/if}
+      {#if !$tasks.length}<div class="none">{$listsLoaded ? 'No tasks yet.' : 'Loading…'}</div>{/if}
       {#if starredTasks.length}
         <div class="datesep">Starred</div>
         {#each starredTasks as t (t.id)}{@render taskRow(t)}{/each}

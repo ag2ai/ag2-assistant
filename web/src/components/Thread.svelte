@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { thread, runInfo, profile, profiles, chats } from '../store.ts'
+  import { thread, runInfo, profile, profiles, chats, chatModel } from '../store.ts'
+  import { headerModelId } from '../lib/chatModel.ts'
   import { llmConfigs } from '../lib/llm.ts'
   import { go, newChatId } from '../router.ts'
   import { api } from '../transport/api/index.ts'
@@ -15,11 +16,11 @@
   let scroller: HTMLDivElement | undefined
   const tail = $derived($thread.items[$thread.items.length - 1])
 
-  // Header subtitle: "Workspace • Active model". Reads the same shared stores the
-  // Drawer chips and the composer's ModelSwitcher use (llmConfigs is loaded by the
-  // composer on mount), so a profile/model switch updates the header live.
+  // Header subtitle: "Workspace • model", the model being the one the composer's
+  // switcher names for this Chat, so a switch there updates the header live.
   const activeProfile = $derived($profiles.list.find((p) => p.id === $profiles.activeId))
-  const activeModel = $derived($llmConfigs.configs.find((c) => c.id === $llmConfigs.active))
+  const modelId = $derived(headerModelId($chatModel, $thread.kind === 'chat' ? $thread.id : null, $llmConfigs.active))
+  const activeModel = $derived($llmConfigs.configs.find((c) => c.id === modelId))
   const subtitle = $derived([activeProfile?.name, activeModel?.name].filter(Boolean).join(' • '))
 
   // ACP origin: read off the drawer's own polled chat list — no second

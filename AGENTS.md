@@ -202,7 +202,7 @@ it holds `GatewayDeps`, the lifespan, the WebSockets, static/SPA and the
 - **Don't assert that a method was called.** Instead of spying on an internal, check
   the observable effect through the public API or the stream event — a spy passes
   even when the call does nothing.
-- Test helpers live in `tests/support/{fakes,apps,http,stubs}.py`. `tests/conftest.py`
+- Test helpers live in `tests/support/{fakes,apps,http,stubs,cards}.py`. `tests/conftest.py`
   holds fixtures only (`paths`, `config`, `profile_app`, `profile_app_factory`) and is
   never imported from; `HOME` is not patched, so every test takes `paths` or passes
   `env` explicitly.

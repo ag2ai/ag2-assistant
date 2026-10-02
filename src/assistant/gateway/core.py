@@ -42,12 +42,11 @@ from ag2.stream import MemoryStream
 from assistant import onboarding
 from assistant import title as title_mod
 from assistant.a2ui import (
+    CardCatalog,
     durable_surfaces_from_messages,
     tolerant_a2ui_middleware,
 )
-from assistant.a2ui import (
-    runtime as a2ui_runtime_factory,
-)
+from assistant.a2ui_skill import a2ui_available
 from assistant.agent import create_agent, universal_turn_prompt
 from assistant.codex_auth import CodexAuth, CodexAuthError
 from assistant.coding.detect import parse_bridge
@@ -186,6 +185,9 @@ class Gateway:
         # edits are picked up; for bare construction it defaults to load_config (the
         # global root config, profile-agnostic).
         self._config_factory = config_factory or load_config
+        # This profile's Cards and the A2UI runtime over them; both re-read from
+        # the three Card directories whenever one of their files changes.
+        self._catalog = CardCatalog(self._config)
         self._onboarding_done = False
         self._agent: Agent | None = None
         # Last ChatGPT-subscription access token baked into the agent, so a pre-turn
@@ -246,6 +248,11 @@ class Gateway:
         """The gateway's live config — re-resolved on ``reload()`` (so a profile
         runtime's workspace/model edits are reflected here after a reload)."""
         return self._config
+
+    @property
+    def catalog(self) -> CardCatalog:
+        """This profile's Card catalog, over its three Card directories."""
+        return self._catalog
 
     @property
     def folders(self):
@@ -419,6 +426,7 @@ class Gateway:
         # Re-resolve via the injected factory (a profile runtime's factory re-reads
         # the profile's registry entry + settings; the default is load_config).
         self._config = self._config_factory()
+        self._catalog = CardCatalog(self._config)
         # A turn already running captured the old agent and finishes on it, but
         # its ACP subprocesses must not outlive the swap: close them now (aclose
         # is safe/idempotent; non-ACP configs have no aclose and are skipped).
@@ -608,29 +616,31 @@ class Gateway:
             # the web page's local state and vanishes on a profile switch (full-page
             # nav). The completed-turn write below stays the authority (§_persist_turn).
             await self._ensure_transcript_stub(chat_id, text, chat_model)
-            prompt = universal_turn_prompt(self._config, surface)  # refresh per turn
+            # A turn's prompt replaces the agent's own, so it opens with it: the persona
+            # and the plugins' text, the skills catalog among them.
+            prompt = [*agent.system_prompt, *universal_turn_prompt(self._config, surface)]
             a2ui_runtime = None
-            try:
-                a2ui_runtime = a2ui_runtime_factory()
-                prompt = [
-                    *prompt,
-                    a2ui_runtime.system_prompt_section,
-                    a2ui_runtime.capabilities_prompt(None),
-                ]
-            except Exception as exc:
-                log_suppressed("a2ui runtime setup", exc, chat_id=chat_id)
+            # The Skill's switch, read per turn: turned off, this turn is built with no
+            # A2UI at all, so nothing in it parses, validates or recovers a rich view.
+            if a2ui_available(self._config):
+                try:
+                    a2ui_runtime = self._catalog.runtime()
+                    prompt = [*prompt, a2ui_runtime.capabilities_prompt(None)]
+                except Exception as exc:
+                    log_suppressed("a2ui runtime setup", exc, chat_id=chat_id)
+            a2ui_handle = None
             if a2ui_runtime is not None:
                 # Append a fallback that recovers surfaces when the model omits the
                 # <a2ui-json> wrapper (fires only when the runtime's own extraction
                 # can't — the two are mutually exclusive per response).
                 middleware = (
                     *a2ui_runtime.middleware_factories(),
-                    tolerant_a2ui_middleware(a2ui_runtime.parser),
+                    tolerant_a2ui_middleware(a2ui_runtime.parser, a2ui_runtime.cards),
                 )
+                a2ui_handle = self._watch_a2ui(stream)
             else:
                 middleware = ()
             usage_handle = self._watch_usage(stream)  # tally this turn's tokens (HUD)
-            a2ui_handle = self._watch_a2ui(stream)
             hitl_pending = getattr(asker, "has_pending", None)
             try:
                 # `run` is `ask` with the turn left observable (`ask` is literally
@@ -695,12 +705,14 @@ class Gateway:
                 await self._persist_turn(chat_id, stream, text, "")
                 raise
             else:
-                await self._emit_a2ui_surfaces(stream, a2ui_handle)
+                if a2ui_handle is not None:
+                    await self._emit_a2ui_surfaces(stream, a2ui_handle)
                 await self._persist_turn(chat_id, stream, text, reply.body)
                 await self._mirror_turn(chat_id, text, reply.body, origin, attachment_names)
                 return reply.body
             finally:
-                self._unwatch_a2ui(stream, a2ui_handle)
+                if a2ui_handle is not None:
+                    self._unwatch_a2ui(stream, a2ui_handle)
                 self._record_usage(stream, usage_handle)  # always tally, even on error
 
     def _watch_usage(self, stream):

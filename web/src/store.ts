@@ -1,6 +1,7 @@
-import { writable, type Writable } from 'svelte/store'
+import { derived, writable, type Readable, type Writable } from 'svelte/store'
 import { DEFAULT_RAIL_WIDTH, DEFAULT_DRAWER_WIDTH } from './lib/railWidth.ts'
 import { NO_CHAT_MODEL, type ChatModelState } from './lib/chatModel.ts'
+import type { A2UIKnown } from './lib/a2ui.ts'
 import type {
   ChatRow,
   HitlQuestion,
@@ -66,6 +67,19 @@ export const chatModel: Writable<ChatModelState> = writable(NO_CHAT_MODEL)
 // Drawer: unified history of chats + tasks, plus the user-writable Files tree.
 export const chats: Writable<ChatRow[]> = writable([])
 export const tasks: Writable<Task[]> = writable([])
+// False until the active profile's first chats/tasks poll lands. The drawer shows a
+// loader instead of its empty state; a Card link waits rather than reading `[]` as gone.
+export const listsLoaded: Writable<boolean> = writable(false)
+
+// The Task and Chat ids a Card link resolves against (ADR 0008). Null until the
+// lists have loaded, so a link degrades on "gone", never on "not polled yet".
+export const knownThings: Readable<A2UIKnown> = derived(
+  [tasks, chats, listsLoaded],
+  ([$tasks, $chats, $loaded]) => ({
+    tasks: $loaded ? $tasks.map((task) => task.id) : null,
+    chats: $loaded ? $chats.map((chat) => chat.chat_id) : null,
+  }),
+)
 // The active drawer Tab ('chats' | 'tasks' | 'files') is not a store — it is the
 // `tab` field of the current route (see router.ts); read $route.tab.
 

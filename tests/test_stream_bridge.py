@@ -33,6 +33,13 @@ class _Stream:
         self.unsubbed = sid
 
 
+class _Catalog:
+    """Stands in for the profile's CardCatalog: this bridge draws no Card."""
+
+    def drawable(self):
+        return {}
+
+
 class _GW:
     def __init__(self, stream):
         self._stream = stream
@@ -40,6 +47,8 @@ class _GW:
 
     async def stream_for(self, sid):
         return self._stream
+
+    catalog = _Catalog()
 
     async def send_message(
         self,

@@ -17,7 +17,7 @@ from assistant.coding import config as cfgmod
 from assistant.coding import session as sessmod
 from assistant.coding.bridge_client import BridgeClient
 from assistant.coding.bridge_protocol import DEFAULT_PORT, encode_frame, read_frame
-from assistant.events import A2UISurface
+from assistant.events import A2UISurface, A2UISurfaceDataUpdated
 from tests.support.stubs import write_stub
 
 pytestmark = pytest.mark.asyncio
@@ -277,15 +277,17 @@ async def test_build_config_sets_connect_only_with_endpoint():
 
 
 def _ctx():
+    """A context, and the run's successive states — the opening surface's data
+    model and every later update to it."""
     stream = MemoryStream(id="s")
-    surfaces: list = []
+    states: list[dict] = []
 
     async def collect(event):
-        if isinstance(event, A2UISurface):
-            surfaces.append(event)
+        if isinstance(event, (A2UISurface, A2UISurfaceDataUpdated)):
+            states.append(event.data)
 
     stream.subscribe(collect)
-    return ConversationContext(stream=stream), surfaces
+    return ConversationContext(stream=stream), states
 
 
 class _PM:
@@ -305,7 +307,7 @@ async def test_session_uses_bridge_when_configured(tmp_path):
     work.mkdir()
     host_bin = _echo_adapter(tmp_path)
     srv, port = await _start(bridge_server.BridgeServer("", search_path=[host_bin]))
-    ctx, surfaces = _ctx()
+    ctx, states = _ctx()
     pm = _PM()
     calls: list = []
 
@@ -327,7 +329,7 @@ async def test_session_uses_bridge_when_configured(tmp_path):
     assert calls and calls[0]._connect is not None  # bridge connector wired onto the config
     assert pm.checked == [str(work)]
     assert "hello.txt" in out
-    assert surfaces and surfaces[-1].component["status"] == "done"
+    assert states and states[-1]["status"] == "done"
 
 
 async def test_session_bridge_unreachable_is_reported(tmp_path):

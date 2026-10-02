@@ -1,0 +1,76 @@
+name: WeatherPanel
+description: Use when the answer is the weather — the conditions at one place for
+  the day.
+
+topic: the weather
+fields:
+  location:
+    type: string
+    description: "The place the reading is for, e.g. 'Vienna, Austria'."
+  # The glyph's own vocabulary, mirrored here so a typo is caught rather than
+  # drawn as cloudy. The tool reads the primitive's copy, never this one.
+  condition:
+    type: string
+    description: The dominant condition.
+    enum: [sunny, partly-cloudy, cloudy, foggy, rainy, thunderstorm, snow, windy]
+  temperature:
+    type: string
+    description: "The temperature alone, short, e.g. '24°'."
+  summary:
+    type: string
+    description: "One honest line, e.g. 'Clear and mild all day.'"
+  rows:
+    type: array
+    description: One labelled reading each — temperature, wind, humidity, today's
+      range, rain.
+    items:
+      type: object
+      properties:
+        label: {type: string}
+        value: {type: string}
+      required: [label, value]
+      additionalProperties: false
+required: [location, condition, rows]
+
+layout:
+  - {id: root, component: Card, variant: feature, child: panel}
+  - {id: panel, component: Column, gap: lg, children: [masthead, rule_mast, glyph, deck, readings]}
+
+  - {id: masthead, component: Row, justify: between, align: end, gap: md, children: [mast_left, mast_condition]}
+  - {id: mast_left, component: Column, gap: none, grow: true, children: [kicker, place]}
+  - {id: kicker, component: Text, text: Weather, variant: eyebrow, tone: accent}
+  - {id: place, component: Text, text: {path: /location}, variant: h1}
+  # The condition is a word from the glyph's own vocabulary; the Card names what
+  # it prints for each, and the glyph draws the same word as artwork.
+  - id: mast_condition
+    component: Text
+    text: {path: /condition}
+    map:
+      sunny: Sunny
+      partly-cloudy: Partly cloudy
+      cloudy: Cloudy
+      foggy: Fog
+      rainy: Rain
+      thunderstorm: Storms
+      snow: Snow
+      windy: Wind
+    variant: caption
+    emphasis: strong
+  - {id: rule_mast, component: Divider, emphasis: strong}
+
+  - {id: glyph, component: WeatherGlyph, condition: {path: /condition}, temperature: {path: /temperature}, size: lg}
+  - {id: deck, component: Text, text: {path: /summary}, tone: muted}
+
+  - {id: readings, component: Row, gap: lg, children: {componentId: reading, path: /rows}}
+  - {id: reading, component: Metric, label: {path: ./label}, value: {path: ./value}, size: sm}
+
+example:
+  location: Vienna, Austria
+  condition: sunny
+  temperature: 24°
+  summary: 'Clear and mild, with a light north-westerly.'
+  rows:
+    - {label: Temperature, value: 24°C (feels 22°C)}
+    - {label: Wind, value: 12 km/h NW}
+    - {label: Humidity, value: 45%}
+    - {label: Today, value: High 26°C · Low 14°C}

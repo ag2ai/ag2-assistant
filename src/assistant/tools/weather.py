@@ -1,9 +1,7 @@
-"""Weather tool — one deterministic call for current weather + a short forecast,
-already mapped to the A2UI WeatherPanel `condition` enum.
+"""Weather tool — one deterministic call for current weather + a short forecast.
 
 Source: wttr.in (?format=j1), the same provider the bundled `weather` skill uses.
-The returned JSON drops straight into a WeatherPanel (location + condition + rows),
-so the agent does not have to guess the banner condition.
+The returned `condition` is one word from a fixed vocabulary (ADR 0037).
 """
 
 import json
@@ -15,7 +13,7 @@ from ag2 import tool
 from assistant.a2ui import WEATHER_CONDITIONS
 
 # wttr.in exposes World Weather Online (WWO) numeric weather codes in
-# current_condition[0].weatherCode. Map each to one WeatherPanel condition.
+# current_condition[0].weatherCode. Map each to one drawable condition.
 # Anything unmapped falls back to "cloudy". `windy` has no WWO code — it's derived
 # from wind speed below.
 _CODE_TO_CONDITION = {
@@ -65,7 +63,7 @@ _WINDY_KMPH = 38.0
 
 
 def condition_for(weather_code, windspeed_kmph=0.0) -> str:
-    """Map a WWO weather code (+ wind speed) to a WeatherPanel condition enum value.
+    """Map a WWO weather code (+ wind speed) to a condition the glyph can draw.
 
     Pure/deterministic — no network. Guaranteed to return a value in
     ``a2ui.WEATHER_CONDITIONS`` (default ``"cloudy"``).
@@ -146,9 +144,10 @@ def _rain_row(today: dict) -> dict | None:
 
 
 def build_result(data: dict, location: str, units: str = "celsius") -> dict:
-    """Turn a parsed wttr.in j2 payload into WeatherPanel-ready fields.
+    """Turn a parsed wttr.in j2 payload into the fields a weather Card is drawn from.
 
-    Pure/deterministic — no network. Returns ``{location, condition, summary, rows}``.
+    Pure/deterministic — no network. Returns
+    ``{location, condition, temperature, summary, rows}``.
     """
     metric = str(units).lower() != "fahrenheit"
     cc = (data.get("current_condition") or [{}])[0]
@@ -188,8 +187,15 @@ def build_result(data: dict, location: str, units: str = "celsius") -> dict:
     temp_txt = f"{temp}{t_unit}" if temp is not None else "?"
     summary = f"{label}: {desc}, {temp_txt}"
 
-    assert condition in WEATHER_CONDITIONS  # mapping can't drift from the schema
-    return {"location": label, "condition": condition, "summary": summary, "rows": rows}
+    assert condition in WEATHER_CONDITIONS  # mapping can't drift from the glyph
+    return {
+        "location": label,
+        "condition": condition,
+        # The temperature alone, for the glyph's own in-scene reading.
+        **({"temperature": f"{temp}°"} if temp is not None else {}),
+        "summary": summary,
+        "rows": rows,
+    }
 
 
 @tool
@@ -200,15 +206,16 @@ def get_weather(location: str, units: str = "celsius") -> str:
 
     This covers today at one place. Research anything beyond that (the days ahead,
     severe-weather warnings, marine, alpine, historical) the way you would any other
-    fact. The returned `condition` is already a WeatherPanel enum value and `rows` are
-    ready to render; `summary` is for your prose.
+    fact. `condition` is one of sunny, partly-cloudy, cloudy, foggy, rainy,
+    thunderstorm, snow or windy; `summary` is the whole reading in one line.
 
     Args:
         location: City, region, airport code, or "lat,lon".
         units: "celsius" (default) or "fahrenheit".
 
     Returns:
-        JSON string: {"location", "condition", "summary", "rows": [{"label","value"}, …]}.
+        JSON string: {"location", "condition", "temperature", "summary",
+        "rows": [{"label","value"}, …]}.
     """
     # j1 (not j2) — only j1 carries the 3-hourly slots that give rain chance and timing.
     url = f"https://wttr.in/{quote(location.strip())}?format=j1"

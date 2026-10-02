@@ -158,8 +158,8 @@ def build_agent_tools(
     if want("web"):
         tools.append(DuckDuckSearchTool(max_results=5))
         tools.append(web_fetch_tool)
-        tools.append(get_weather)  # deterministic weather → WeatherPanel, not a search spray
-        tools.append(get_quotes)  # deterministic global quotes → MarketBoard, not a search spray
+        tools.append(get_weather)  # deterministic weather, not a search spray
+        tools.append(get_quotes)  # deterministic global quotes, not a search spray
 
     if want("code"):
         use_docker = False

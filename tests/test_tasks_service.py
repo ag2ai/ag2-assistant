@@ -5,6 +5,7 @@ import asyncio
 import pytest
 
 from assistant.config import Config
+from assistant.gateway.schemas.task import InquiryListResponse
 from assistant.gateway.tasks_service import TaskService
 from assistant.hitl import InquiryStore
 from assistant.tasks.store import TaskStore
@@ -540,3 +541,10 @@ async def test_notifier_gets_channel_outcomes_only(paths, tmp_path):
     assert len(pushed) == 1
     platform, chat_id, text = pushed[0]
     assert platform == "telegram" and chat_id == "42" and "one-liner" in text
+
+
+async def test_a_chat_inquiry_lists_with_an_empty_task_id(paths, tmp_path):
+    svc = await _svc(paths, tmp_path, FakeGateway())
+    await InquiryStore(path=tmp_path / "inq.db").create("allow?", kind="permission", chat="c1")
+    pending = await svc.pending_inquiries()
+    assert InquiryListResponse(pending=pending).pending[0].task_id == ""

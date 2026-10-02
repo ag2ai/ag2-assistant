@@ -1,4 +1,7 @@
 import { nextItemId } from './ids.ts'
+import { fmtAgo, fmtClock, fmtDateTime } from './time.ts'
+import type { TimeValue } from './time.ts'
+import { safeUrl } from './url.ts'
 import type { ThreadItem } from '../schemas/events.ts'
 
 // An A2UI payload is an untyped dictionary — the catalog, not this module, gives
@@ -9,11 +12,10 @@ export type A2UIData = Record<string, unknown>
 type A2UIItem = Extract<ThreadItem, { kind: 'a2ui' }>
 
 // ── Catalog payloads ────────────────────────────────────────────────────────
-// Shapes declared by the backend catalog (assistant/a2ui.py assistant_catalog)
-// and, for CodingSession, by assistant/coding/surface.py. AG2 validates every
-// message against that catalog, so a schema `required` field is declared
-// non-optional here and the rest optional. `additionalProperties` is false, so
-// no field is declared that the catalog cannot send.
+// Shapes declared by the backend catalog (assistant/a2ui.py assistant_catalog).
+// AG2 validates every message against that catalog, so a schema `required` field
+// is declared non-optional here and the rest optional. `additionalProperties` is
+// false, so no field is declared that the catalog cannot send.
 
 // One node of a component tree. Fields the renderer reads directly are declared;
 // bindable ones stay `unknown` because they arrive either literal or as a
@@ -28,8 +30,11 @@ export type A2UIComponent = {
   enableDate?: boolean
   enableTime?: boolean
   steps?: number
-  children?: unknown[]
+  children?: unknown
   child?: unknown
+  when?: unknown
+  map?: unknown
+  format?: unknown
   options?: A2UIOption[]
   action?: { event?: { name?: string; context?: unknown } }
   _components?: A2UIComponent[]
@@ -37,84 +42,8 @@ export type A2UIComponent = {
 
 export type A2UIOption = { value?: unknown; label?: unknown }
 
-export type WeatherRow = { label: string; value: string }
-
-// Result row of a RestaurantFinder surface.
-export type PlaceResult = { name: string; detail: string; url?: string }
-
 // An action a Button component submits back to the agent.
 export type A2UIAction = { name: string; sourceComponentId?: string; context?: unknown }
-
-// `meta` is back-compat: old surfaces stored "Source · 2h ago" in one field.
-export type NewsStory = {
-  title: string
-  source: string
-  published?: string
-  category?: string
-  summary?: string
-  why?: string
-  image?: string
-  url?: string
-  meta?: string
-  detail?: string
-  text?: string
-}
-
-export type MarketQuote = {
-  symbol: string
-  name: string
-  price: number
-  changePercent: number
-  change?: number
-  currency?: string
-  exchange?: string
-  dayLow?: number
-  dayHigh?: number
-  spark?: number[]
-  state?: string
-  note?: string
-}
-
-export type DecisionOption = { name: string; tagline?: string; price?: string }
-export type DecisionCriterion = { label: string; values: string[]; best?: string }
-
-export type InboxThread = {
-  from: string
-  subject: string
-  when?: string
-  gist?: string
-  unread?: boolean
-  needsReply?: boolean
-  url?: string
-}
-
-export type AgendaEvent = {
-  title: string
-  start?: string
-  end?: string
-  location?: string
-  allDay?: boolean
-  next?: boolean
-  url?: string
-  joinUrl?: string
-}
-
-export type TaskDeliverable = { description: string; status: string }
-export type TaskRow = {
-  title: string
-  status: string
-  id?: string
-  schedule?: string
-  nextRun?: string
-  objective?: string
-  progress?: string
-  deliverables?: TaskDeliverable[]
-  error?: string
-}
-
-// CodingSession is synthesized by the backend, not authored by the model.
-export type CodingPlanStep = { content: string; status: string }
-export type CodingFile = { path: string; status: string; hunks: string; added: number; removed: number }
 
 const isRecord = (v: unknown): v is A2UIData => !!v && typeof v === 'object' && !Array.isArray(v)
 
@@ -129,20 +58,265 @@ function pointerParts(path: unknown): string[] {
     .map((part) => part.replace(/~1/g, '/').replace(/~0/g, '~'))
 }
 
+// A scope is the pointer to the item a repeated row is drawing — '' outside any
+// repetition. A path opening with `.` is relative to it; anything else is absolute.
+function scoped(path: string, scope: string): string {
+  if (!path.startsWith('.')) return path
+  const rest = path.replace(/^\.\/?/, '')
+  return rest ? `${scope}/${rest}` : scope
+}
+
 // Resolve the literal-or-JSON-Pointer values used by the Basic Catalog.
-export function a2uiValue(value: unknown, data: A2UIData = {}): unknown {
+export function a2uiValue(value: unknown, data: A2UIData = {}, scope = ''): unknown {
   const ref = value as { path?: unknown } | null
   if (!value || typeof value !== 'object' || Array.isArray(value) || typeof ref?.path !== 'string') {
     return value
   }
   // Indexed through a record view: a pointer may also walk arrays and strings.
-  return pointerParts(ref.path).reduce<unknown>(
+  return pointerParts(scoped(ref.path, scope)).reduce<unknown>(
     (current, part) => (current == null ? undefined : (current as A2UIData)[part]),
     data,
   )
 }
 
+// One child a layout draws: the component to render and the data scope it draws in.
+export type A2UIChildSlot = { id: string; scope: string }
+
+// The children of a Column, Row or List: an explicit array of ids draws each once,
+// a `{componentId, path}` template draws one id per item of the bound array.
+export function childSlots(children: unknown, data: A2UIData = {}, scope = ''): A2UIChildSlot[] {
+  if (Array.isArray(children)) {
+    return children.filter((id): id is string => typeof id === 'string').map((id) => ({ id, scope }))
+  }
+  if (!isRecord(children)) return []
+  const { componentId, path } = children as { componentId?: unknown; path?: unknown }
+  if (typeof componentId !== 'string' || typeof path !== 'string') return []
+  return axisScopes({ path }, data, scope)
+    .map((item) => ({ id: componentId, scope: item }))
+    .slice(templateStart(children))
+}
+
+/** The scopes one axis of a Table draws in: the pointer to each item of the array
+ *  the axis is bound to. Bound to nothing, or to something that is not an array,
+ *  an axis has no items and draws no column, row or cell. */
+export function axisScopes(binding: unknown, data: A2UIData = {}, scope = ''): string[] {
+  const base = bindingPath(binding, scope)
+  const items = a2uiValue(binding, data, scope)
+  if (!base || !Array.isArray(items)) return []
+  return items.map((_, index) => `${base}/${index}`)
+}
+
+/** The column a Table marks: the one whose `key` carries the value `target` names,
+ *  or -1 when nothing names it — a row with no clear winner marks no cell. */
+export function markedColumn(
+  key: unknown,
+  target: unknown,
+  data: A2UIData = {},
+  columns: readonly string[] = [],
+  scope = '',
+): number {
+  const wanted = a2uiValue(target, data, scope)
+  if (wanted == null || wanted === '' || !isRecord(key)) return -1
+  return columns.findIndex((column) => a2uiValue(key, data, column) === wanted)
+}
+
+/** How many items of the bound array a repeated template skips — so a layout that
+ *  drew the lead on its own neither redraws it nor numbers the rest from one. */
+export function templateStart(children: unknown): number {
+  if (!isRecord(children)) return 0
+  return Math.max(0, Math.trunc(Number((children as { start?: unknown }).start) || 0))
+}
+
+// ── The styling vocabulary (ADR 0037) ───────────────────────────────────────
+// A Card names a tone, a format or a label; the renderer resolves the name.
+
+export type A2UITone = 'neutral' | 'muted' | 'accent' | 'positive' | 'negative'
+
+const TONES: readonly string[] = ['neutral', 'muted', 'accent', 'positive', 'negative']
+
+// A bound value put through the Card's own table of value → name. A value the
+// table does not name is left as it is.
+function named(raw: unknown, map: unknown): unknown {
+  const label = isRecord(map) ? map[String(raw)] : undefined
+  return label === undefined ? raw : label
+}
+
+/** The tone a component is drawn in: a word from the vocabulary, or a binding —
+ *  a bound number takes its tone from its sign, and a bound word carrying a `map`
+ *  takes the tone that table names for it. */
+export function a2uiTone(tone: unknown, data: A2UIData = {}, scope = ''): A2UITone {
+  const bound = a2uiValue(tone, data, scope)
+  const value = isRecord(tone) ? named(bound, tone.map) : bound
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value > 0 ? 'positive' : value < 0 ? 'negative' : 'neutral'
+  }
+  const word = str(value)
+  return TONES.includes(word) ? (word as A2UITone) : 'neutral'
+}
+
+/** Whether a component conditional on its data is drawn. Absent, empty, `false`
+ *  and an empty array are nothing to draw for; zero is a value like any other.
+ *  A list of conditions is drawn for when any one of them is there. */
+export function a2uiPresent(when: unknown, data: A2UIData = {}, scope = ''): boolean {
+  if (when === undefined) return true
+  if (Array.isArray(when)) return when.some((one) => a2uiPresent(one, data, scope))
+  const value = a2uiValue(when, data, scope)
+  if (value == null || value === '' || value === false) return false
+  return !Array.isArray(value) || value.length > 0
+}
+
+// A timestamp is written the way the rest of the app writes one.
+const FORMATS: Record<string, (v: TimeValue) => string> = {
+  time: fmtClock,
+  ago: fmtAgo,
+  datetime: fmtDateTime,
+}
+
+/** One Text's printed string: its bound value, put through the Card's own label
+ *  map or its time format. Nothing bound prints nothing. */
+export function a2uiText(component: A2UIComponent, data: A2UIData = {}, scope = ''): string {
+  const raw = a2uiValue(component.text, data, scope)
+  const format = FORMATS[str(component.format)]
+  if (format) return format(raw as TimeValue)
+  const value = named(raw, component.map)
+  return value == null || value === '' ? '' : String(value)
+}
+
+/** One Icon's glyph name: its bound value, put through the Card's own map — so a
+ *  row's status field can pick the mark that stands for it. */
+export function a2uiIconName(component: A2UIComponent, data: A2UIData = {}, scope = ''): string {
+  return str(named(a2uiValue(component.name, data, scope), component.map))
+}
+
+// ── Card links (ADR 0008) ───────────────────────────────────────────────────
+// A Card names one of the app's own things, or an external page; the shell opens it.
+
+export type A2UILinkKind = 'task' | 'chat' | 'file' | 'folder' | 'url'
+export type A2UILink = { kind: A2UILinkKind; value: string }
+
+// The Task and Chat ids the shell has listed; null for a list it has not polled yet.
+export type A2UIKnown = { tasks: readonly string[] | null; chats: readonly string[] | null }
+
+// The order a Link's targets are read in; the first one it names is the one it opens.
+const LINK_KINDS: readonly A2UILinkKind[] = ['task', 'chat', 'file', 'folder', 'url']
+
+// Whether a named id is gone: a list the shell holds and this is not in it.
+const missing = (known: readonly string[] | null, id: string): boolean =>
+  known !== null && !known.includes(id)
+
+/** The thing one Link points at, or null when it points at nothing that is there —
+ *  a deleted Task, a Chat that is gone, a scheme we will not follow. */
+export function a2uiLink(
+  component: A2UIComponent,
+  data: A2UIData = {},
+  scope = '',
+  known: A2UIKnown = { tasks: null, chats: null },
+): A2UILink | null {
+  for (const kind of LINK_KINDS) {
+    const value = str(a2uiValue(component[kind], data, scope))
+    if (!value) continue
+    if (kind === 'task') return missing(known.tasks, value) ? null : { kind, value }
+    if (kind === 'chat') return missing(known.chats, value) ? null : { kind, value }
+    if (kind === 'url') {
+      const safe = safeUrl(value)
+      return safe ? { kind, value: safe } : null
+    }
+    // A path is taken as given: the Files rail reports a file that has gone itself.
+    return { kind, value }
+  }
+  return null
+}
+
+// ── The diff primitive ──────────────────────────────────────────────────────
+
+export type A2UIDiffKind = 'meta' | 'hunk' | 'add' | 'del' | 'ctx'
+export type A2UIDiffLine = { text: string; kind: A2UIDiffKind }
+
+/** One file's unified diff as typed lines, so an added row and a removed one are
+ *  told apart by the diff itself rather than by anything a Card writes. Nothing
+ *  to draw is no diff at all. */
+export function diffLines(hunks: unknown): A2UIDiffLine[] {
+  const text = str(hunks)
+  if (!text) return []
+  return text
+    .split('\n')
+    // A diff ends with a newline; that closing break is not a further line.
+    .filter((line, index, all) => !(line === '' && index === all.length - 1))
+    .map((line) => {
+      const first = line[0]
+      const kind: A2UIDiffKind =
+        line.startsWith('+++') || line.startsWith('---') ? 'meta'
+        : first === '@' ? 'hunk'
+        : first === '+' ? 'add'
+        : first === '-' ? 'del'
+        : 'ctx'
+      // A blank context row still occupies its line.
+      return { text: line || ' ', kind }
+    })
+}
+
+export type A2UISpark = { line: string; area: string; endX: string; endY: string }
+
+/** A normalised 0..100 series as an SVG line, its filled area, and the end point,
+ *  inset by `pad` within a w×h box. Fewer than two points draw nothing. */
+export function sparkPath(values: unknown, w: number, h: number, pad = 3): A2UISpark | null {
+  const points = (Array.isArray(values) ? values : []).map(Number).filter(Number.isFinite)
+  if (points.length < 2) return null
+  const x = (i: number) => pad + (i / (points.length - 1)) * (w - pad * 2)
+  const y = (v: number) => pad + (1 - Math.max(0, Math.min(100, v)) / 100) * (h - pad * 2)
+  const drawn = points.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`)
+  const line = `M${drawn.join(' L')}`
+  return {
+    line,
+    area: `${line} L${x(points.length - 1).toFixed(1)},${(h - pad).toFixed(1)} L${x(0).toFixed(1)},${(h - pad).toFixed(1)} Z`,
+    endX: x(points.length - 1).toFixed(1),
+    endY: y(points[points.length - 1]).toFixed(1),
+  }
+}
+
+export type A2UIMetric = { value: string; unit: string; delta: string; arrow: string }
+
+// Numbers a Metric prints: grouped, two decimals, so a column of them lines up.
+const decimal = (n: number) =>
+  n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+const signed = (n: number) => `${n > 0 ? '+' : ''}${decimal(n)}`
+
+const finiteNumber = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isFinite(value) ? value : null
+
+/** One Metric's printable parts: its value, its unit, and its movement written
+ *  as a signed absolute change, a signed percent, or both. */
+export function metricParts(
+  component: A2UIComponent,
+  data: A2UIData = {},
+  scope = '',
+): A2UIMetric {
+  const raw = a2uiValue(component.value, data, scope)
+  const change = finiteNumber(a2uiValue(component.delta, data, scope))
+  const percent = finiteNumber(a2uiValue(component.deltaPercent, data, scope))
+  const moved = percent ?? change
+  const parts = [
+    change == null ? '' : signed(change),
+    percent == null ? '' : `${signed(percent)}%`,
+  ].filter(Boolean)
+  return {
+    value: typeof raw === 'number' ? decimal(raw) : str(raw),
+    unit: str(a2uiValue(component.unit, data, scope)),
+    delta: parts.length === 2 ? `${parts[0]} (${parts[1]})` : parts[0] || '',
+    arrow: moved == null || moved === 0 ? '' : moved > 0 ? '▲' : '▼',
+  }
+}
+
+// The key `part` names in `container`; null when it names nothing writable — an
+// array answers only to an index it already holds. Mirrors a2ui.py's `_key_for`.
+function writableKey(container: unknown, part: string): string | null {
+  if (!Array.isArray(container)) return part
+  return /^\d+$/.test(part) && Number(part) < container.length ? part : null
+}
+
 // Apply a client-side input update without mutating the durable surface payload.
+// A bound array is cloned as an array, so a repeated row writes to its own item.
 export function withA2UIValue(data: A2UIData = {}, path: unknown, value: unknown): A2UIData {
   const parts = pointerParts(path)
   if (!parts.length) return isRecord(value) || Array.isArray(value) ? { ...(value as A2UIData) } : { value }
@@ -150,13 +324,17 @@ export function withA2UIValue(data: A2UIData = {}, path: unknown, value: unknown
   let target: A2UIData = next
   let source: unknown = data
   for (const part of parts.slice(0, -1)) {
+    const key = writableKey(target, part)
+    if (key === null) return next
     const child = source == null ? undefined : (source as A2UIData)[part]
-    const branch: A2UIData = isRecord(child) ? { ...child } : {}
-    target[part] = branch
-    target = branch
+    const branch = Array.isArray(child) ? [...child] : isRecord(child) ? { ...child } : {}
+    target[key] = branch
+    target = branch as A2UIData
     source = child
   }
-  target[parts.at(-1) ?? ''] = value
+  const last = writableKey(target, parts.at(-1) ?? '')
+  if (last === null) return next
+  target[last] = value
   return next
 }
 
@@ -273,35 +451,20 @@ export function a2uiComposingSurfaceId(text: string | null | undefined): string 
   return match?.[1] || null
 }
 
-function componentKind(component: A2UIData = {}): unknown {
-  return component.component || 'AnswerBrief'
-}
+// What an untitled surface is called.
+export const SURFACE_TITLE = 'Interactive view'
 
-// A title lifted from the data model, falling back when it isn't usable text.
-const titleOr = (v: unknown, fallback: string): string => (typeof v === 'string' && v ? v : fallback)
-
-function itemTitle(kind: unknown, data: A2UIData = {}): string {
-  const k = String(kind || '').toLowerCase()
-  if (k === 'weatherpanel') return 'Weather view'
-  if (k === 'decisionmatrix') return titleOr(data.topic, 'Decision')
-  if (k === 'taskprogress') return titleOr(data.title, 'Task status')
-  if (k === 'agendacard') return titleOr(data.title, 'Agenda')
-  if (k === 'inboxbrief') return titleOr(data.title, 'Inbox brief')
-  if (k === 'newsdigest') return 'News digest'
-  if (k === 'restaurantfinder') return 'Open places'
-  if (k === 'taskplan') return 'Task setup'
-  if (k === 'checklist') return titleOr(data.title, 'Checklist')
-  if (['column', 'row', 'list', 'card', 'text'].includes(k)) return 'Interactive view'
-  return 'Structured answer'
+// A surface is named by its own data model — whatever it draws, and whichever Card
+// file the server drew it from.
+function itemTitle(data: A2UIData = {}): string {
+  return typeof data.title === 'string' && data.title ? data.title : SURFACE_TITLE
 }
 
 function dataFromComponent(component: A2UIData = {}, existing: A2UIData = {}): A2UIData {
-  const kind = componentKind(component)
   const data: A2UIData = { ...existing }
   for (const [key, value] of Object.entries(component)) {
     if (!['id', 'component', 'accessibility', '_components'].includes(key)) data[key] = value
   }
-  if (!data.sections && String(kind).toLowerCase() === 'answerbrief') data.sections = []
   return data
 }
 
@@ -319,7 +482,7 @@ function ensureSurface(
       version: version || 'v1.0',
       catalogId: catalogId || BETA_CATALOG_ID,
       surfaceId,
-      title: 'Interactive view',
+      title: SURFACE_TITLE,
       intent: '',
       component: {},
       data: {},
@@ -348,7 +511,7 @@ export function applyA2UIMessage(items: ThreadItem[], message: unknown): A2UIIte
     const root = asComponent(found)
     item.component = root
     item.data = dataFromComponent(root, item.data)
-    item.title = itemTitle(componentKind(root), item.data)
+    item.title = itemTitle(item.data)
     record(item).push(message)
     return item
   }
@@ -357,7 +520,9 @@ export function applyA2UIMessage(items: ThreadItem[], message: unknown): A2UIIte
     const item = ensureSurface(items, str(u.surfaceId) || nextSurfaceId(), undefined, version)
     const path = str(u.path)
     if (!path || path === '/') item.data = isRecord(u.value) ? u.value : { value: u.value }
-    else item.data[path.replace(/^\//, '')] = u.value
+    else item.data = withA2UIValue(item.data, path, u.value)
+    // A surface titled by its data model is retitled when that data arrives.
+    item.title = itemTitle(item.data)
     record(item).push(message)
     return item
   }
@@ -383,9 +548,19 @@ export function rows<T>(value: unknown): T[] {
 export const asComponent = (value: unknown): A2UIComponent => (isRecord(value) ? (value as A2UIComponent) : {})
 export const asComponents = (value: unknown): A2UIComponent[] => rows<A2UIComponent>(value)
 
-// The data-model path a bindable field points at; '' when it holds a literal.
-export const bindingPath = (value: unknown): string =>
-  isRecord(value) && typeof value.path === 'string' ? value.path : ''
+// The context a Button submits: every binding resolved in the scope it was drawn
+// in, so a button in a repeated row carries its own item.
+export function actionContext(value: unknown, data: A2UIData = {}, scope = ''): unknown {
+  if (Array.isArray(value)) return value.map((item) => actionContext(item, data, scope))
+  if (!isRecord(value)) return value
+  if (typeof value.path === 'string' && Object.keys(value).length === 1) return a2uiValue(value, data, scope)
+  return Object.fromEntries(Object.entries(value).map(([k, item]) => [k, actionContext(item, data, scope)]))
+}
+
+// The data-model path a bindable field writes to, resolved against the scope it was
+// drawn in; '' when it holds a literal.
+export const bindingPath = (value: unknown, scope = ''): string =>
+  isRecord(value) && typeof value.path === 'string' ? scoped(value.path, scope) : ''
 
 // The surface's message log. A surface first created by an A2UISurface event has
 // none, and pushing into it used to throw.

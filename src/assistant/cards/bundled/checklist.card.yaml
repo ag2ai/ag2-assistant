@@ -1,0 +1,30 @@
+name: Checklist
+description: Use when the answer is multi-step operational work — a short sequence of
+  actions to carry out, in order.
+
+topic: a checklist of steps to carry out
+fields:
+  title:
+    type: string
+  items:
+    type: array
+    items:
+      type: string
+    description: One short imperative step per entry.
+required: [title, items]
+
+layout:
+  - {id: root, component: Card, child: body}
+  - {id: body, component: Column, children: [heading, steps]}
+  - {id: heading, component: Text, text: {path: /title}, variant: h4}
+  - {id: steps, component: List, children: {componentId: step, path: /items}}
+  - {id: step, component: Row, children: [step_mark, step_text], align: center}
+  - {id: step_mark, component: Icon, name: check}
+  - {id: step_text, component: Text, text: {path: .}}
+
+example:
+  title: Ship the release
+  items:
+    - Tag the release and push it
+    - Run the migration on staging
+    - Smoke-test the health endpoint

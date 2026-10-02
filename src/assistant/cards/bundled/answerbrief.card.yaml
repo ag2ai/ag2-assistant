@@ -1,0 +1,25 @@
+name: AnswerBrief
+description: Use when the answer is a structured brief — a research summary, a
+  recommendation or a set of tradeoffs — with no competing options to compare.
+
+topic: a research summary or a recommendation
+fields:
+  topic:
+    type: string
+    description: What the brief is about, in one line.
+  sections:
+    type: array
+    items:
+      type: string
+    description: One short label per part of the answer, e.g. 'Startup time'.
+required: [topic, sections]
+
+layout:
+  - {id: root, component: Column, children: [topic, sections]}
+  - {id: topic, component: Text, text: {path: /topic}, variant: h4}
+  - {id: sections, component: Row, gap: sm, when: {path: /sections}, children: {componentId: section, path: /sections}}
+  - {id: section, component: Text, text: {path: .}, variant: pill, tone: muted}
+
+example:
+  topic: Rust vs Go for a small CLI
+  sections: [Startup time, Binary size, Ecosystem, Learning curve]

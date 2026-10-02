@@ -1385,6 +1385,25 @@ def test_llm_config_probe_carries_host_bridge(profile_app_factory):
     assert seen["config"].acp_bridge_token == "shared-secret"
 
 
+def test_llm_config_test_uses_shared_key_from_secret_env(profile_app_factory):
+    """A shared-key config's /test sends the install's shared key, both for a
+    draft and for a saved config, exactly as a chat turn would."""
+    probe = LlmProbe()
+    client, _pid = profile_app_factory(llm_probe=probe, env={"OPENAI_API_KEY": "sk-shared-9"})
+    draft = {"name": "x", "type": "openai_responses", "model": "gpt-5.6-luna"}
+
+    r = client.post("/api/llm-configs/test", json=draft)
+    assert r.status_code == 200, r.json()
+    assert probe.captured["config"].api_key == "sk-shared-9"
+
+    entry = client.post("/api/llm-configs", json=draft).json()["config"]
+    assert entry["key_source"] == "shared"
+    probe.captured.clear()
+    r = client.post(f"/api/llm-configs/{entry['id']}/test")
+    assert r.status_code == 200, r.json()
+    assert probe.captured["config"].api_key == "sk-shared-9"
+
+
 def test_llm_config_subscription_entry_view_signed_in(profile_app, paths):
     """An openai_subscription config's row/chip need the live ChatGPT sign-in state and
     a 'subscription' key_source so the UI can label it honestly without a 2nd fetch.

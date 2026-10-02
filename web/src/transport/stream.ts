@@ -5,6 +5,7 @@
 import { api as P, onProfileGone } from '../lib/profile.ts'
 import {
   ServerFrame,
+  type A2UISurfaceState,
   type AttachmentPayload,
   type ClientFrame,
   type ErrorFrame,
@@ -117,6 +118,10 @@ export class StreamClient {
   answer(id: string, answer: string): void { this._send({ type: 'answer', id, answer }) }
   feedback(payload: Record<string, unknown>): void { this._send({ type: 'feedback', ...payload }) }
   clearFeedback(payload: Record<string, unknown>): void { this._send({ type: 'feedback_clear', ...payload }) }
-  a2ui(message: unknown): void { this._send({ type: 'a2ui', message }) }
+  // `state` is the clicked instance's data model; omitted, the server leaves the
+  // instance's stored model exactly as it is.
+  a2ui(message: unknown, state?: A2UISurfaceState): void {
+    this._send(state ? { type: 'a2ui', message, state } : { type: 'a2ui', message })
+  }
   close(): void { this._closed = true; try { this.ws?.close() } catch {} }
 }

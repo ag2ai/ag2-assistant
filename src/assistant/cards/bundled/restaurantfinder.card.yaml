@@ -1,0 +1,53 @@
+name: RestaurantFinder
+description: Use when the answer is places to go — restaurants, cafes, bars, open now,
+  lunch or dinner — as a search with its active filters and its results.
+
+topic: places to eat or drink
+fields:
+  query:
+    type: string
+    description: What was searched for, e.g. 'Ramen near Neubau'.
+  filters:
+    type: array
+    items:
+      type: string
+    description: One short label per active filter, e.g. 'Open now'.
+  results:
+    type: array
+    items:
+      type: object
+      properties:
+        name: {type: string}
+        detail:
+          type: string
+          description: One line — cuisine, rating, distance, hours.
+        url: {type: string}
+      required: [name, detail]
+      additionalProperties: false
+required: [query, filters, results]
+
+layout:
+  - {id: root, component: Column, children: [query, filters, results]}
+  - {id: query, component: Text, text: {path: /query}, variant: h4}
+
+  - {id: filters, component: Row, gap: sm, when: {path: /filters}, children: {componentId: filter, path: /filters}}
+  - {id: filter, component: Text, text: {path: .}, variant: pill, tone: muted}
+
+  - {id: results, component: List, when: {path: /results}, children: {componentId: result, path: /results}}
+  - {id: result, component: Card, child: result_row}
+  - {id: result_row, component: Row, gap: sm, align: start, children: [result_mark, result_text]}
+  - {id: result_mark, component: Icon, name: search, size: sm}
+  - {id: result_text, component: Column, gap: none, grow: true, children: [result_link, result_detail]}
+  - {id: result_link, component: Link, url: {path: ./url}, child: result_name}
+  - {id: result_name, component: Text, text: {path: ./name}, emphasis: strong}
+  - {id: result_detail, component: Text, text: {path: ./detail}, variant: caption, tone: muted}
+
+example:
+  query: Ramen near Neubau
+  filters: [Open now, Walkable]
+  results:
+    - name: Mochi Ramen
+      detail: Japanese · 4.6 · 5 min walk · open until 23:00
+      url: https://maps.google.com/?cid=123
+    - name: Yohm
+      detail: Asian · 4.4 · 9 min walk · open until 22:30

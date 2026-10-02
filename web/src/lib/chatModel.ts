@@ -83,3 +83,14 @@ export function switcherSelection(
   const chosen = state.pending === null ? state.override : state.pending
   return { activeId: chosen || state.effective || null, inherited: !chosen }
 }
+
+/** The config the thread header names: the open Chat's own model, as the switcher shows
+ *  it, or the install-wide Active for any other thread. */
+export function headerModelId(
+  state: ChatModelState,
+  threadId: string | null,
+  activeId: string | null,
+): string | null {
+  if (!threadId || state.chatId !== threadId) return activeId
+  return switcherSelection(state).activeId ?? activeId
+}

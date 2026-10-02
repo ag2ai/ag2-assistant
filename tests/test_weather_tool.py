@@ -75,6 +75,8 @@ def test_build_result_celsius_shape_and_enum():
     assert r["condition"] == "rainy"
     assert r["condition"] in WEATHER_CONDITIONS
     assert r["location"] == "London, United Kingdom"
+    # The glyph reads the temperature on its own, beside the labelled rows.
+    assert r["temperature"] == "12°"
     labels = {row["label"]: row["value"] for row in r["rows"]}
     assert labels["Temperature"] == "12°C (feels 10°C)"
     assert labels["Conditions"] == "Light rain"
@@ -85,6 +87,7 @@ def test_build_result_celsius_shape_and_enum():
 
 def test_build_result_fahrenheit():
     r = build_result(_payload(113, "Sunny"), "Phoenix", "fahrenheit")
+    assert r["temperature"] == "54°"
     labels = {row["label"]: row["value"] for row in r["rows"]}
     assert labels["Temperature"] == "54°F (feels 50°F)"
     assert labels["Wind"] == "15 mph"
@@ -126,3 +129,12 @@ def test_rain_row_splits_non_adjacent_windows():
     p = _payload(296, "Light rain")
     p["weather"][0]["hourly"] = _hourly(("0", 60, 0.5), ("900", 10, 0.0), ("1800", 80, 1.0))
     assert _labels(p)["Rain"] == "80% peak · 12am–3am, 6pm–9pm · ~1.5mm"
+
+
+def test_a_reading_with_no_temperature_carries_none():
+    payload = _payload(113, "Sunny")
+    payload["current_condition"][0].pop("temp_C")
+    payload["current_condition"][0].pop("temp_F")
+
+    # A field the tool cannot fill is left out, not filled with an empty string.
+    assert "temperature" not in build_result(payload, "Nowhere", "celsius")

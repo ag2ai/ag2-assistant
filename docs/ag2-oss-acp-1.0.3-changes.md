@@ -53,7 +53,7 @@ Fix in a patch release, whichever is quicker:
 
 `AgentExecutor._dispatch` hard-wires human-input rejection — `executor.py:283`:
 
-```python
+```
 hitl_hook=_reject_human_input,
 ```
 
@@ -125,7 +125,8 @@ protocol:
 ```python
 class AuthProvider(Protocol):
     ...
-    async def is_authenticated(self) -> bool: ...   # optional; absent = today's behavior
+
+    async def is_authenticated(self) -> bool: ...  # optional; absent = today's behavior
 ```
 
 And in `ACPAgent`:

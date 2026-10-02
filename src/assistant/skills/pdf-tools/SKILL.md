@@ -25,16 +25,20 @@ back to `pdfplumber` for tables. Install on first use if missing
 - **Extract text:**
   ```python
   from pypdf import PdfReader
+
   r = PdfReader("in.pdf")
   print("\n".join(page.extract_text() or "" for page in r.pages))
   ```
 - **Split / select pages:**
   ```python
   from pypdf import PdfReader, PdfWriter
-  r = PdfReader("in.pdf"); w = PdfWriter()
-  for i in (0, 1, 2):      # first three pages
+
+  r = PdfReader("in.pdf")
+  w = PdfWriter()
+  for i in (0, 1, 2):  # first three pages
       w.add_page(r.pages[i])
-  with open("out.pdf", "wb") as f: w.write(f)
+  with open("out.pdf", "wb") as f:
+      w.write(f)
   ```
 - **Merge:** add pages from several `PdfReader`s into one `PdfWriter`.
 - **Tables:** `pdfplumber` → `page.extract_tables()` is more reliable than plain

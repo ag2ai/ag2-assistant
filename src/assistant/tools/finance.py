@@ -1,5 +1,5 @@
 """Finance/markets tool — one deterministic call for live quotes across global
-exchanges, shaped for the A2UI MarketBoard.
+exchanges.
 
 Source: Yahoo Finance v8 chart (keyless). Covers US/AU/Europe/Asia/CN equities
 and indices plus crypto under one symbol scheme, e.g. AAPL, BHP.AX, 7203.T,
@@ -7,8 +7,8 @@ VOD.L, ^AXJO, ^FTSE, ^GDAXI, ^N225, ^HSI, 000001.SS, BTC-USD. The agent passes
 the symbols it wants; a plain name (or a slightly-off ticker) falls back to
 Yahoo's search endpoint, so "ASX 200" or "Toyota" still resolve.
 
-The returned JSON drops straight into a MarketBoard (title + quotes), so the
-agent does not have to guess prices. The FIRST quote is the lead/featured.
+The quotes come back as JSON, in the order asked for, so the agent does not have
+to guess prices.
 """
 
 import json
@@ -70,7 +70,7 @@ def market_state(meta: dict) -> str:
 
 
 def quote_from_meta(meta: dict, closes) -> dict:
-    """Turn Yahoo chart ``meta`` (+ intraday closes) into one MarketBoard quote.
+    """Turn Yahoo chart ``meta`` (+ intraday closes) into one quote.
 
     Pure/deterministic. Price/change/percent are numbers; optional day range,
     normalised spark, and trading state are added only when known.
@@ -108,7 +108,7 @@ def quote_from_meta(meta: dict, closes) -> dict:
 
 
 def build_board(results: list[tuple[dict, list]], title: str = "") -> dict:
-    """Assemble MarketBoard-ready fields from per-symbol (meta, closes) pairs.
+    """Assemble the result from per-symbol (meta, closes) pairs.
 
     Pure/deterministic. Board-level ``currency`` and ``status`` are set ONLY when
     every quote agrees (a mixed-exchange board honestly shows neither); ``asOf``
@@ -190,12 +190,11 @@ def get_quotes(symbols: str, title: str = "") -> str:
     BTC-USD). Plain names ("ASX 200", "Toyota") are resolved via search if a symbol
     misses.
 
-    Render the result as a MarketBoard from `title` + `quotes`; the FIRST quote is
-    the lead/featured instrument. Use the prices for your short prose.
+    The quotes come back in the order the symbols were given.
 
     Args:
         symbols: Comma-separated symbols or names, most important first.
-        title: Optional board heading, e.g. "Technology", "Asian Markets", "Watchlist".
+        title: Optional heading for the set, e.g. "Technology", "Asian Markets", "Watchlist".
 
     Returns:
         JSON string: {"title","source","currency"?,"status"?,"asOf"?,

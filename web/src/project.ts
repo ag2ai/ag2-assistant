@@ -176,6 +176,27 @@ export function foldEvent(items: ThreadItem[], wire: Wire): ThreadItem[] {
   return items
 }
 
+// The items of the turn in flight: everything after its last user message.
+function currentTurn(items: ThreadItem[]): ThreadItem[] {
+  let start = items.length
+  while (start > 0 && items[start - 1].kind !== 'user') start--
+  return items.slice(start)
+}
+
+function turnDrewSurface(items: ThreadItem[]): boolean {
+  return currentTurn(items).some((it) => it.kind === 'a2ui')
+}
+
+// A surface arriving after the turn's empty reply is its answer: drop the placeholder.
+function silenceNoReply(items: ThreadItem[]): void {
+  for (const it of currentTurn(items)) {
+    if (it.kind === 'agent' && it.empty) {
+      it.text = ''
+      it.empty = false
+    }
+  }
+}
+
 // The item kinds a 👍/👎 can land on (FeedbackGiven / FeedbackCleared).
 type RatableItem = ItemOf<'agent' | 'genimage' | 'deliverable'>
 
@@ -236,16 +257,16 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
           items.push({ id: nid(), kind: 'agent', text: msg })
         }
       } else if (!calls.length) {
-        // Final response with neither text nor tool calls → the turn ended without
-        // a reply. Render a placeholder so the thread doesn't hang on "…" forever
-        // (isBusy needs a finalized agent item to clear). Intermediate tool-calling
-        // responses (calls.length > 0) are skipped — the turn isn't over.
+        // A final response with no text ends the turn: a finalized agent item clears
+        // isBusy, saying "(no reply)" unless the turn answered with a surface.
+        const drew = turnDrewSurface(items)
+        const text = drew ? '' : '_(no reply)_'
         if (streaming) {
-          streaming.text = '_(no reply)_'
+          streaming.text = text
           streaming.streaming = false
-          streaming.empty = true
+          streaming.empty = !drew
         } else {
-          items.push({ id: nid(), kind: 'agent', text: '_(no reply)_', empty: true })
+          items.push({ id: nid(), kind: 'agent', text, empty: !drew })
         }
       }
       break
@@ -323,9 +344,15 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
       item.catalogId = d.catalog_id
       item.title = d.title
       item.intent = d.intent
-      item.component = asComponent(d.component)
-      item.components = asComponents(Array.isArray(nested) ? nested : d.components)
+      const root = asComponent(d.component)
+      const tree = asComponents(Array.isArray(nested) ? nested : d.components)
+      // A later record carrying data alone leaves the tree it was drawn with standing.
+      if (root.component || tree.length) {
+        item.component = root
+        item.components = tree
+      }
       item.data = d.data ?? {}
+      silenceNoReply(items)
       break
     }
     case 'A2UISurfaceDataUpdated': {
@@ -347,7 +374,7 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
     }
     case 'A2UIMessageEvent': {
       const d = EventData.A2UIMessageEvent.parse(data)
-      applyA2UIMessage(items, d.message)
+      if (applyA2UIMessage(items, d.message)) silenceNoReply(items)
       break
     }
     case 'Attachment': {

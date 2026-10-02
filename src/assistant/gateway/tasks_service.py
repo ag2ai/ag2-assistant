@@ -709,11 +709,11 @@ class TaskService:
         for i in items:
             v = {
                 "id": i.id,
-                "task_id": i.task_id,
-                "chat": i.chat,
+                "task_id": i.task_id or "",
+                "chat": i.chat or (f"task:{i.task_id}" if i.task_id else ""),
                 "kind": i.kind,
                 "text": i.text,
-                "detail": i.detail,
+                "detail": i.detail or "",
                 "options": i.options,
                 "created_at": i.created_at,
             }

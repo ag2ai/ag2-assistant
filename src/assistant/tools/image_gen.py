@@ -171,15 +171,11 @@ def build_image_tool(config, workspace_dir):
             if emitted
             else "It has NOT been shown to the user — present it however this surface allows."
         )
-        canvas_url = _workspace_file_url(config, rel)
-        canvas_instruction = (
-            f" To show it in an A2UI Image component, use this exact url value: {canvas_url}."
-            if canvas_url
-            else ""
-        )
+        url = _workspace_file_url(config, rel)
+        served = f" It is served at {url}." if url else ""
         return (
             f"Generated image saved to {rel}. {shown} To modify it, call this tool "
-            f"again with source_image='{rel}'.{canvas_instruction}"
+            f"again with source_image='{rel}'.{served}"
         )
 
     return generate_image

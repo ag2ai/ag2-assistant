@@ -1,0 +1,164 @@
+name: CodingSession
+description: Use when the answer is a coding agent's run in a folder — its plan, the
+  files it changed and the diff. The coding tool fills this one as the run streams.
+
+fields:
+  title:
+    type: string
+    description: The run in one line — the headline, not the whole brief.
+  brief:
+    type: string
+    description: The full task, only when it says more than the headline does.
+  agent:
+    type: string
+    description: "The coding agent that ran, e.g. 'Claude Code'."
+  directory:
+    type: string
+    description: Absolute path of the folder it worked in.
+  status:
+    type: string
+    description: "One of: running, done, failed."
+  note:
+    type: string
+    description: The line that stands in for an empty plan or an unchanged tree.
+  changed:
+    type: string
+    description: "The diff's headline, e.g. '3 files changed'."
+  added:
+    type: string
+    description: "Lines added across the run, signed, e.g. '+128'."
+  removed:
+    type: string
+    description: "Lines removed across the run, signed, e.g. '−40'."
+  plan:
+    type: array
+    description: The agent's plan, in its own order.
+    items:
+      type: object
+      properties:
+        content: {type: string}
+        status:
+          type: string
+          description: "One of: completed, in_progress, pending."
+      required: [content]
+      additionalProperties: false
+  files:
+    type: array
+    description: One entry per file the run changed.
+    items:
+      type: object
+      properties:
+        path: {type: string, description: The file's path relative to the folder.}
+        full: {type: string, description: Its absolute path — opens the file.}
+        status: {type: string, description: "added, modified, or deleted."}
+        added: {type: string, description: "Lines added, signed, e.g. '+12'."}
+        removed: {type: string, description: "Lines removed, signed, e.g. '−4'."}
+        hunks: {type: string, description: The unified diff, empty when there is none.}
+        note: {type: string, description: Why there is no diff to show.}
+      required: [path, status]
+      additionalProperties: false
+  summary:
+    type: string
+    description: What the run reported back.
+  error:
+    type: string
+    description: Only when the run failed.
+required: [agent, status]
+
+layout:
+  - {id: root, component: Card, variant: feature, child: bench}
+  - {id: bench, component: Column, gap: lg, children: [masthead, rule_mast, body]}
+
+  - {id: masthead, component: Row, justify: between, align: end, gap: md, children: [mast_left, mast_right]}
+  - {id: mast_left, component: Column, gap: none, grow: true, children: [kicker, run_title]}
+  - {id: kicker, component: Text, text: Coding, variant: eyebrow, tone: accent}
+  - {id: run_title, component: Text, text: {path: /title}, variant: h1}
+  - {id: mast_right, component: Column, gap: xs, align: end, children: [run_agent, run_status]}
+  - {id: run_agent, component: Text, text: {path: /agent}, variant: caption, emphasis: strong}
+  # The state takes both its word and its colour from the same field.
+  - id: run_status
+    component: Text
+    text: {path: /status}
+    map: {running: Working, done: Done, failed: Failed}
+    variant: badge
+    tone: {path: /status, map: {running: accent, done: positive, failed: negative}}
+  - {id: rule_mast, component: Divider, emphasis: strong}
+
+  - id: body
+    component: Column
+    gap: md
+    children: [where, brief, plan_steps, error_block, diff_block, note_line, foot_block]
+
+  - {id: where, component: Link, folder: {path: /directory}, child: where_text}
+  - {id: where_text, component: Text, text: {path: /directory}, variant: code, tone: muted}
+  - {id: brief, component: Text, text: {path: /brief}, tone: muted}
+
+  - {id: plan_steps, component: List, gap: xs, when: {path: /plan}, children: {componentId: step, path: /plan}}
+  - {id: step, component: Row, gap: sm, align: center, children: [step_mark, step_text]}
+  - id: step_mark
+    component: Icon
+    name: {path: ./status}
+    map: {completed: check, in_progress: rotate-cw, pending: clock}
+    size: sm
+    tone: {path: ./status, map: {completed: positive, in_progress: accent, pending: muted}}
+  - {id: step_text, component: Text, text: {path: ./content}, grow: true}
+
+  - id: error_block
+    component: Column
+    gap: xs
+    marker: start
+    tone: negative
+    when: {path: /error}
+    children: [error_label, error_text]
+  - {id: error_label, component: Text, text: Run failed, variant: badge, tone: negative}
+  - {id: error_text, component: Text, text: {path: /error}}
+
+  - {id: diff_block, component: Column, gap: md, when: {path: /files}, children: [rule_diff, diff_stat, files]}
+  - {id: rule_diff, component: Divider}
+  - {id: diff_stat, component: Row, gap: sm, align: center, children: [stat_changed, stat_added, stat_removed]}
+  - {id: stat_changed, component: Text, text: {path: /changed}, variant: eyebrow, tone: muted, grow: true}
+  - {id: stat_added, component: Text, text: {path: /added}, variant: caption, emphasis: strong, tone: positive}
+  - {id: stat_removed, component: Text, text: {path: /removed}, variant: caption, emphasis: strong, tone: negative}
+
+  - {id: files, component: List, gap: md, children: {componentId: file, path: /files}}
+  - {id: file, component: Column, gap: sm, children: [file_head, file_diff, file_note]}
+  - {id: file_head, component: Row, gap: sm, align: center, children: [file_status, file_link, file_added, file_removed]}
+  - id: file_status
+    component: Text
+    text: {path: ./status}
+    variant: badge
+    tone: {path: ./status, map: {added: positive, deleted: negative, modified: neutral}}
+  - {id: file_link, component: Link, file: {path: ./full}, grow: true, child: file_path}
+  - {id: file_path, component: Text, text: {path: ./path}, variant: code}
+  - {id: file_added, component: Text, text: {path: ./added}, variant: caption, emphasis: strong, tone: positive}
+  - {id: file_removed, component: Text, text: {path: ./removed}, variant: caption, emphasis: strong, tone: negative}
+  - {id: file_diff, component: Diff, hunks: {path: ./hunks}}
+  - {id: file_note, component: Text, text: {path: ./note}, variant: caption, tone: muted}
+
+  - {id: note_line, component: Text, text: {path: /note}, tone: muted}
+
+  - {id: foot_block, component: Column, gap: sm, when: {path: /summary}, children: [rule_foot, foot]}
+  - {id: rule_foot, component: Divider}
+  - {id: foot, component: Row, justify: between, gap: md, children: [foot_source, foot_agent]}
+  - {id: foot_source, component: Text, text: From the coding agent — the working-tree diff, not a plan, variant: caption, tone: muted}
+  - {id: foot_agent, component: Text, text: {path: /agent}, variant: caption, tone: muted}
+
+example:
+  title: Add a /health endpoint to the API
+  agent: Claude Code
+  directory: /Users/me/work/api
+  status: done
+  changed: 1 file changed
+  added: '+9'
+  removed: '−1'
+  plan:
+    - {content: Add the route, status: completed}
+    - {content: Cover it with a test, status: completed}
+  files:
+    - path: app.py
+      full: /Users/me/work/api/app.py
+      status: modified
+      added: '+9'
+      removed: '−1'
+      hunks: "@@ -12,3 +12,4 @@\n def app():\n-    return api\n+    api.get('/health')(health)\n+    return api\n"
+  summary: Added a /health endpoint returning 200.

@@ -131,6 +131,78 @@ _Avoid_: grant (Folders default-deny + opt-in; Suppression is default-allow +
 opt-out — the opposite), disable (reserve for the install-wide / own-skill flag;
 a profile *suppresses* a shared skill, it does not *disable* it for everyone)
 
+**Card**:
+A rich structured view the agent renders in a conversation instead of prose — a
+weather panel, a market board, an inbox digest. A Card is a *definition*: the
+fields it carries and how it looks. Cards are named, and the set available to the
+agent is offered to it as a catalog.
+_Avoid_: component (the A2UI protocol's word for a node in a rendered tree —
+including the primitive literally named `Card`), widget, template
+
+**Card instance**:
+One Card actually rendered, holding the data of one answer — what the user sees in
+the **Thread**. Many instances of one Card can exist; the instance carries the
+data, the Card carries only the shape.
+_Avoid_: surface (the protocol's word, and `surfaceId` in the code; in this
+glossary the rendered thing is a Card instance)
+
+**Card catalog**:
+The set of Cards the agent is offered — what it may render into. Resolved for one
+profile from the three card layers, minus whatever is **Disabled** or
+**Suppressed**. The agent meets it through the `rich-views` **Skill** as an index of
+names and descriptions, and asks for a Card's detail once it has decided to draw one.
+_Avoid_: component catalog (the A2UI protocol's own name for the primitive
+vocabulary every Card is drawn from)
+
+**Bundled cards**:
+First-party Cards that ship with the app, available from first run. Read-only: they
+can be **Disabled** install-wide or **Suppressed** per profile, never **Deleted**.
+
+**Global cards**:
+Cards installed once at the Root's `cards/`, available to every profile. Managed
+install-wide (Enable/Disable/Delete affects every profile) and individually
+**Suppressed** by any profile.
+
+**Profile cards**:
+Cards belonging to one profile, kept in `cards/` inside that profile's **Files**
+space — so the agent writes one with the ordinary file tools and the user finds it
+in the Files tree. On a name clash, the Profile card wins over the Global one.
+
+**Card state** (Enabled / Disabled):
+Whether a Card appears in the **Card catalog**. The same shape as **Skill state**,
+including the per-profile **Suppression** override, but recorded separately in its
+own `cards.json` at the Root: a Skill and a Card may share a name and must not share
+a switch. A change reaches the agent on its next message, not its next build — but a
+Card instance already in a **Thread** goes on drawing, whatever the switch now says.
+
+**Card vocabulary**:
+The primitives and styling words a **Card**'s layout is composed from — the visual
+blocks the front end ships and the names (tone, emphasis, size, alignment, spacing)
+that resolve to design tokens. One ceiling for every Card, whatever its layer.
+Written down in `src/assistant/cards/VOCABULARY.md`.
+_Avoid_: component catalog (the A2UI protocol's own name for the Basic Catalog),
+design system (the app's own, which the vocabulary draws tokens from)
+
+**Card link**:
+A Card pointing at one of the app's own things — a **Task**, a **Chat**, a file, a
+folder — so a row in a rendered Card opens the page for it, or at a page on the web.
+Open to every Card, whatever its layer. A target that is no longer there is drawn as
+the plain text it wraps.
+_Avoid_: **File reference** (the `@`-pointer into a message), **Mentioned in** (the
+backlink from a file to the conversations touching it)
+
+**Rich view** (the `rich-views` **Skill**):
+The Bundled Skill the **Card catalog** is disclosed through. Its description is the only
+A2UI text a turn carries at all, and names each Card's **topic** — the case it is ready
+for; its body is the index of this profile's Cards and how to draw one; each Card is a
+script of the Skill that draws it (ADR 0040); one Card's schema and worked call, and the
+A2UI protocol at large, are resources read on demand. "Rich view" is what it is called where a user meets it, because the
+switch is theirs: turned off, the profile is offered no Card and its turns carry no A2UI
+runtime — while a Card instance already in a **Thread**, and a Card the server fills for
+itself, go on drawing.
+_Avoid_: A2UI skill (the protocol's name, not the user's), Card skill (that is the Skill
+that *writes* Cards)
+
 **Permissions**:
 The security policy of allowed commands (command-prefix and whole-tool grants).
 Commands only — folder access is the separate Folder/Grant system. Edited only by

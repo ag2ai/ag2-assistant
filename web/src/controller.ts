@@ -10,7 +10,7 @@ import { VoiceController } from './transport/voice.ts'
 import { api } from './transport/api/index.ts'
 import { foldEvent, isBusy, queueMessage } from './project.ts'
 import { nextItemId } from './lib/ids.ts'
-import type { AttachmentPayload, ThreadItem, WireEvent } from './schemas/events.ts'
+import type { A2UISurfaceState, AttachmentPayload, ThreadItem, WireEvent } from './schemas/events.ts'
 import { getActiveProfileId, setActiveProfileId } from './lib/profile.ts'
 import { setAccent } from './design/palette.ts'
 import { go, closeAside, route } from './router.ts'
@@ -153,8 +153,8 @@ export function answer(inquiryId: string, text: string): void {
   if (client) client.answer(inquiryId, text)
 }
 
-export function a2uiAction(message: unknown): void {
-  if (client) client.a2ui(message)
+export function a2uiAction(message: unknown, state?: A2UISurfaceState): void {
+  if (client) client.a2ui(message, state)
 }
 
 // The stable id/kind of the rated item plus the context the learner distils from.

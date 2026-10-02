@@ -13,7 +13,7 @@ from uuid import UUID
 
 from ag2.stream import MemoryStream
 
-from assistant.gateway.wire import is_binary_event, to_wire
+from assistant.gateway.wire import as_drawn, is_binary_event, to_wire
 
 
 class StreamBridge:
@@ -41,7 +41,7 @@ class StreamBridge:
         if is_binary_event(event):
             return  # audio rides its own binary frame, not {type, data}
         with contextlib.suppress(Exception):
-            await self._ws.send_json({"event": to_wire(event)})
+            await self._ws.send_json({"event": to_wire(as_drawn(event, self._gw.catalog))})
 
     async def run_turn(
         self,

@@ -1,5 +1,5 @@
 // Lazy WebGPU weather-banner engine. The whole of three.js is pulled into a
-// separate chunk that only loads when a WeatherPanel actually renders on a
+// separate chunk that only loads when a weather glyph actually renders on a
 // WebGPU-capable browser — the main app bundle stays three-free.
 //
 // Each scene module exports `build(ctx)` and returns a SceneHandle; the engine owns
@@ -7,6 +7,7 @@
 
 import * as THREE from 'three/webgpu'
 import { FontLoader, type Font } from 'three/addons/loaders/FontLoader.js'
+import { weatherCondition, type WeatherCondition } from './conditions.ts'
 
 // What a scene gets from the engine. `THREE` rides along so a scene could stay
 // namespace-free, though all eight import it directly.
@@ -43,8 +44,8 @@ export function loadFont(): Promise<Font> {
   return _fontPromise
 }
 
-// condition (from the WeatherPanel `condition` enum) -> scene module loader
-const SCENES: Record<string, (() => Promise<SceneModule>) | undefined> = {
+// One scene module loader per condition the WeatherGlyph primitive draws.
+const SCENES: Record<WeatherCondition, () => Promise<SceneModule>> = {
   sunny: () => import('./scenes/sunny.ts'),
   'partly-cloudy': () => import('./scenes/cloudy.ts'),
   cloudy: () => import('./scenes/cloudy.ts'),
@@ -60,19 +61,13 @@ export function supportsWebGPU(): boolean {
   return typeof navigator !== 'undefined' && 'gpu' in navigator && !!navigator.gpu
 }
 
-export function hasScene(condition: string): boolean {
-  return Object.prototype.hasOwnProperty.call(SCENES, condition)
-}
-
 export async function createBanner(
   canvas: HTMLCanvasElement,
   condition: string,
   opts: BannerOptions = {},
 ): Promise<Banner> {
   if (!supportsWebGPU()) throw new Error('no-webgpu')
-  const loader = SCENES[condition] || SCENES.cloudy
-  if (!loader) throw new Error('no-scene')
-  const mod = await loader()
+  const mod = await SCENES[weatherCondition(condition)]()
 
   const renderer = new THREE.WebGPURenderer({ canvas, antialias: true })
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))

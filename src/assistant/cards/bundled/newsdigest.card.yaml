@@ -1,0 +1,109 @@
+name: NewsDigest
+description: Use when the answer is the latest news — headlines or recent
+  developments on one topic. The first story is the lead; the rest are the ranking.
+
+topic: the latest news on a topic
+fields:
+  topic:
+    type: string
+    description: "What the digest is about, e.g. 'Formula 1'."
+  stories:
+    type: array
+    description: Most important first — the first story is drawn as the lead.
+    items:
+      type: object
+      properties:
+        title: {type: string}
+        source: {type: string, description: "Publisher, e.g. 'Reuters'."}
+        published: {type: string, description: "Recency, e.g. '2h ago' or a date."}
+        category: {type: string, description: "Short tag, e.g. 'Breaking', 'Markets'."}
+        summary: {type: string, description: One or two sentences of detail.}
+        why: {type: string, description: Why it matters — the lead story only.}
+        image: {type: string, description: Article image URL; omit if you have none.}
+        url:
+          type: string
+          description: The article itself — always include it, so a reader can
+            click through rather than hunt the link in your prose.
+      required: [title, source]
+      additionalProperties: false
+required: [topic, stories]
+
+layout:
+  - {id: root, component: Card, variant: feature, child: wire}
+  - {id: wire, component: Column, gap: lg, children: [masthead, rule_mast, lead, more_block]}
+
+  - {id: masthead, component: Column, gap: none, children: [kicker, wire_title]}
+  - {id: kicker, component: Text, text: News digest, variant: eyebrow, tone: accent}
+  - {id: wire_title, component: Text, text: {path: /topic}, variant: h1}
+  - {id: rule_mast, component: Divider, emphasis: strong}
+
+  - {id: lead, component: Row, gap: lg, align: stretch, children: [lead_text, lead_figure]}
+  - {id: lead_text, component: Column, gap: sm, grow: true, children: [lead_category, lead_link, lead_deck, lead_why, lead_byline]}
+  - {id: lead_category, component: Text, text: {path: /stories/0/category}, variant: eyebrow, tone: accent}
+  - {id: lead_link, component: Link, url: {path: /stories/0/url}, child: lead_headline}
+  - {id: lead_headline, component: Text, text: {path: /stories/0/title}, variant: h2}
+  - {id: lead_deck, component: Text, text: {path: /stories/0/summary}, tone: muted}
+  - id: lead_why
+    component: Column
+    gap: xs
+    marker: start
+    tone: accent
+    when: {path: /stories/0/why}
+    children: [lead_why_label, lead_why_text]
+  - {id: lead_why_label, component: Text, text: Why it matters, variant: badge, tone: accent}
+  - {id: lead_why_text, component: Text, text: {path: /stories/0/why}}
+  # `meta` is what a digest stored before source and published were split carries.
+  - {id: lead_byline, component: Row, gap: xs, children: [lead_source, lead_dot, lead_published, lead_meta]}
+  - {id: lead_meta, component: Text, text: {path: /stories/0/meta}, variant: caption, tone: muted}
+  - {id: lead_source, component: Text, text: {path: /stories/0/source}, variant: caption, emphasis: strong}
+  - {id: lead_dot, component: Text, text: '·', variant: caption, tone: muted, when: {path: /stories/0/published}}
+  - {id: lead_published, component: Text, text: {path: /stories/0/published}, variant: caption, tone: muted}
+  - id: lead_figure
+    component: Figure
+    url: {path: /stories/0/image}
+    caption: {path: /stories/0/source}
+    when: {path: /stories/0/image}
+    size: lg
+
+  # Drawn only when there is a second story to rank.
+  - id: more_block
+    component: Column
+    gap: md
+    when: {path: /stories/1}
+    children: [rule_lead, more_head, more]
+  - {id: rule_lead, component: Divider, emphasis: strong}
+  - {id: more_head, component: Text, text: More on this, variant: eyebrow, tone: muted}
+  # The lead was drawn on its own, so the ranking opens at the second story and
+  # numbers it from there.
+  - {id: more, component: List, variant: ranked, gap: md, children: {componentId: story, path: /stories, start: 1}}
+  - {id: story, component: Row, gap: md, align: start, children: [story_main, story_figure]}
+  - {id: story_main, component: Column, gap: xs, grow: true, children: [story_link, story_byline, story_summary]}
+  - {id: story_link, component: Link, url: {path: ./url}, child: story_title}
+  - {id: story_title, component: Text, text: {path: ./title}, variant: h4}
+  - {id: story_byline, component: Row, gap: xs, children: [story_source, story_dot, story_published, story_dot2, story_category, story_meta]}
+  - {id: story_meta, component: Text, text: {path: ./meta}, variant: caption, tone: muted}
+  - {id: story_source, component: Text, text: {path: ./source}, variant: caption, emphasis: strong}
+  - {id: story_dot, component: Text, text: '·', variant: caption, tone: muted, when: {path: ./published}}
+  - {id: story_published, component: Text, text: {path: ./published}, variant: caption, tone: muted}
+  - {id: story_dot2, component: Text, text: '·', variant: caption, tone: muted, when: {path: ./category}}
+  - {id: story_category, component: Text, text: {path: ./category}, variant: caption, tone: muted}
+  - {id: story_summary, component: Text, text: {path: ./summary}, variant: caption, tone: muted}
+  - {id: story_figure, component: Figure, url: {path: ./image}, when: {path: ./image}, size: sm}
+
+example:
+  topic: Formula 1
+  stories:
+    - title: Verstappen takes pole in Monaco
+      source: Reuters
+      published: 2h ago
+      category: Qualifying
+      summary: A late lap put him two tenths clear of the field.
+      why: Monaco pole has won the race in eight of the last ten years.
+      image: https://example.com/monaco.jpg
+      url: https://www.reuters.com/sport/formula1/monaco-pole
+    - title: Ferrari confirm upgrade package
+      source: BBC Sport
+      published: 4h ago
+      category: Teams
+      summary: The floor and sidepods arrive in Barcelona.
+      url: https://www.bbc.com/sport/formula1/ferrari-upgrade

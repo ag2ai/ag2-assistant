@@ -1,14 +1,18 @@
 <script lang="ts">
   import { animations } from '../../store.ts'
+  import { weatherCondition } from '../../lib/weather/conditions.ts'
+  import type { WeatherCondition } from '../../lib/weather/conditions.ts'
   import WeatherGlyphBasic from './WeatherGlyphBasic.svelte'
 
   type Props = {
-    condition?: string
+    condition?: unknown
     temperatureText?: string
     flush?: boolean
     zoom?: number
   }
-  let { condition = 'cloudy', temperatureText = '', flush = false, zoom = 1 }: Props = $props()
+  let { condition: named = 'cloudy', temperatureText = '', flush = false, zoom = 1 }: Props = $props()
+  // The vocabulary is the glyph's own: whatever a Card binds, one of the eight is drawn.
+  const condition = $derived(weatherCondition(named))
 
   // Effective tier: 'high' needs WebGPU — browsers without it get 'basic'
   // (animated vector glyphs) rather than a dead gradient. `gpu` is not in lib.dom,
@@ -16,7 +20,7 @@
   const webgpu = typeof navigator !== 'undefined' && 'gpu' in navigator && !!navigator.gpu
   const mode = $derived($animations === 'high' && !webgpu ? 'basic' : $animations)
 
-  const EMOJI: Record<string, string | undefined> = {
+  const EMOJI: Record<WeatherCondition, string> = {
     sunny: '☀️',
     'partly-cloudy': '⛅',
     cloudy: '☁️',
@@ -27,7 +31,7 @@
     windy: '💨',
   }
   // HTML temperature tone per condition (dark digits on pale skies, light on dark)
-  const LIGHT_TEMP = new Set(['rainy', 'thunderstorm'])
+  const LIGHT_TEMP: readonly WeatherCondition[] = ['rainy', 'thunderstorm']
 
   let canvas: HTMLCanvasElement | undefined = $state()
   let active = $state(false) // WebGPU banner is live
@@ -60,10 +64,10 @@
     {#if mode === 'basic'}
       <WeatherGlyphBasic {condition} />
     {:else}
-      <div class="wx-emoji" aria-hidden="true">{EMOJI[condition] || '☁️'}</div>
+      <div class="wx-emoji" aria-hidden="true">{EMOJI[condition]}</div>
     {/if}
     {#if temperatureText}
-      <div class="wx-temp" class:wx-temp-light={LIGHT_TEMP.has(condition)}>{temperatureText}</div>
+      <div class="wx-temp" class:wx-temp-light={LIGHT_TEMP.includes(condition)}>{temperatureText}</div>
     {/if}
   {/if}
 </div>

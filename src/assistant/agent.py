@@ -1,5 +1,6 @@
 """AG2 Assistant agent built on AG2."""
 
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal
@@ -17,6 +18,8 @@ from ag2.tools import SkillSearchToolkit
 from ag2.tools.skills import LocalRuntime, SkillPlugin
 from pydantic import Field
 
+from assistant.a2ui import CardCatalog
+from assistant.a2ui_skill import A2UISkillRuntime
 from assistant.codex_auth import BACKEND_BASE, CodexAuth, default_headers
 from assistant.config import Config, load_config
 from assistant.folders import FolderStore
@@ -35,7 +38,12 @@ from assistant.observers import build_observers
 from assistant.permissions import PermissionManager, PermissionStore
 from assistant.secrets import DEFAULT_OLLAMA_BASE, KEY_ENV, OLLAMA_BASE_ENV
 from assistant.settings import profile_settings
-from assistant.skills import FilteredSkillRuntime, SkillStateStore, skill_origin
+from assistant.skills import (
+    DiscoveredSkill,
+    FilteredSkillRuntime,
+    SkillStateStore,
+    skill_origin,
+)
 from assistant.tools import build_agent_tools
 from assistant.tools.docker_sandbox import build_docker_skill_runtime, docker_available
 
@@ -226,6 +234,19 @@ def build_skills_runtime(config: Config):
     return LocalRuntime(dir=str(config.skills_dir), blocked=_SKILL_BLOCKED, extra_paths=extra)
 
 
+def _availability(config: Config) -> Callable[[DiscoveredSkill], bool]:
+    """The availability predicate every skill view is filtered by, whichever runtime
+    discovered the skill: default-on unless the store turns the name off here."""
+    store = SkillStateStore(config.root_dir)
+    profile = config.data_dir.name
+    profile_root = config.skills_dir if config.data_dir != config.root_dir else None
+    return lambda skill: store.is_available(
+        skill.name,
+        profile,
+        origin=skill_origin(skill.location, bundled_skills_dir(), profile_root),
+    )
+
+
 def resolve_skills(config: Config, runtime):
     """`runtime` filtered down to the skills resolved available for `config`.
 
@@ -236,17 +257,13 @@ def resolve_skills(config: Config, runtime):
     off) — the inverse of a Folders Grant; see `SkillStateStore` for why not to
     "fix" that. `.skills` on the result is what an agent build would see.
     """
-    store = SkillStateStore(config.root_dir / "skills.json")
-    profile = config.data_dir.name
-    profile_root = config.skills_dir if config.data_dir != config.root_dir else None
-    return FilteredSkillRuntime(
-        runtime,
-        lambda skill: store.is_available(
-            skill.name,
-            profile,
-            origin=skill_origin(skill.location, bundled_skills_dir(), profile_root),
-        ),
-    )
+    return FilteredSkillRuntime(runtime, _availability(config))
+
+
+def resolve_a2ui_skill(config: Config):
+    """The A2UI Skill (ADR 0038) behind that same predicate, over its own
+    `CardCatalog`, so the Card catalog is disclosed and turned off like any Bundled skill."""
+    return FilteredSkillRuntime(A2UISkillRuntime(CardCatalog(config)), _availability(config))
 
 
 def build_skills_plugin(config: Config, runtime):
@@ -264,8 +281,10 @@ def build_skills_plugin(config: Config, runtime):
     skill installed or toggled mid-session isn't reflected until the next agent
     build (a `ProfileManager.reload`) picks it up — which is exactly what the
     /api/skills routes trigger on every change.
+
+    The A2UI Skill comes first, so a same-named skill on disk shadows it (last wins).
     """
-    return SkillPlugin(resolve_skills(config, runtime))
+    return SkillPlugin(resolve_a2ui_skill(config), resolve_skills(config, runtime))
 
 
 def build_skills_install_tools(config: Config, runtime) -> list:
@@ -336,6 +355,9 @@ CAPABILITY_GUIDANCE = (
     "now, cancel, or archive.\n"
     "- Look things up with your system tools instead of needing them in context: list/"
     "get tasks, list/read past conversations, and list/answer open questions.\n"
+    "- Answer with a rich information experience where possible: a rich view when a "
+    "skill offers one that fits, otherwise well-structured markdown (headings, lists, "
+    "tables, links).\n"
     "When the user asks what exists or its status ('what tasks do I have?', 'how's X "
     "going?', 'what did we discuss?'), USE a tool to check — never say you can't see "
     "it. Prefer doing small things now; spin up a task for big or long-running jobs."
@@ -533,15 +555,15 @@ def turn_prompt(
 
 
 def universal_turn_prompt(config: Config, surface: str = "") -> list[str]:
-    """Per-turn prompt for the universal agent: persona + behaviour + capability
-    map + (Google when signed in) + the SURFACE it's being addressed on + live env.
+    """Per-turn prompt for the universal agent: behaviour + capability map + (Google
+    when signed in) + the SURFACE it's being addressed on + live env. It follows the
+    agent's own system prompt (persona + plugins), which the caller puts first.
 
     `surface` is a short paragraph the caller builds describing where the user is
     (web chat / new-task box / a specific task + its state / a channel) so the one
     agent has the right local context without changing identity.
     """
     parts = [
-        config.agent.system_prompt,
         BEHAVIOR_GUIDANCE,
         CAPABILITY_GUIDANCE,
         chat_turn_timeout_guidance(config),

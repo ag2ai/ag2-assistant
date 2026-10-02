@@ -9,7 +9,7 @@
   <div class="a2ui-head">
     <span class="a2ui-mark"><Icon name="sparkles" size={15} /></span>
     <span class="a2ui-headtext">
-      <span class="a2ui-eyebrow">A2UI</span>
+      <span class="a2ui-eyebrow">Overview</span>
       <span class="a2ui-title">Composing a view…</span>
     </span>
   </div>

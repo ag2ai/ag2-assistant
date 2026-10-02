@@ -68,6 +68,11 @@ class Paths:
         return self.root / "skills"
 
     @property
+    def cards_dir(self) -> Path:
+        """Global Cards — installed once at the Root, offered to every profile."""
+        return self.root / "cards"
+
+    @property
     def codex_tokens(self) -> Path:
         """Our OWN ChatGPT-subscription token store — not the Codex CLI's ``codex_auth``."""
         return self.root / "codex_auth.json"

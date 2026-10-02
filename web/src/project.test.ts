@@ -145,3 +145,53 @@ test('items folded here and surfaces built by a2ui share one id space', () => {
   assert.equal(new Set(ids).size, 3)
   assert.equal(ids.every((id) => typeof id === 'number'), true)
 })
+
+const surface = (id: string): WireEvent => ({
+  type: 'assistant.events.A2UISurface',
+  data: { surface_id: id, component: { id: 'root', component: 'Card' }, data: {} },
+})
+const drawn = (id: string): WireEvent => ({
+  type: 'assistant.events.A2UIMessageEvent',
+  data: { message: { createSurface: { surfaceId: id } } },
+})
+const replies = (items: ThreadItem[]) => items.filter((i) => i.kind === 'agent')
+
+test('a turn that answers with a surface alone says nothing, and is over', () => {
+  const items: ThreadItem[] = []
+  foldEvent(items, user('pack for Berlin'))
+  foldEvent(items, response(''))
+  foldEvent(items, surface('packing'))
+
+  assert.deepEqual(replies(items).map((i) => i.text), [''])
+  assert.equal(replies(items).some((i) => i.kind === 'agent' && i.empty), false)
+  assert.equal(isBusy(items), false)
+})
+
+test('a surface drawn before the empty reply leaves no placeholder either', () => {
+  const items: ThreadItem[] = []
+  foldEvent(items, user('pack for Berlin'))
+  foldEvent(items, drawn('packing'))
+  foldEvent(items, response(''))
+
+  assert.deepEqual(replies(items).map((i) => i.text), [''])
+  assert.equal(isBusy(items), false)
+})
+
+test('a turn that ends with neither prose nor a surface still says so', () => {
+  const items: ThreadItem[] = []
+  foldEvent(items, user('hello'))
+  foldEvent(items, response(''))
+
+  assert.equal(itemOfKind(items.at(-1), 'agent').text, '_(no reply)_')
+})
+
+test('a surface from an earlier turn does not silence a later empty reply', () => {
+  const items: ThreadItem[] = []
+  foldEvent(items, user('pack for Berlin'))
+  foldEvent(items, drawn('packing'))
+  foldEvent(items, response(''))
+  foldEvent(items, user('and now?'))
+  foldEvent(items, response(''))
+
+  assert.equal(itemOfKind(items.at(-1), 'agent').text, '_(no reply)_')
+})

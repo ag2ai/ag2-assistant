@@ -7,6 +7,7 @@ import {
   chooseModel,
   sentFirstMessage,
   switcherSelection,
+  headerModelId,
 } from './chatModel.ts'
 import type { TranscriptMessage } from '../schemas/index.ts'
 
@@ -137,4 +138,19 @@ test('a pick on a Chat that really has no messages stays ephemeral', () => {
 test('an empty read leaves the switcher with nothing to name rather than guessing', () => {
   const blank = loadedChat(openedChat('c9'), 'c9', doc([], '', '')).state
   assert.deepEqual(switcherSelection(blank), { activeId: null, inherited: true })
+})
+
+test('the header names the model the open Chat runs on, not the install-wide Active', () => {
+  assert.equal(headerModelId(overridden, 'c1', 'gpt'), 'opus')
+  assert.equal(headerModelId(inheriting, 'c1', 'gpt'), 'gpt')
+})
+
+test('the header follows a choice held before the first message', () => {
+  const held = chooseModel(openedChat('c1'), 'luna').state
+  assert.equal(headerModelId(held, 'c1', 'gpt'), 'luna')
+})
+
+test('a thread that is not the switcher\'s Chat shows the Active model', () => {
+  assert.equal(headerModelId(overridden, 'task-7', 'gpt'), 'gpt')
+  assert.equal(headerModelId(NO_CHAT_MODEL, null, 'gpt'), 'gpt')
 })

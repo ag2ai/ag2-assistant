@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from assistant.a2ui_skill import a2ui_skill_descriptor
 from assistant.agent import build_skills_runtime, bundled_skills_dir
 from assistant.gateway.profile_manager import ProfileRuntime
 from assistant.gateway.routes.common import reload_all
@@ -37,21 +38,20 @@ from assistant.gateway.schemas import (
     SkillMutatedResponse,
     SkillSearchResultsResponse,
 )
-from assistant.skills import (
-    DISABLE_OWN,
-    ORIGIN_BUNDLED,
-    ORIGIN_GLOBAL,
-    ORIGIN_PROFILE,
-    SUPPRESS_SHARED,
-    SkillStateStore,
-    skill_origin,
-)
+from assistant.skills import SkillStateStore, skill_origin
 from assistant.skills_install import (
     SkillSourceError,
     discover_source,
     install_from_source,
     registry_install,
     registry_search,
+)
+from assistant.state_store import (
+    DISABLE_OWN,
+    ORIGIN_BUNDLED,
+    ORIGIN_GLOBAL,
+    ORIGIN_PROFILE,
+    SUPPRESS_SHARED,
 )
 
 _MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB raw upload cap
@@ -91,7 +91,14 @@ class SkillDiscoverRequest(BaseModel):
 def _skill_store(d: GatewayDeps) -> SkillStateStore:
     """A fresh SkillStateStore over the install-wide file. mtime self-refresh
     means a live turn's next build sees any change — same shape as _folder_store."""
-    return SkillStateStore(d.paths.root / "skills.json")
+    return SkillStateStore(d.paths.root)
+
+
+def _shared_skills(config) -> list:
+    """Every skill the shared layers offer: the A2UI Skill's descriptor first, then
+    the ones on disk, so a same-named skill on disk shadows it."""
+    merged = {s.name: s for s in [a2ui_skill_descriptor(), *build_skills_runtime(config).skills]}
+    return list(merged.values())
 
 
 def _installwide_skills(d: GatewayDeps) -> list[dict]:
@@ -106,7 +113,6 @@ def _installwide_skills(d: GatewayDeps) -> list[dict]:
     """
     store = _skill_store(d)
     bundled_root = bundled_skills_dir()
-    runtime = build_skills_runtime(d.manager.config)
     rows = [
         {
             "name": s.name,
@@ -114,7 +120,7 @@ def _installwide_skills(d: GatewayDeps) -> list[dict]:
             "origin": skill_origin(s.location, bundled_root),
             "enabled": not store.is_disabled(s.name),
         }
-        for s in runtime.skills
+        for s in _shared_skills(d.manager.config)
     ]
     # Deletable (Global, user-installed) first, then read-only Bundled — each group
     # by name — so the rows a user can act on sit at the top.
@@ -140,7 +146,7 @@ def _profile_skill_rows(d: GatewayDeps, runtime) -> list[dict]:
     profile = runtime.pid
     rows: dict[str, dict] = {}
     # Inherited shared layers (Global + Bundled), discovered from the Root config.
-    for s in build_skills_runtime(d.manager.config).skills:
+    for s in _shared_skills(d.manager.config):
         rows[s.name] = {
             "name": s.name,
             "description": s.metadata.description,
@@ -285,7 +291,7 @@ def build_router(d: GatewayDeps, *, skills_client: SkillsClient | None = None) -
         store = _skill_store(d)
         runtime = build_skills_runtime(config)
         bundled_root = bundled_skills_dir()
-        row = next((s for s in runtime.skills if s.name == name), None)
+        row = next((s for s in _shared_skills(config) if s.name == name), None)
         if row is None:
             return JSONResponse({"error": f"unknown skill: {name}"}, status_code=404)
         if skill_origin(row.location, bundled_root) == ORIGIN_BUNDLED:

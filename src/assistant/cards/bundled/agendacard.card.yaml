@@ -1,0 +1,96 @@
+name: AgendaCard
+description: Use when the answer is the user's real calendar — what is on today or on
+  a given day, in the order it happens.
+
+topic: the user's calendar for a day
+fields:
+  title:
+    type: string
+    description: Board heading, e.g. 'Today'.
+  date:
+    type: string
+    description: Human date, e.g. 'Tue 8 July'.
+  events:
+    type: array
+    description: In the order they happen.
+    items:
+      type: object
+      properties:
+        title: {type: string}
+        start: {type: string, description: "e.g. '8:15 AM'. Omit for all-day."}
+        end: {type: string, description: "e.g. '8:45 AM'."}
+        location: {type: string}
+        allDay: {type: boolean}
+        next: {type: boolean, description: True on the single next upcoming event.}
+        url: {type: string, description: Where the event can be opened.}
+        joinUrl: {type: string, description: The meeting URL, if there is one.}
+      required: [title]
+      additionalProperties: false
+  note:
+    type: string
+    description: "One honest line, e.g. 'Free after 3 PM.'"
+required: [title, events]
+
+layout:
+  - {id: root, component: Card, variant: feature, child: day}
+  - {id: day, component: Column, gap: lg, children: [masthead, rule_mast, events, note_block]}
+
+  - {id: masthead, component: Row, justify: between, align: end, gap: md, children: [mast_left, day_date]}
+  - {id: mast_left, component: Column, gap: none, grow: true, children: [kicker, day_title]}
+  - {id: kicker, component: Text, text: Agenda, variant: eyebrow, tone: accent}
+  - {id: day_title, component: Text, text: {path: /title}, variant: h1}
+  - {id: day_date, component: Text, text: {path: /date}, variant: caption, tone: muted}
+  - {id: rule_mast, component: Divider, emphasis: strong}
+
+  - {id: events, component: List, gap: none, children: {componentId: event, path: /events}}
+  - {id: event, component: Column, gap: sm, children: [event_slot, event_rule]}
+  # The one event that is next up carries the marker; every other slot is plain.
+  - id: event_slot
+    component: Row
+    gap: md
+    align: start
+    marker: {path: ./next}
+    tone: accent
+    children: [event_when, event_main]
+
+  - {id: event_when, component: Column, gap: none, children: [event_start, event_end, event_allday]}
+  - {id: event_start, component: Text, text: {path: ./start}, variant: caption, emphasis: strong}
+  - {id: event_end, component: Text, text: {path: ./end}, variant: caption, tone: muted}
+  - {id: event_allday, component: Text, text: All day, variant: caption, tone: muted, when: {path: ./allDay}}
+
+  - {id: event_main, component: Column, gap: xs, grow: true, children: [event_next, event_link, event_location, event_join]}
+  - {id: event_next, component: Text, text: Up next, variant: badge, tone: accent, when: {path: ./next}}
+  - {id: event_link, component: Link, url: {path: ./url}, child: event_title}
+  - {id: event_title, component: Text, text: {path: ./title}, variant: h4}
+  - {id: event_location, component: Text, text: {path: ./location}, variant: caption, tone: muted}
+  - id: event_join
+    component: Link
+    url: {path: ./joinUrl}
+    when: {path: ./joinUrl}
+    child: event_join_text
+  - {id: event_join_text, component: Text, text: Join meeting, variant: pill, tone: accent}
+  - {id: event_rule, component: Divider}
+
+  - id: note_block
+    component: Column
+    gap: xs
+    marker: start
+    tone: accent
+    when: {path: /note}
+    children: [note_label, note_text]
+  - {id: note_label, component: Text, text: The shape of it, variant: badge, tone: accent}
+  - {id: note_text, component: Text, text: {path: /note}}
+
+example:
+  title: Today
+  date: Tue 8 July
+  events:
+    - {title: Home, allDay: true}
+    - title: Sync on Merlin EKS
+      start: '8:15 AM'
+      end: '8:45 AM'
+      next: true
+      url: https://www.google.com/calendar/event?eid=abc
+      joinUrl: https://meet.google.com/abc-defg-hij
+    - {title: '1:1 with Sam', start: '2:00 PM', end: '2:30 PM', location: Meet}
+  note: Free after 2:30 PM.

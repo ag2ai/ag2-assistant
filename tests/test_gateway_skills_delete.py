@@ -63,12 +63,12 @@ def test_delete_global_cascade_purges_suppressions(paths):
         _write_skill(paths.skills_dir, "shared-x")
         # Suppress it for this profile, then delete it install-wide.
         client.post(api(pid, "/skills/shared-x/suppress"))
-        store = SkillStateStore(paths.root / "skills.json")
+        store = SkillStateStore(paths.root)
         assert store.is_suppressed("shared-x", pid) is True
 
         r = client.delete("/api/skills/shared-x")
         assert r.status_code == 200
-        store = SkillStateStore(paths.root / "skills.json")
+        store = SkillStateStore(paths.root)
         assert store.is_suppressed("shared-x", pid) is False
 
         # Re-install the same name → default-on everywhere (no ghost suppression).
