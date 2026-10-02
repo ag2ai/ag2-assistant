@@ -198,9 +198,9 @@ class Gateway:
         # async (chat_id, user_text, reply, origin=…) -> None, called once a turn
         # completes: the router pushes it to the Peer Attached to that chat.
         self._mirror: Callable | None = None
-        # chat_id -> live Stream; plus which chats we've hydrated from disk
+        # chat_id -> live Stream; plus the log text each one was last read from or written as
         self._streams: dict[str, MemoryStream] = {}
-        self._loaded: set[str] = set()
+        self._synced: dict[str, str | None] = {}
         # llm_config_id -> its cached per-model Agent (built lazily in _agent_for;
         # cleared on reload() so a settings/config change doesn't keep serving stale
         # per-task agents alongside the rebuilt default one).
@@ -503,34 +503,43 @@ class Gateway:
             return
         if self._writer is not None:
             try:
-                # chat_id is not a UUID — see `_get_stream` for why.
-                events = list(await stream.history.get_events())
-                await self._writer.persist(
-                    chat_id,  # type: ignore[arg-type]
-                    events,
-                )
+                await self._persist_log(chat_id, stream)
             except Exception as exc:
                 log_suppressed("external stream event persist", exc, chat_id=chat_id)
                 # Persistence is best-effort; the live event still went out.
 
     async def _get_stream(self, chat_id: str):
-        """Return the chat's live Stream, hydrating from disk on first use."""
+        """Return the chat's live Stream, re-read from disk whenever no turn is running
+        here and its log differs from what this process last read or wrote."""
         # AG2 declares ``StreamId = uuid.UUID`` and only interpolates it into a log path;
         # our ids are strings that name those files, so the ignores below have no fix here.
         stream = self._streams.get(chat_id)
         if stream is None:
             stream = MemoryStream(id=chat_id)  # type: ignore[arg-type]
             self._streams[chat_id] = stream
-            if self._writer is not None and chat_id not in self._loaded:
-                try:
+        if self._writer is not None and not self.is_running(chat_id):
+            raw = None
+            try:
+                raw = await self._read_log(chat_id)
+                if chat_id not in self._synced or self._synced[chat_id] != raw:
                     events = await self._writer.load(chat_id)  # type: ignore[arg-type]
-                    if events:
-                        await stream.history.replace(events)
-                except Exception as exc:
-                    log_suppressed("chat stream hydrate", exc, chat_id=chat_id)
-                    # A corrupt/absent log just starts a fresh stream.
-                self._loaded.add(chat_id)
+                    await stream.history.replace(events)
+            except Exception as exc:
+                log_suppressed("chat stream hydrate", exc, chat_id=chat_id)
+                # A corrupt log keeps whatever the stream already holds.
+            self._synced[chat_id] = raw
         return stream
+
+    async def _read_log(self, chat_id: str) -> str | None:
+        """The chat's raw event log as stored, or None when it has none."""
+        assert self._event_store is not None
+        return await self._event_store.read(f"{LOG_PREFIX}{chat_id}.jsonl")
+
+    async def _persist_log(self, chat_id: str, stream) -> None:
+        """Write the stream's events as the chat's log and remember the stored text."""
+        assert self._writer is not None
+        await self._writer.persist(chat_id, list(await stream.history.get_events()))  # type: ignore[arg-type]
+        self._synced[chat_id] = await self._read_log(chat_id)
 
     async def send_message(
         self,
@@ -891,7 +900,7 @@ class Gateway:
         if self._writer is None:
             return
         try:
-            await self._writer.persist(chat_id, list(await stream.history.get_events()))
+            await self._persist_log(chat_id, stream)
             await self._append_transcript(chat_id, user_text, reply_text)
         except Exception as exc:
             log_suppressed("turn persistence", exc, chat_id=chat_id)
@@ -1191,7 +1200,7 @@ class Gateway:
                     await self._event_store.delete(path)
                     removed = True
             self._streams.pop(chat_id, None)
-            self._loaded.discard(chat_id)
+            self._synced.pop(chat_id, None)
         self._locks.pop(chat_id, None)
         return removed
 
@@ -1349,7 +1358,7 @@ class Gateway:
         await self._aclose_agents([a for a in (self._agent, *self._model_agents.values()) if a])
         self._streams.clear()
         self._locks.clear()
-        self._loaded.clear()
+        self._synced.clear()
         self._agent = None
 
 
