@@ -95,6 +95,17 @@ fresh stream on demand — so conversations survive a gateway restart with compl
 context, not just a text transcript. This applies to **every** surface (web and
 all chat channels), keyed by chat id.
 
+**Custom Cards.** Ask for a custom visual answer or template, then refine it in Chat.
+The `card-author` Skill creates independent drafts with version history; experiments
+stay in that Chat across restarts. Only the current version of each draft offers
+**Save**. Choose its name and filename to save a reusable definition into the Profile's
+`cards/` directory in Files. A name or filename collision requires **Replace** or
+**Save as copy**; current instance values stay in Chat, separate from the saved worked
+example. You can also explicitly ask the assistant to save or restore an earlier
+version. Saved definitions become available on the next Turn, including in other
+existing Chats. `card-author` and `rich-views` have independent switches in Settings;
+turning authoring off preserves historical previews and their Save buttons.
+
 Endpoints:
 
 ```

@@ -33,6 +33,7 @@ dependencies = [
     "python-telegram-bot>=21.0",
     "discord.py>=2.4",
     "slack-bolt>=1.18",
+    "jsonschema>=4.26.0",
 ]
 
 [project.optional-dependencies]
@@ -44,6 +45,7 @@ dev = [
     "mypy>=2.3,<2.4",
     "types-PyYAML>=6.0",
     "pre-commit>=4.0.0",
+    "types-jsonschema>=4.26.0.20260518",
 ]
 # Provider client libraries not in the base install.
 # Opt-in: `pip install "ag2-assistant[ollama]"`.
@@ -115,7 +117,7 @@ ignore-words-list = "ans,hsi,thur,unparseable,pre-empt,pre-selects,protext,padd,
 where = ["src"]
 
 [tool.setuptools.package-data]
-"assistant" = ["skills/*/SKILL.md", "cards/bundled/*.card.yaml"]
+"assistant" = ["skills/*/SKILL.md", "cards/bundled/*.card.yaml", "cards/VOCABULARY.md"]
 "assistant.gateway" = [
     "static/*.html",
     "static/*.svg",

@@ -139,6 +139,7 @@ from assistant.gateway.profile_manager import (
 )
 from assistant.gateway.routes import (
     acp,
+    card,
     chat,
     connection,
     file,
@@ -508,6 +509,7 @@ def create_app(
     # task-scoped permission pair — in its own module because a module follows its
     # zod twin (TaskRules is declared in permission.ts).
     p.include_router(chat.build_profile_router(deps, get_runtime))
+    p.include_router(card.build_profile_router(deps, get_runtime))
     p.include_router(task.build_profile_router(deps, get_runtime))
     p.include_router(permission.build_profile_router(deps, get_runtime))
 

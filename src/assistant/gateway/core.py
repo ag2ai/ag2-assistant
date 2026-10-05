@@ -62,6 +62,7 @@ from assistant.agent import (
     model_config,
     universal_turn_prompt,
 )
+from assistant.card_drafts import CardDrafts
 from assistant.codex_auth import CodexAuth, CodexAuthError
 from assistant.coding.detect import parse_bridge
 from assistant.config import Config, load_config
@@ -200,6 +201,7 @@ class Gateway:
         title_factory: Callable | None = None,
         model_factory: Callable | None = None,
         environment_factory: Callable | None = None,
+        history_factory: Callable | None = None,
         subscription_auth: CodexAuth | None = None,
         google: GoogleAuth | None = None,
     ) -> None:
@@ -214,6 +216,7 @@ class Gateway:
         self._agent_factory = agent_factory or create_agent
         self._model_factory = model_factory
         self._environment_factory = environment_factory or docker_environment
+        self._history_factory = history_factory or (lambda path: SqliteKnowledgeStore(str(path)))
         self._subscription_auth = subscription_auth or CodexAuth(self._config.paths)
         self._google = google or GoogleAuth(self._config.paths)
         self._resources = ProfileResources()
@@ -239,6 +242,8 @@ class Gateway:
         self._streams: dict[str, MemoryStream] = {}
         self._synced: dict[str, str | None] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        self._log_locks: dict[str, asyncio.Lock] = {}
+        self.card_drafts = CardDrafts(self._config_factory, self._draft_history, self._commit_draft)
         # chat_id -> the turn currently running on it (feed_message / cancel_turn)
         self._active: dict[str, _ActiveTurn] = {}
         self._invocations: set[asyncio.Task] = set()
@@ -511,7 +516,7 @@ class Gateway:
                     "history",
                     "history",
                     lambda: OwnedSqliteStore(
-                        SqliteKnowledgeStore(str(self._config.data_dir / "chats.db"))
+                        self._history_factory(self._config.data_dir / "chats.db")
                     ),
                 ).value
             )
@@ -627,8 +632,59 @@ class Gateway:
     async def _persist_log(self, chat_id: str, stream) -> None:
         """Write the stream's events as the chat's log and remember the stored text."""
         assert self._writer is not None
-        await self._writer.persist(chat_id, list(await stream.history.get_events()))  # type: ignore[arg-type]
-        self._synced[chat_id] = await self._read_log(chat_id)
+        async with self._log_locks.setdefault(chat_id, asyncio.Lock()):
+            await self._writer.persist(chat_id, list(await stream.history.get_events()))  # type: ignore[arg-type]
+            self._synced[chat_id] = await self._read_log(chat_id)
+
+    async def _draft_history(self, context: ConversationContext) -> list:
+        events = [] if self._writer is None else await self._writer.load(context.stream.id)
+        stream = self._streams[str(context.stream.id)]
+        current = list(await stream.history.get_events())
+        return list(
+            {
+                (
+                    type(event).__name__,
+                    json.dumps(event.to_dict(), sort_keys=True, default=str),
+                ): event
+                for event in [*events, *current]
+            }.values()
+        )
+
+    async def save_card_definition(self, chat_id: str, **request) -> dict:
+        """Save a current draft through the same operation as the Card author Skill."""
+        context = ConversationContext(stream=await self.stream_for(chat_id))
+        return await self.card_drafts.save(context, **request)
+
+    async def _commit_draft(self, context: ConversationContext, event) -> None:
+        writer = self._writer
+        if writer is None:
+            raise OSError("Drafts require durable Chat persistence")
+        chat_id = str(context.stream.id)
+        stream = self._streams[chat_id]
+
+        async def commit():
+            async with self._log_locks.setdefault(chat_id, asyncio.Lock()):
+                events = list(await stream.history.get_events())
+                await writer.persist(context.stream.id, [*events, event])
+                try:
+                    await context.send(event)
+                except Exception as exc:
+                    current = list(await stream.history.get_events())
+                    if event not in current:
+                        await stream.history.replace([*current, event])
+                    log_suppressed("draft event delivery", exc, chat_id=chat_id)
+                try:
+                    self._synced[chat_id] = await self._read_log(chat_id)
+                except Exception as exc:
+                    self._synced.pop(chat_id, None)
+                    log_suppressed("draft log synchronization", exc, chat_id=chat_id)
+
+        task = asyncio.create_task(commit())
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            await task
+            raise
 
     async def _refresh_subscription(self, config: Config) -> None:
         if config.llm.provider == "openai" and config.llm.auth_mode == "subscription":
@@ -721,7 +777,11 @@ class Gateway:
         skill_runtime = build_skills_runtime(effective)
         tools.extend(build_skills_install_tools(effective, build_skills_runtime(effective)))
         held_cards = self._catalog.hold()
-        plugins = [build_skills_plugin(effective, skill_runtime, catalog=held_cards, snapshot=True)]
+        plugins = [
+            build_skills_plugin(
+                effective, skill_runtime, catalog=held_cards, snapshot=True, drafts=self.card_drafts
+            )
+        ]
         guidance = [
             effective.agent.system_prompt,
             *universal_turn_prompt(

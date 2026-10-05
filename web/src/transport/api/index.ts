@@ -6,6 +6,7 @@
 // G() (→ /api/…). See lib/profile.ts.
 import { acpApi } from './acp.ts'
 import { chatsApi } from './chats.ts'
+import { cardsApi } from './cards.ts'
 import { codingApi } from './coding.ts'
 import { connectionsApi } from './connections.ts'
 import { filesApi } from './files.ts'
@@ -32,6 +33,7 @@ export const api = {
   ...connectionsApi,
   ...acpApi,
   ...chatsApi,
+  ...cardsApi,
   ...tasksApi,
   ...filesApi,
   ...settingsApi,

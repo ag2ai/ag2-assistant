@@ -261,6 +261,23 @@ class ScriptedModels:
         return _RecordingModel(self, config.model_copy(deep=True), model)
 
 
+class ControlledHistory:
+    """A real SQLite history store with a controllable failed-write boundary."""
+
+    def __init__(self, path):
+        self.inner = SqliteKnowledgeStore(str(path))
+        self.fail = False
+        self.saved_status_fails = False
+
+    async def write(self, path, content):
+        if self.fail or (self.saved_status_fails and "CardDefinitionSaved" in content):
+            raise OSError("History write unavailable")
+        await self.inner.write(path, content)
+
+    def __getattr__(self, name):
+        return getattr(self.inner, name)
+
+
 class _RecordingModel(TestConfig):
     def __init__(self, models, config, model):
         self.models, self.config, self.selected_model = models, config, model

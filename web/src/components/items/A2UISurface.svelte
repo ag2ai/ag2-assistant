@@ -2,6 +2,8 @@
   import Icon from '../Icon.svelte'
   import BasicA2UIComponent from './BasicA2UIComponent.svelte'
   import A2UIComposing from './A2UIComposing.svelte'
+  import CardDraftSave from './CardDraftSave.svelte'
+  import { currentDraft } from '../../lib/cardDrafts.ts'
   import { a2uiComposingSurfaceId, str, withA2UIValue, SURFACE_TITLE } from '../../lib/a2ui.ts'
   import type { A2UIAction, A2UIData } from '../../lib/a2ui.ts'
   import { a2uiAction } from '../../controller.ts'
@@ -63,6 +65,9 @@
 
   <BasicA2UIComponent component={item.component} {components} data={inputData} onDataChange={setInputValue} onAction={submitAction} />
 </div>
+{/if}
+{#if currentDraft($thread.items, item)}
+  <CardDraftSave {item} />
 {/if}
 {#if actionPending}
   <div class="a2ui-action-pending" role="status" aria-label="Submitting action"><Icon name="rotate-cw" size={14} /></div>

@@ -331,6 +331,7 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
       items.push({ id: nid(), kind: 'genimage', path: d.path, prompt: d.prompt })
       break
     }
+    case 'EphemeralCard':
     case 'A2UISurface': {
       const d = EventData.A2UISurface.parse(data)
       let item = items.find((i): i is ItemOf<'a2ui'> => i.kind === 'a2ui' && i.surfaceId === d.surface_id)
@@ -352,7 +353,16 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
         item.components = tree
       }
       item.data = d.data ?? {}
+      if (type === 'EphemeralCard') {
+        const draft = EventData.EphemeralCard.parse(data)
+        item.draft = { id: draft.draft_id, version: draft.draft_version, name: draft.definition.name }
+      }
       silenceNoReply(items)
+      break
+    }
+    case 'CardDefinitionSaved': {
+      const d = EventData.CardDefinitionSaved.parse(data)
+      items.push({ id: nid(), kind: 'note', icon: 'check', text: `Saved ${d.name} to ${d.path}` })
       break
     }
     case 'A2UISurfaceDataUpdated': {

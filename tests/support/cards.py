@@ -6,6 +6,7 @@ plugin is built from, so what a test reads is what a turn would be handed.
 
 from pathlib import Path
 
+import yaml
 from ag2.a2ui import A2UIMessageEvent
 from ag2.context import ConversationContext
 from ag2.stream import MemoryStream
@@ -27,6 +28,11 @@ layout:
   - {{id: head, component: Text, text: {{path: /title}}}}
 example: {{title: {example}}}
 """
+
+
+def card_definition(name: str = "Shelf") -> dict:
+    """A minimal reusable definition with an independently filled title."""
+    return yaml.safe_load(CARD.format(name=name, description="Books", topic="", example="Books"))
 
 
 def write_card(
