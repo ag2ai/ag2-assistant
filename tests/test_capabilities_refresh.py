@@ -12,7 +12,9 @@ from ag2 import Agent
 from ag2.a2ui import A2UIMessageEvent
 from ag2.events import (
     CompactionCompleted,
+    ModelMessage,
     ModelMessageChunk,
+    ModelResponse,
     ToolCallEvent,
     ToolCallsEvent,
     ToolErrorEvent,
@@ -881,6 +883,7 @@ async def test_channel_delivery_refreshes_existing_chat(paths):
 
 
 async def test_voice_delegate_refreshes_during_one_connection(config):
+    config.secret_env = {**config.secret_env, "GEMINI_API_KEY": "test"}
     models = ScriptedModels()
     tasks = TaskService(config, summary_factory=fake_summary_factory())
     await tasks.start(scheduler=False)
@@ -1214,6 +1217,42 @@ async def test_user_stop_during_preparation_releases_resources_and_preserves_que
     finally:
         release.set()
         await gateway.close()
+
+
+async def test_cancelled_turn_keeps_work_when_another_gateway_changes_the_chat_log(config):
+    entered = asyncio.Event()
+
+    async def before_call(messages, context):
+        await context.send(ModelResponse(message=ModelMessage(content="first Turn work")))
+        entered.set()
+        await asyncio.Event().wait()
+
+    first = real_gateway(
+        config, memory=False, onboard=False, model_factory=ScriptedModels(before_call=before_call)
+    )
+    second = real_gateway(config, memory=False, onboard=False, model_factory=ScriptedModels())
+    fresh = real_gateway(config, memory=False, onboard=False, model_factory=ScriptedModels())
+    await first.start()
+    await second.start()
+    try:
+        turn = asyncio.create_task(first.send_message("work", chat_id="shared"))
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        await second.emit_event(
+            "shared", ModelResponse(message=ModelMessage(content="another process work"))
+        )
+        assert await first.cancel_turn("shared")
+        assert await asyncio.wait_for(turn, timeout=2) == ""
+        await fresh.start()
+        events = await (await fresh.stream_for("shared")).history.get_events()
+        assert any(
+            isinstance(event, ModelResponse) and event.message.content == "first Turn work"
+            for event in events
+        )
+        assert isinstance(events[-1], TurnCancelled)
+    finally:
+        await first.close()
+        await second.close()
+        await fresh.close()
 
 
 async def test_changed_compaction_threshold_emits_compaction_and_uses_profile_cheap_model(config):

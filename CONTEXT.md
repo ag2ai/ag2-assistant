@@ -112,11 +112,9 @@ every install and for agent-authored skills. On a name clash, the Profile skill
 wins over the Global one. Fully managed by that profile: Enable/Disable/Delete.
 
 **Skill state** (Enabled / Disabled):
-Whether a skill appears in the agent's `<available_skills>` catalog. A new
-concept: previously a skill was either present on disk (available) or absent.
-**Disabled** keeps the skill installed but out of the catalog. Because the catalog
-is a **construction-time snapshot**, a state change lands immediately in storage
-but only reaches the running agent on its next build.
+Whether an installed skill is offered to the agent: **Disabled** keeps it installed
+but out of the catalog. A change applies to the next **Turn**, including in an
+existing **Chat**, while a Turn already running keeps its previous capabilities.
 _Avoid_: uninstall (that is Delete — removal from disk), archive (a profile
 concept)
 
@@ -169,11 +167,10 @@ space — so the agent writes one with the ordinary file tools and the user find
 in the Files tree. On a name clash, the Profile card wins over the Global one.
 
 **Card state** (Enabled / Disabled):
-Whether a Card appears in the **Card catalog**. The same shape as **Skill state**,
-including the per-profile **Suppression** override, but recorded separately in its
-own `cards.json` at the Root: a Skill and a Card may share a name and must not share
-a switch. A change reaches the agent on its next message, not its next build — but a
-Card instance already in a **Thread** goes on drawing, whatever the switch now says.
+Whether a Card appears in the **Card catalog**, independently of **Skill state**
+and with its own per-profile **Suppression**. A change applies to the next **Turn**;
+a Turn already running keeps its previous capabilities, and an existing
+**Card instance** goes on drawing whatever the switch now says.
 
 **Card vocabulary**:
 The primitives and styling words a **Card**'s layout is composed from — the visual
@@ -338,6 +335,20 @@ _Note_: a Chat opened in the main pane is a **Thread** (the chat-or-task union) 
 _Note_: a Chat is not owned by the surface that started it. The browser and a
 **Peer** reach the same Chats, and a Peer may attach to a Chat begun in the browser
 (ADR 0020). What a Chat can never do is cross Profiles.
+
+**Turn**:
+One execution of the assistant in a **Chat**, from accepting its initiating message
+for processing until it completes, fails, or is stopped. Further messages fed into
+that execution belong to the same Turn; a Chat can contain many Turns.
+_Avoid_: dialog, chat (that is the persisted conversation), message (additional
+messages can join a running Turn)
+
+**Capabilities**:
+The tools, Skills, and Cards offered to the assistant for one **Turn**, fixed when
+that Turn starts. An existing **Chat** receives the current Capabilities on each
+new Turn; a running Turn keeps its previous set.
+_Avoid_: permissions (that is command policy), config (the choices determining
+Capabilities, rather than the offered set)
 
 **Starred**:
 A user-set flag on a listed **Chat** or **Task** that lifts it into a "Starred"

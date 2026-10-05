@@ -10,6 +10,9 @@ skill is available to a profile *unless* turned off, where Folders are unreachab
 
 ## Context
 
+ADR 0041 amends the refresh boundary and replaces reload-driven capability updates;
+its implementation is tracked in Issue #121.
+
 Three skill layers exist (glossary): **Bundled** (first-party, read-only, ships with the
 app), **Global** (user-installed at the Root, shared by every profile), **Profile**
 (installed inside one profile). Users asked to enable/disable/delete skills at both the

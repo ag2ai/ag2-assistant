@@ -598,7 +598,7 @@ class Gateway:
         if stream is None:
             stream = MemoryStream(id=chat_id)  # type: ignore[arg-type]
             self._streams[chat_id] = stream
-        if self._writer is not None and not self.is_running(chat_id):
+        if self._writer is not None and chat_id not in self._active:
             raw = None
             try:
                 raw = await self._read_log(chat_id)
