@@ -6,6 +6,8 @@ import json
 import pytest
 import yaml
 from ag2.events import ToolCallEvent, ToolErrorEvent, ToolResultEvent
+from ag2.knowledge import SqliteKnowledgeStore
+from ag2.knowledge.log import EventLogWriter
 
 from assistant.a2ui import CardCatalog
 from assistant.card_drafts import DraftError
@@ -66,6 +68,11 @@ async def test_unknown_card_is_drawn_and_durable_with_rich_views_off(config):
         assert CardCatalog(config).cards() == catalog
     finally:
         await gateway.close()
+    changed = definition()
+    changed["layout"][1]["text"] = "Changed catalog definition"
+    directory = config.workspace_dir / CARDS_DIR
+    directory.mkdir(parents=True)
+    (directory / "shelf.card.yaml").write_text(yaml.safe_dump(changed))
     restarted = real_gateway(config, memory=False, onboard=False, model_factory=models)
     await restarted.start()
     try:
@@ -73,6 +80,78 @@ async def test_unknown_card_is_drawn_and_durable_with_rich_views_off(config):
         assert [entry.to_dict() for entry in replay] == [entry.to_dict() for entry in events]
     finally:
         await restarted.close()
+
+
+async def test_cancelling_after_authoring_preserves_the_durable_version(config):
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def before_call(messages, context):
+        if len(models.requests) == 2:
+            entered.set()
+            await release.wait()
+
+    models = ScriptedModels(
+        lambda cfg, model: [
+            call("draft_card", {"definition": definition(), "data": {"title": "Committed"}}),
+            "done",
+        ],
+        before_call=before_call,
+    )
+    gateway = real_gateway(config, memory=False, onboard=False, model_factory=models)
+    await gateway.start()
+    try:
+        turn = asyncio.create_task(gateway.send_message("Draw", chat_id="drafts"))
+        await asyncio.wait_for(entered.wait(), 5)
+        before = [event.to_dict() for event in await drafts(gateway)]
+        assert len(before) == 1
+        assert await gateway.cancel_turn("drafts")
+        await asyncio.gather(turn, return_exceptions=True)
+    finally:
+        release.set()
+        await gateway.close()
+    restarted = real_gateway(config, memory=False, onboard=False, model_factory=models)
+    await restarted.start()
+    try:
+        assert [event.to_dict() for event in await drafts(restarted)] == before
+        event = (await drafts(restarted))[0]
+        stream = await restarted.stream_for("drafts")
+        store = SqliteKnowledgeStore(str(config.data_dir / "chats.db"))
+        try:
+            await EventLogWriter(store).persist_dropped(
+                stream.id, await stream.history.get_events()
+            )
+        finally:
+            store.close()
+        await stream.history.replace([])
+        models.script = lambda cfg, model: [
+            call("read_draft", {"draft_id": event.draft_id, "version": 1}),
+            call(
+                "save_card",
+                {
+                    "draft_id": event.draft_id,
+                    "expected_version": 1,
+                    "surface_id": event.surface_id,
+                    "name": "Shelf",
+                    "filename": "shelf.card.yaml",
+                    "request_id": "after-cancellation",
+                },
+            ),
+            "done",
+        ]
+        await restarted.send_message("Read and save the committed Card", chat_id="drafts")
+        path = config.workspace_dir / CARDS_DIR / "shelf.card.yaml"
+        assert yaml.safe_load(path.read_text()) == definition()
+        history = await (await restarted.stream_for("drafts")).history.get_events()
+        results = [e.result.parts[0].content for e in history if isinstance(e, ToolResultEvent)]
+        assert json.loads(results[-2])["data"] == {"title": "Committed"}
+    finally:
+        await restarted.close()
+    reopened = real_gateway(config, memory=False, onboard=False, model_factory=models)
+    await reopened.start()
+    try:
+        assert [event.to_dict() for event in await drafts(reopened)] == before
+    finally:
+        await reopened.close()
 
 
 async def test_invalid_definition_and_data_can_be_repaired_in_the_same_turn(config):
