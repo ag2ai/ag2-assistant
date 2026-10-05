@@ -42,6 +42,31 @@ def test_invalid_primitive_properties_are_rejected(properties):
 
 
 @pytest.mark.parametrize(
+    "component",
+    [
+        {"component": "Video", "url": "clip.mp4", "posterUrl": {"path": "/title"}},
+        {
+            "component": "ChoicePicker",
+            "options": [{"label": "Yes", "value": "yes"}],
+            "displayStyle": "chips",
+        },
+        {
+            "component": "DateTimeInput",
+            "enableDate": True,
+            "min": "2026-01-01",
+            "max": {"path": "/title"},
+        },
+    ],
+)
+def test_existing_media_and_input_properties_remain_loadable(component, tmp_path):
+    raw = definition()
+    raw["layout"][1] = {"id": "head", **component}
+    card = validate_card(raw, CARD_VOCABULARY)
+    (tmp_path / "shelf.card.yaml").write_text(yaml.safe_dump(raw))
+    assert load_cards(tmp_path, CARD_VOCABULARY)[card.name] == card
+
+
+@pytest.mark.parametrize(
     "change, error",
     [
         ({"required": 1}, "required must"),
@@ -60,10 +85,45 @@ def test_invalid_definitions_are_actionable(change, error):
         validate_card({**definition(), **change}, CARD_VOCABULARY)
 
 
+@pytest.mark.parametrize("key", ["name", "description", "topic"])
+def test_metadata_must_match_the_wire_contract(key):
+    with pytest.raises(CardError, match=f"{key} must be text"):
+        validate_card({**definition(), key: 17}, CARD_VOCABULARY)
+
+
+@pytest.mark.parametrize("keyword", ["$ref", "$dynamicRef"])
+def test_fields_cannot_trigger_remote_schema_resolution(keyword):
+    raw = definition()
+    raw["fields"]["title"] = {keyword: "https://example.com/remote-schema"}
+    with pytest.raises(CardError, match="only local schemas"):
+        validate_card(raw, CARD_VOCABULARY)
+
+
+@pytest.mark.parametrize("axis", ["columns", "rows", "cells", "key"])
+def test_table_axes_and_column_key_require_data_bindings(axis):
+    raw = definition()
+    raw["layout"] = [
+        {
+            "id": "root",
+            "component": "Table",
+            "columns": {"path": "/columns"},
+            "rows": {"path": "/rows"},
+            "cells": {"path": "./cells"},
+            "cell": "cell",
+        },
+        {"id": "cell", "component": "Text", "text": {"path": "."}},
+    ]
+    raw["layout"][0][axis] = [{"label": "Literal axis"}]
+    with pytest.raises(CardError, match="root"):
+        validate_card(raw, CARD_VOCABULARY)
+
+
 def test_nested_repeats_and_table_scopes_draw_identically_from_file_and_memory(tmp_path):
     raw = definition()
     raw["fields"]["rows"] = {"type": "array", "items": {"type": "object"}}
-    raw["example"]["rows"] = [{"label": "A", "items": [{"label": "B"}]}]
+    raw["fields"]["columns"] = {"type": "array", "items": {"type": "object"}}
+    raw["example"]["columns"] = [{"label": "Label"}]
+    raw["example"]["rows"] = [{"label": "A", "items": [{"label": "B", "cells": ["Cell"]}]}]
     raw["layout"] = [
         {"id": "root", "component": "Column", "children": {"componentId": "row", "path": "/rows"}},
         {"id": "row", "component": "Column", "children": ["label", "nested", "table"]},
@@ -77,9 +137,9 @@ def test_nested_repeats_and_table_scopes_draw_identically_from_file_and_memory(t
         {
             "id": "table",
             "component": "Table",
-            "columns": [{"label": "Label"}],
+            "columns": {"path": "/columns"},
             "rows": {"path": "./items"},
-            "cells": ["./label"],
+            "cells": {"path": "./cells"},
             "header": "header",
             "cell": "cell",
         },

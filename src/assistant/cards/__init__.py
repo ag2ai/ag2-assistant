@@ -179,6 +179,9 @@ def validate_card(
         raise CardError(f"definition is {size} bytes, over {FILE_BUDGET}")
     if not isinstance(raw, dict):
         raise CardError("not a YAML mapping")
+    for key in ("name", "description", "topic"):
+        if key in raw and not isinstance(raw[key], str):
+            raise CardError(f"{key} must be text")
     name = str(raw.get("name") or "").strip()
     description = str(raw.get("description") or "").strip()
     if not name:
@@ -232,9 +235,10 @@ def validate_card_data(fields: dict, required: tuple[str, ...], data: Any, *, la
         "required": list(required),
         "additionalProperties": False,
     }
-    for ref in _values_for(fields, "$ref"):
-        if not isinstance(ref, str) or not ref.startswith("#"):
-            raise CardError("fields may reference only local schemas")
+    for keyword in ("$ref", "$dynamicRef"):
+        for ref in _values_for(fields, keyword):
+            if not isinstance(ref, str) or not ref.startswith("#"):
+                raise CardError("fields may reference only local schemas")
     try:
         Draft202012Validator.check_schema(schema)
         Draft202012Validator(schema).validate(data)

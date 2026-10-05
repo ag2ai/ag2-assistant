@@ -81,7 +81,7 @@ PROPERTIES: dict[str, dict[str, Any]] = {
             "enum": ["icon", "avatar", "smallFeature", "mediumFeature", "largeFeature", "header"]
         },
     },
-    "Video": {"url": TEXT},
+    "Video": {"url": TEXT, "posterUrl": TEXT},
     "Button": {
         "child": REFERENCE,
         "variant": {"enum": ["primary", "borderless"]},
@@ -111,6 +111,7 @@ PROPERTIES: dict[str, dict[str, Any]] = {
         "value": ARRAY,
         "options": ARRAY,
         "variant": {"enum": ["mutuallyExclusive", "multipleSelection"]},
+        "displayStyle": {"enum": ["checkbox", "chips"]},
     },
     "Slider": {
         "label": TEXT,
@@ -124,11 +125,12 @@ PROPERTIES: dict[str, dict[str, Any]] = {
         "value": TEXT,
         "enableDate": {"type": "boolean"},
         "enableTime": {"type": "boolean"},
+        "min": TEXT,
+        "max": TEXT,
     },
     "Table": {
-        "columns": ARRAY,
-        "rows": ARRAY,
-        **{key: VALUE for key in ("cells", "key", "win", "pick")},
+        **{key: BINDING for key in ("columns", "rows", "cells", "key")},
+        **{key: VALUE for key in ("win", "pick")},
         **{key: REFERENCE for key in ("header", "lead", "cell")},
     },
 }

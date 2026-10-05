@@ -874,6 +874,7 @@ def test_the_condition_vocabulary_belongs_to_the_glyph_not_to_the_card(tmp_path)
     # primitive's vocabulary, still maps into the eight the glyph can draw.
     mine = yaml.safe_load((bundled_cards_dir() / "weatherpanel.card.yaml").read_text())
     mine["fields"]["condition"]["enum"] = ["hail"]
+    mine["example"]["condition"] = "hail"
     (tmp_path / "weatherpanel.card.yaml").write_text(yaml.safe_dump(mine))
     assert load_cards(tmp_path)["WeatherPanel"].fields["condition"]["enum"] == ["hail"]
 
