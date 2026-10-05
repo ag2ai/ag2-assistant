@@ -13,14 +13,18 @@ resolution-markers = [
 
 [[package]]
 name = "ag2"
-version = "1.1.0"
-source = { git = "https://github.com/ag2ai/ag2.git?branch=main#36ea2485a870e612e709c79a3af980fb757d7af3" }
+version = "1.1.2"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
     { name = "fast-depends", extra = ["pydantic"] },
     { name = "httpx" },
     { name = "pydantic" },
     { name = "pyyaml" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/46/61/fda996fca3f63802507b1af2cacb5b7c8adf9638572c1cc8e3d5659d23d8/ag2-1.1.2.tar.gz", hash = "sha256:0d5bc1eea5c6f12ada1236f6d741c7ef4260cb41c9b0576447853e56f21a0e6a", size = 870525, upload-time = "2026-10-03T06:26:23.017Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7f/8a/6262df7308db24fc684e1fbad29c47b79ff63c31d4136c2d690bae5435fd/ag2-1.1.2-py3-none-any.whl", hash = "sha256:bd3bed2697b79483c30f5d89e5fee153ecbc2b6e832917c810b01ee579e97eb2", size = 1155201, upload-time = "2026-10-03T06:26:20.603Z" },
 ]
 
 [package.optional-dependencies]
@@ -96,9 +100,9 @@ ollama = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ag2", extras = ["anthropic"], marker = "extra == 'anthropic'", git = "https://github.com/ag2ai/ag2.git?branch=main" },
-    { name = "ag2", extras = ["gemini", "ddgs", "openai", "acp"], git = "https://github.com/ag2ai/ag2.git?branch=main" },
-    { name = "ag2", extras = ["ollama"], marker = "extra == 'ollama'", git = "https://github.com/ag2ai/ag2.git?branch=main" },
+    { name = "ag2", extras = ["anthropic"], marker = "extra == 'anthropic'", specifier = ">=1.1.2" },
+    { name = "ag2", extras = ["gemini", "ddgs", "openai", "acp"], specifier = ">=1.1.2" },
+    { name = "ag2", extras = ["ollama"], marker = "extra == 'ollama'", specifier = ">=1.1.2" },
     { name = "beautifulsoup4", specifier = ">=4.12.0" },
     { name = "cron-descriptor", specifier = ">=1.4" },
     { name = "cronsim", specifier = ">=2.7" },

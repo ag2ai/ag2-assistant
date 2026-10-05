@@ -133,6 +133,8 @@ def build_agent_tools(
     google: "GoogleAuth | None" = None,
     environment_factory=None,
     builtin: dict[str, dict] | None = None,
+    mcp_factory=build_mcp_tools,
+    local_environment_factory=LocalEnvironment,
 ) -> list:
     """Build the agent's tools.
 
@@ -209,7 +211,7 @@ def build_agent_tools(
                     ),
                 ),
                 SandboxCodeTool(
-                    environment=LocalEnvironment(),
+                    environment=local_environment_factory(),
                     middleware=[approval],
                     name="run_code_local",
                     description=(
@@ -220,6 +222,7 @@ def build_agent_tools(
                     ),
                 ),
                 SandboxShellTool(
+                    environment=local_environment_factory(),
                     blocked=_SHELL_BLOCKED,
                     middleware=[approval],
                     name="run_shell_local",
@@ -234,8 +237,12 @@ def build_agent_tools(
         else:
             approval = require_command_approval()
             tools += [
-                SandboxShellTool(blocked=_SHELL_BLOCKED, middleware=[approval]),
-                SandboxCodeTool(environment=LocalEnvironment(), middleware=[approval]),
+                SandboxShellTool(
+                    environment=local_environment_factory(),
+                    blocked=_SHELL_BLOCKED,
+                    middleware=[approval],
+                ),
+                SandboxCodeTool(environment=local_environment_factory(), middleware=[approval]),
             ]
 
     if want("coding"):
@@ -286,7 +293,7 @@ def build_agent_tools(
         # Read THIS profile's MCP server list (config.data_dir is the profile dir),
         # so an agent only loads the MCP servers configured in its own profile.
         settings = profile_settings(config.data_dir)
-        tools += build_mcp_tools(settings.list_mcp_servers(include_env=True))
+        tools += mcp_factory(settings.list_mcp_servers(include_env=True))
 
     # Provider-native tools, last: a builtin and the local tool it stands in for do
     # the same job, and offering both only invites the model to pick badly — so drop

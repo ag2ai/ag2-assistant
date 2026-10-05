@@ -10,8 +10,8 @@ from fastapi.testclient import TestClient
 from assistant.a2ui_skill import A2UI_SKILL, a2ui_available
 from assistant.gateway.app import create_app
 from assistant.profiles import ProfileRegistry
-from tests.support.apps import api, make_manager, make_profile_app
-from tests.support.fakes import skill_catalog_factory
+from tests.support.apps import api, make_manager, make_profile_app, turn_catalog
+from tests.support.fakes import ScriptedModels
 
 
 def _client(paths):
@@ -134,25 +134,20 @@ def test_profile_skill_shadow_ignores_same_named_shared_off_state(paths):
             assert rows[name]["available"] is True
 
 
-def test_per_profile_change_reloads_only_active_profile(paths):
-    """Suppressing in one profile reloads ONLY that profile — never fans out. Observed
-    through the agents each profile was built with: the suppressed skill leaves Work's
-    catalog, and Personal is never rebuilt at all."""
-    agents: dict[str, list] = {}
-    manager = make_manager(paths, agent_factory=skill_catalog_factory(agents))
+def test_per_profile_change_refreshes_only_active_profile(paths):
+    """Future Turns observe availability changes in their resolved Profile scope."""
+    models = ScriptedModels()
+    manager = make_manager(paths, model_factory=models)
     app = create_app(manager)
     with TestClient(app) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
-        assert len(agents["work"]) == len(agents["personal"]) == 1  # just the boot build
 
         r = client.post(api("work", "/skills/web-research/suppress"))
         assert r.json()["ok"]
-        assert len(agents["work"]) == 2  # reloaded once
-        assert "web-research" not in agents["work"][-1].catalog
-        assert "pdf-tools" in agents["work"][-1].catalog  # only the suppressed one goes
-        assert len(agents["personal"]) == 1  # untouched: no fan-out
-        assert "web-research" in agents["personal"][-1].catalog
+        assert "web-research" not in turn_catalog(client, models, "work")
+        assert "pdf-tools" in turn_catalog(client, models, "work")  # only the suppressed one goes
+        assert "web-research" in turn_catalog(client, models, "personal")
 
 
 def test_the_a2ui_skill_is_suppressible_in_one_profile(paths):

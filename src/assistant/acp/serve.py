@@ -129,7 +129,7 @@ async def serve_stdio(
     else:
         gateway = Gateway(config=config, memory=memory, platform="acp", config_factory=factory)
         await gateway.start()
-        agent = gateway.require_agent()
+        agent = await gateway.acp_agent()
         # Owner-side approvals — never the ACP client. See approvals.py.
         asker = DesktopAsker()
         install_owner_side_approvals(agent, gateway, asker)

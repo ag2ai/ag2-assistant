@@ -484,6 +484,20 @@ class _AssistantA2UIRuntime:
         return capabilities_to_prompt(caps, catalog_id=self.schema_manager.catalog_id)
 
 
+class HeldCardCatalog:
+    """One resolved set of Card definitions and its matching A2UI runtime."""
+
+    def __init__(self, cards: dict[str, Card], runtime: "_AssistantA2UIRuntime") -> None:
+        self._cards = cards
+        self._runtime = runtime
+
+    def cards(self) -> dict[str, Card]:
+        return dict(self._cards)
+
+    def runtime(self) -> "_AssistantA2UIRuntime":
+        return self._runtime
+
+
 class CardCatalog:
     """One profile's Cards and the A2UI runtime built from them — re-read when a
     Card file changes, or when the state document turns one off or back on."""
@@ -508,6 +522,14 @@ class CardCatalog:
         Thread goes on drawing however its Card is switched now."""
         self._resolve()
         return dict(self._drawable)
+
+    def hold(self) -> HeldCardCatalog:
+        """Hold the offered definitions and runtime for one Turn."""
+        self._resolve()
+        cards = dict(self._cards)
+        if self._runtime is None:
+            self._runtime = _AssistantA2UIRuntime(cards)
+        return HeldCardCatalog(cards, self._runtime)
 
     def _resolve(self) -> None:
         fingerprint = (cards_fingerprint(self._layers), self._state.revision())

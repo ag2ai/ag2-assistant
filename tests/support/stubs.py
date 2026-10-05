@@ -49,3 +49,83 @@ def skill_tarball(
         info.mtime = int(time.time())
         tar.addfile(info, io.BytesIO(body))
     return buf.getvalue()
+
+
+def mcp_counter(path: Path, marker: Path) -> Path:
+    """Write a JSON-RPC MCP peer retaining state and recording process lifetime."""
+    path.write_text("""import atexit, json, signal, sys
+from pathlib import Path
+marker = Path(sys.argv[1])
+def record(value):
+    with marker.open("a") as file:
+        file.write(value + "\\n")
+record("started")
+atexit.register(record, "closed")
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+count = 0
+for line in sys.stdin:
+    request = json.loads(line)
+    if "id" not in request:
+        continue
+    method = request["method"]
+    if method == "initialize":
+        result = {"protocolVersion": request["params"]["protocolVersion"],
+                  "capabilities": {"tools": {}}, "serverInfo": {"name": "counter", "version": "1"}}
+    elif method == "tools/list":
+        result = {"tools": [{"name": "increment", "description": "Increment state",
+                            "inputSchema": {"type": "object", "properties": {}}}]}
+    elif method == "tools/call":
+        count += 1
+        result = {"content": [{"type": "text", "text": str(count)}]}
+    else:
+        result = {}
+    print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
+""")
+    return path
+
+
+def acp_counter(path: Path) -> Path:
+    """Write an ACP peer retaining prompt state within its session and recording disposal."""
+    path.write_text("""import atexit, json, signal, sys
+from pathlib import Path
+marker = Path(sys.argv[1])
+def record(value):
+    with marker.open("a") as file:
+        file.write(value + "\\n")
+record("started")
+atexit.register(record, "closed")
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+count = 0
+for line in sys.stdin:
+    request = json.loads(line)
+    if "id" not in request:
+        continue
+    method = request["method"]
+    if method == "initialize":
+        result = {"protocolVersion": 1, "agentCapabilities": {}}
+    elif method == "session/new":
+        result = {"sessionId": "counter-session"}
+    elif method == "session/prompt":
+        with marker.with_suffix(".prompts").open("a") as file:
+            file.write(json.dumps(request["params"]["prompt"]) + "\\n")
+        count += 1
+        print(json.dumps({"jsonrpc": "2.0", "method": "session/update", "params": {
+            "sessionId": "counter-session", "update": {"sessionUpdate": "agent_message_chunk",
+            "content": {"type": "text", "text": str(count)}}}}), flush=True)
+        if "BLOCK_ACP" in json.dumps(request["params"]):
+            continue
+        result = {"stopReason": "end_turn"}
+    else:
+        result = {}
+    print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
+""")
+    return path
+
+
+def write_skill(config, name="fresh-skill", description="Freshly installed capability"):
+    """Write a Skill into the supplied configuration's resolved installation layer."""
+    directory = config.skills_dir / name
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: {description}\n---\nCurrent instructions.\n"
+    )

@@ -29,12 +29,13 @@ timeout window.
 """
 
 import asyncio
+import copy
 import random
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 from ag2.annotations import Context
-from ag2.events import BaseEvent, ModelResponse
+from ag2.events import BaseEvent, ModelRequest, ModelResponse, TextInput
 from ag2.middleware.base import BaseMiddleware, LLMCall, MiddlewareFactory
 
 # HTTP statuses worth another try: rate limit + the transient 5xx family. A fatal
@@ -187,3 +188,25 @@ class _LLMRetryMiddleware(BaseMiddleware):
         """Exponential backoff (base * 2**attempt), capped, with ±25% jitter."""
         delay = min(self._base_delay * (2**attempt), self._max_delay)
         return delay * (1 + random.uniform(-0.25, 0.25))
+
+
+class ACPInstructionsMiddleware(MiddlewareFactory):
+    """Include resolved assistant instructions in ACP's text-only prompt transport."""
+
+    def __call__(self, event: BaseEvent, context: Context) -> BaseMiddleware:
+        return _ACPInstructionsMiddleware(event, context)
+
+
+class _ACPInstructionsMiddleware(BaseMiddleware):
+    async def on_llm_call(
+        self, call_next: LLMCall, events: Sequence[BaseEvent], context: Context
+    ) -> ModelResponse:
+        outgoing = list(events)
+        for index in range(len(outgoing) - 1, -1, -1):
+            if isinstance(request := outgoing[index], ModelRequest):
+                held = copy.copy(request)
+                instructions = "Current assistant instructions:\n" + "\n\n".join(context.prompt)
+                held.parts = [TextInput(content=instructions), *request.parts]
+                outgoing[index] = held
+                break
+        return await call_next(outgoing, context)

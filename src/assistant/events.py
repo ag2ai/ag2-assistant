@@ -25,7 +25,7 @@ class AssistantEvent(BaseEvent):
 class TaskCreated(AssistantEvent):
     """A background task was spawned (e.g. from a chat) — renders as a task card."""
 
-    task_id: str = Field(kw_only=False)  # type: ignore[assignment]
+    task_id: str = Field(kw_only=False)
     title: str = ""
     kind: str = "task"  # "task" | "scheduled"
 
@@ -33,7 +33,7 @@ class TaskCreated(AssistantEvent):
 class TaskScheduled(AssistantEvent):
     """A task was scheduled (or rescheduled) to run later — renders as a schedule note."""
 
-    task_id: str = Field(kw_only=False)  # type: ignore[assignment]
+    task_id: str = Field(kw_only=False)
     scheduled_for: str = ""  # ISO 8601
     recurrence: str = ""  # 5-field cron; "" for one-off
     recurrence_desc: str = ""  # human-readable cron description ("" for one-off)
@@ -42,7 +42,7 @@ class TaskScheduled(AssistantEvent):
 class DeliverableProduced(AssistantEvent):
     """A task produced a deliverable — renders as a deliverable item with a preview."""
 
-    task_id: str = Field(kw_only=False)  # type: ignore[assignment]
+    task_id: str = Field(kw_only=False)
     deliverable_id: str = ""
     description: str = ""
     preview: str = ""  # short preview; full asset fetched via REST
@@ -53,7 +53,7 @@ class Attachment(AssistantEvent):
     """A file the user attached to a chat turn, saved to the workspace — renders in
     the thread as a thumbnail (images) or a file chip. `path` is workspace-relative."""
 
-    path: str = Field(kw_only=False)  # type: ignore[assignment]
+    path: str = Field(kw_only=False)
     name: str = ""
     media_type: str = ""
 
@@ -62,7 +62,7 @@ class ImageGenerated(AssistantEvent):
     """An image was generated/edited and saved to the workspace — renders inline as
     a clickable thumbnail. `path` is workspace-relative (served via /api/files/raw)."""
 
-    path: str = Field(kw_only=False)  # type: ignore[assignment]
+    path: str = Field(kw_only=False)
     prompt: str = ""
     media_type: str = "image/png"
 
@@ -75,11 +75,11 @@ class A2UISurface(AssistantEvent):
     events can be projected into this shape without changing the Svelte renderer.
     """
 
-    surface_id: str = Field(kw_only=False)  # type: ignore[assignment]
+    surface_id: str = Field(kw_only=False)
     catalog_id: str = "https://ag2.ai/assistant/a2ui/catalog.json"
     version: str = "v1.0"
-    component: dict = Field(default_factory=dict)  # type: ignore[assignment]
-    data: dict = Field(default_factory=dict)  # type: ignore[assignment]
+    component: dict = Field(default_factory=dict)
+    data: dict = Field(default_factory=dict)
     title: str = ""
     intent: str = ""
 
@@ -87,14 +87,14 @@ class A2UISurface(AssistantEvent):
 class A2UISurfaceDataUpdated(AssistantEvent):
     """Durable data-model snapshot emitted after an A2UI server action."""
 
-    surface_id: str = Field(kw_only=False)  # type: ignore[assignment]
-    data: dict = Field(default_factory=dict)  # type: ignore[assignment]
+    surface_id: str = Field(kw_only=False)
+    data: dict = Field(default_factory=dict)
 
 
 class A2UIActionSubmitted(AssistantEvent):
     """A user action was accepted by the backend and is being handled."""
 
-    surface_id: str = Field(kw_only=False)  # type: ignore[assignment]
+    surface_id: str = Field(kw_only=False)
     action_name: str = ""
 
 
@@ -108,8 +108,8 @@ class SubagentTrace(AssistantEvent):
     card key); `inner` is the wrapped event in wire shape ``{type, data}``.
     """
 
-    subagent_id: str = Field(kw_only=False)  # type: ignore[assignment]
-    inner: dict = Field(default_factory=dict)  # type: ignore[assignment]
+    subagent_id: str = Field(kw_only=False)
+    inner: dict = Field(default_factory=dict)
 
 
 class InquiryRaised(AssistantEvent):
@@ -119,11 +119,11 @@ class InquiryRaised(AssistantEvent):
     so it survives restarts and is answerable from any surface.
     """
 
-    inquiry_id: str = Field(kw_only=False)  # type: ignore[assignment]
+    inquiry_id: str = Field(kw_only=False)
     task_id: str = ""
     question: str = ""
     detail: str = ""  # secondary context, e.g. the exact code/command to be run
-    options: list[str] = Field(default_factory=list)  # type: ignore[assignment]
+    options: list[str] = Field(default_factory=list)
     kind: str = "question"  # "question" | "permission"
 
 
@@ -137,7 +137,7 @@ class InquiryAnswered(AssistantEvent):
     the chosen text for "answered", empty otherwise.
     """
 
-    inquiry_id: str = Field(kw_only=False)  # type: ignore[assignment]
+    inquiry_id: str = Field(kw_only=False)
     answer: str = ""
     status: str = "answered"
 
@@ -153,7 +153,7 @@ class FeedbackGiven(AssistantEvent):
     intent that produced it — both passed to the learner so it generalises correctly.
     """
 
-    target_id: str = Field(kw_only=False)  # type: ignore[assignment]
+    target_id: str = Field(kw_only=False)
     target_kind: str = "message"  # "message" | "image" | "deliverable"
     sentiment: str = "up"  # "up" | "down"
     reason: str = ""
@@ -171,7 +171,7 @@ class FeedbackCleared(AssistantEvent):
     learner. `target_kind`/`target_id` match the original FeedbackGiven's key.
     """
 
-    target_id: str = Field(kw_only=False)  # type: ignore[assignment]
+    target_id: str = Field(kw_only=False)
     target_kind: str = "message"  # "message" | "image" | "deliverable"
 
 
@@ -181,7 +181,7 @@ class TurnCancelled(AssistantEvent):
     their results stay in the history) — the thread shows where the work stopped,
     and replays that way."""
 
-    chat_id: str = Field(kw_only=False)  # type: ignore[assignment]
+    chat_id: str = Field(kw_only=False)
     reason: str = "Stopped"
 
 
@@ -194,5 +194,5 @@ class TurnFailed(AssistantEvent):
     `error` is a short, user-facing sentence; the traceback stays in the debug record
     written by ``capture_failure``, never in the chat."""
 
-    chat_id: str = Field(kw_only=False)  # type: ignore[assignment]
+    chat_id: str = Field(kw_only=False)
     error: str = ""

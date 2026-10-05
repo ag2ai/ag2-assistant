@@ -4,8 +4,8 @@ from fastapi.testclient import TestClient
 
 from assistant.a2ui_skill import A2UI_SKILL
 from assistant.gateway.app import create_app
-from tests.support.apps import make_manager, make_profile_app
-from tests.support.fakes import skill_catalog_factory
+from tests.support.apps import make_manager, make_profile_app, turn_catalog
+from tests.support.fakes import ScriptedModels
 
 
 def _client(paths):
@@ -66,23 +66,24 @@ def test_state_toggle_reflected_in_resolved_catalog(paths):
 
 
 def test_state_toggle_fans_out_to_all_runtimes(paths):
-    """An install-wide toggle reloads EVERY live runtime, so the disabled skill leaves
-    the catalog everywhere at once — including profiles nobody is chatting with."""
-    agents: dict[str, list] = {}
-    manager = make_manager(paths, agent_factory=skill_catalog_factory(agents))
+    """Future Turns observe availability changes in their resolved Profile scope."""
+    models = ScriptedModels()
+    manager = make_manager(paths, model_factory=models)
     app = create_app(manager)
     with TestClient(app) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
         for pid in ("work", "personal"):
-            assert "email-drafting" in agents[pid][-1].catalog
+            assert "email-drafting" in turn_catalog(client, models, pid)
 
         r = client.post("/api/skills/email-drafting/state", json={"enabled": False})
         assert r.json()["ok"]
         for pid in ("work", "personal"):
             # rebuilt, and the rebuild resolved the new state
-            assert "email-drafting" not in agents[pid][-1].catalog
-            assert "web-research" in agents[pid][-1].catalog  # only the toggled skill goes
+            assert "email-drafting" not in turn_catalog(client, models, pid)
+            assert "web-research" in turn_catalog(
+                client, models, pid
+            )  # only the toggled skill goes
 
 
 def test_the_a2ui_skill_sits_among_the_others_as_bundled(paths):

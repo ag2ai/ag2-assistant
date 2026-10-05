@@ -9,6 +9,7 @@ from assistant.agent import cheap_model, model_config
 from assistant.config import Config, resolve_config
 from assistant.gateway.core import Gateway
 from assistant.secrets import SecretStore
+from tests.support.fakes import ScriptedModels, fake_title_factory
 
 
 def test_secrets_set_status_clear_and_env(paths):
@@ -54,14 +55,22 @@ def test_resolve_config_no_longer_overlays_settings(paths):
     assert resolve_config({"AG2ASSISTANT_LLM_PROVIDER": "openai"}, paths).llm.provider == "openai"
 
 
-@pytest.mark.asyncio
-async def test_gateway_reload_swaps_agent(paths):
-    g = Gateway(config=Config.for_paths(paths), memory=False, persist=False)
-    await g.start()
-    first = g._agent
-    assert first is not None
-    await g.reload()  # reference-swap
-    assert g._agent is not None and g._agent is not first
+async def test_gateway_refresh_keeps_chat_history_and_updates_guidance(paths):
+    cfg = Config.for_paths(paths)
+    models = ScriptedModels()
+    gateway = Gateway(
+        cfg, memory=False, onboard=False, model_factory=models, title_factory=fake_title_factory()
+    )
+    await gateway.start()
+    try:
+        await gateway.send_message("first", chat_id="existing")
+        cfg.agent.system_prompt = "Updated persona"
+        await gateway.refresh()
+        await gateway.send_message("second", chat_id="existing")
+        assert "Updated persona" in models.requests[-1][1]
+        assert "first" in str(models.requests[-1][3])
+    finally:
+        await gateway.close()
 
 
 def test_model_config_key_env_by_provider(paths):

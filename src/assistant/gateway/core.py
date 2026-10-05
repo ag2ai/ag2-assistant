@@ -37,7 +37,9 @@ from ag2.events import (
 from ag2.knowledge import SqliteKnowledgeStore
 from ag2.knowledge.constants import LOG_PREFIX
 from ag2.knowledge.log import EventLogWriter
+from ag2.plugin import Plugin
 from ag2.stream import MemoryStream
+from ag2.tools import LocalEnvironment
 
 from assistant import onboarding
 from assistant import title as title_mod
@@ -47,7 +49,19 @@ from assistant.a2ui import (
     tolerant_a2ui_middleware,
 )
 from assistant.a2ui_skill import a2ui_available
-from assistant.agent import create_agent, universal_turn_prompt
+from assistant.agent import (
+    ACP_PROVIDERS,
+    BEHAVIOR_GUIDANCE,
+    RefreshingModelConfig,
+    _build_middleware,
+    build_skills_install_tools,
+    build_skills_plugin,
+    build_skills_runtime,
+    cheap_model,
+    create_agent,
+    model_config,
+    universal_turn_prompt,
+)
 from assistant.codex_auth import CodexAuth, CodexAuthError
 from assistant.coding.detect import parse_bridge
 from assistant.config import Config, load_config
@@ -57,7 +71,9 @@ from assistant.gateway.repair import repair_stream_history, wait_reply
 from assistant.gateway.tasks_service import TaskService
 from assistant.gateway.wire import is_binary_event
 from assistant.hitl import Asker, build_hitl_hook
+from assistant.integrations.google_auth import GoogleAuth
 from assistant.llm_configs import LlmConfigStore
+from assistant.memory import build_profile_store
 from assistant.observability import (
     capture_failure,
     log_suppressed,
@@ -65,9 +81,14 @@ from assistant.observability import (
 )
 from assistant.peers import PeerStore
 from assistant.permissions import PermissionManager, PermissionStore
-from assistant.secrets import SecretStore
+from assistant.resources import ProfileResources, ResourceLease, SharedEnvironment, fingerprint
+from assistant.secrets import KEY_ENV, OLLAMA_BASE_ENV, SecretStore
+from assistant.self_tools import build_self_tools
 from assistant.settings import profile_settings
 from assistant.storage import SerialStore
+from assistant.system_tools import build_system_tools
+from assistant.tools import build_agent_tools, docker_environment
+from assistant.tools.mcp import build_mcp_tools
 from assistant.usage import UsageLedger
 from assistant.voice import build_voice_agent
 
@@ -139,20 +160,22 @@ def is_internal_stream(chat_id: str) -> bool:
 
 @dataclass
 class _ActiveTurn:
-    """A turn in flight, so other coroutines can steer or stop it.
+    """A Chat-lock holder preparing or running a Turn, with its cancellation reason.
+    The task drives preparation until the AG2 run's result task takes over."""
 
-    `run` is AG2's ``AgentRun`` — its ``enqueue`` feeds the running turn (drained
-    before the turn's next model call). `task` is *our* task awaiting
-    ``run.result()``: AG2 cancels the turn when that await is cancelled, which is
-    the framework's cancellation contract (``AgentRun.result``). `cancelled` marks
-    the cancel as ours, so ``send_message`` can tell a user stop apart from an
-    ambient cancellation (WS disconnect, shutdown) it must re-raise.
-    """
-
-    run: AgentRun
+    run: AgentRun | None
     task: "asyncio.Task"
     cancelled: bool = False
     reason: str = "Stopped"
+
+
+@dataclass
+class _AgentGeneration:
+    agent: Agent
+    resources: ResourceLease
+
+    async def aclose(self) -> None:
+        await self.resources.aclose()
 
 
 class Gateway:
@@ -169,6 +192,10 @@ class Gateway:
         config_factory: Callable[[], Config] | None = None,
         agent_factory: Callable | None = None,
         title_factory: Callable | None = None,
+        model_factory: Callable | None = None,
+        environment_factory: Callable | None = None,
+        subscription_auth: CodexAuth | None = None,
+        google: GoogleAuth | None = None,
     ) -> None:
         self._config = config or load_config()
         self._memory = memory
@@ -179,20 +206,22 @@ class Gateway:
         # How the turn agent and the one-shot chat titler are built. Injected so a
         # caller (or a test) decides what an agent is; both default to production.
         self._agent_factory = agent_factory or create_agent
+        self._model_factory = model_factory
+        self._environment_factory = environment_factory or docker_environment
+        self._subscription_auth = subscription_auth or CodexAuth(self._config.paths)
+        self._google = google or GoogleAuth(self._config.paths)
+        self._resources = ProfileResources()
         self._title_factory = title_factory or title_mod.default_titler
-        # How reload() re-resolves config. For a profile runtime this re-reads that
-        # profile's registry entry + settings on every call (§4.1), so workspace/model
-        # edits are picked up; for bare construction it defaults to load_config (the
-        # global root config, profile-agnostic).
-        self._config_factory = config_factory or load_config
+        # Profile runtimes re-read registry settings at the actual Turn boundary.
+        self._config_factory = config_factory or (lambda: self._config)
         # This profile's Cards and the A2UI runtime over them; both re-read from
         # the three Card directories whenever one of their files changes.
         self._catalog = CardCatalog(self._config)
         self._onboarding_done = False
         self._agent: Agent | None = None
-        # Last ChatGPT-subscription access token baked into the agent, so a pre-turn
-        # refresh only rebuilds the (cached) agent when the token actually rotated.
-        self._codex_token: str | None = None
+        self._knowledge_store: SqliteKnowledgeStore | None = None
+        self._acp_generation: _AgentGeneration | None = None
+        self._preparation_lock = asyncio.Lock()
         self._permissions: PermissionStore | None = None
         self._folders: FolderStore | None = None
         self._event_store: SerialStore | None = None
@@ -203,13 +232,12 @@ class Gateway:
         # chat_id -> live Stream; plus the log text each one was last read from or written as
         self._streams: dict[str, MemoryStream] = {}
         self._synced: dict[str, str | None] = {}
-        # llm_config_id -> its cached per-model Agent (built lazily in _agent_for;
-        # cleared on reload() so a settings/config change doesn't keep serving stale
-        # per-task agents alongside the rebuilt default one).
-        self._model_agents: dict[str, object] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         # chat_id -> the turn currently running on it (feed_message / cancel_turn)
         self._active: dict[str, _ActiveTurn] = {}
+        self._invocations: set[asyncio.Task] = set()
+        self._background: set[asyncio.Task] = set()
+        self._closing = False
         # Per-profile daily token/cost tally for the activity HUD.
         self._usage = UsageLedger(
             self._config.data_dir / "usage.json",
@@ -245,8 +273,7 @@ class Gateway:
 
     @property
     def config(self) -> Config:
-        """The gateway's live config — re-resolved on ``reload()`` (so a profile
-        runtime's workspace/model edits are reflected here after a reload)."""
+        """The configuration resolved by the latest preparation or runtime refresh."""
         return self._config
 
     @property
@@ -277,50 +304,127 @@ class Gateway:
             raise RuntimeError("Gateway not started")
         return self._agent
 
-    def _make_agent(self, cfg=None):
-        """Build a universal agent: capability + system tools (know/do everything) +
-        compaction. Used by start()/reload() for the default agent, and by
-        `_agent_for` (with an overridden ``cfg``) to build a per-task-model agent."""
-        cfg = cfg or self._config
-        extra_tools = None
-        if self._tasks is not None:
-            from assistant.system_tools import build_system_tools
+    async def acp_agent(self) -> Agent:
+        """The separately owned, constructor-complete Agent for deferred ACP serving."""
+        if self._acp_generation is None:
+            lease = self._resources.lease()
+            try:
+                async with self._preparation_lock:
+                    if self._acp_generation is not None:
+                        await lease.aclose()
+                        return self._acp_generation.agent
+                    config, _, extra, runtime = await self._prepare_turn(lease, "acp-listener")
+                    middleware = _build_middleware(config)
+                    if runtime is not None:
+                        middleware.extend(runtime.middleware_factories())
+                    agent = self._agent_factory(
+                        config,
+                        memory=self._memory,
+                        platform=self._platform,
+                        knowledge_store=self._knowledge_store,
+                        compact=self._memory,
+                        invocation_only=True,
+                        extra_tools=extra["tools"],
+                        extra_plugins=[*extra["plugins"], Plugin(middleware=middleware)],
+                        default_model=extra["config"],
+                        model_factory=lambda cfg, model=None: self._held_model(cfg, lease, model),
+                    )
+                    self._acp_generation = _AgentGeneration(agent, lease)
+            except BaseException:
+                await lease.aclose()
+                raise
+        return self._acp_generation.agent
 
-            # The system tools carry create/update/run/delete; `platform` lets them note
-            # that follow-up questions go to the web app, and `settings` is this profile's.
-            settings = profile_settings(cfg.data_dir, voice_provider=cfg.voice_provider)
-            extra_tools = build_system_tools(
-                self._tasks,
-                settings,
-                chats=self,
-                platform=self._platform,
-                peers=PeerStore(cfg.paths),
-            )
-        return self._agent_factory(
-            cfg,
-            memory=self._memory,
+    def _system_tools(self, cfg: Config) -> list:
+        if self._tasks is None:
+            return []
+        settings = profile_settings(cfg.data_dir, voice_provider=cfg.voice_provider)
+        return build_system_tools(
+            self._tasks,
+            settings,
+            chats=self,
             platform=self._platform,
-            extra_tools=extra_tools,
-            compact=self._memory,
+            peers=PeerStore(cfg.paths),
         )
 
-    def _agent_for(self, llm_config_id: str | None):
-        """The turn's agent: the profile default, or a cached per-LLM-config agent when
-        a task pins a model. An id naming no configuration falls back to the default."""
-        if not llm_config_id:
-            return self._agent
-        agent = self._model_agents.get(llm_config_id)
-        if agent is not None:
-            return agent
-        store = LlmConfigStore(self._config.paths)
-        entry = store.get_config(llm_config_id)
-        if entry is None:
-            return self._agent
-        cfg = copy.deepcopy(self._config)
-        store.derive_onto(cfg, entry)
-        agent = self._make_agent(cfg)
-        self._model_agents[llm_config_id] = agent
-        return agent
+    def _model_key(self, cfg: Config, model: str | None = None) -> str:
+        llm = cfg.llm.model_dump(
+            exclude={
+                "builtin_tools",
+                "aggregate_model",
+                "call_timeout_s",
+                "call_retries",
+                "silence_alert_s",
+                "silence_halt_s",
+            }
+        )
+        llm["model"] = model or cfg.llm.model
+        llm["provider_options"] = cfg.llm.provider_options.get(cfg.llm.provider, {})
+        credential_names = (
+            []
+            if cfg.llm.provider in ACP_PROVIDERS or cfg.llm.auth_mode == "subscription"
+            else [OLLAMA_BASE_ENV]
+            if cfg.llm.provider == "ollama"
+            else [KEY_ENV.get(cfg.llm.provider, cfg.llm.api_key_env)]
+        )
+        return fingerprint(
+            [
+                llm,
+                {key: cfg.secret_env[key] for key in credential_names if key in cfg.secret_env},
+                cfg.workspace_dir,
+                cfg.search_path,
+                cfg.acp_bridge,
+                cfg.acp_bridge_token,
+            ]
+        )
+
+    def _held_model(self, cfg: Config, lease: ResourceLease, model: str | None = None):
+        factory = self._model_factory or model_config
+        if cfg.llm.provider in ACP_PROVIDERS:
+            return lease.acquire("model", self._model_key(cfg, model), lambda: factory(cfg, model))
+        return factory(cfg, model)
+
+    def _constructor_key(self, cfg: Config) -> str:
+        background = self._model_key(cfg, cheap_model(cfg)) if self._memory else None
+        return fingerprint(
+            [
+                cfg.agent.name,
+                cfg.memory.model_dump() if self._memory else None,
+                background,
+                cfg.llm.silence_alert_s,
+                cfg.llm.silence_halt_s,
+            ]
+        )
+
+    async def _make_agent(self, cfg: Config):
+        held = self._resources.lease()
+        try:
+            agent = self._agent_factory(
+                cfg,
+                memory=self._memory,
+                platform=self._platform,
+                knowledge_store=self._knowledge_store,
+                compact=self._memory,
+                invocation_only=True,
+                model_factory=lambda config, model=None: (
+                    RefreshingModelConfig(config, self._model_factory or model_config, model)
+                    if config.llm.auth_mode == "subscription"
+                    else self._held_model(config, held, model)
+                ),
+            )
+        except BaseException:
+            await held.aclose()
+            raise
+        return _AgentGeneration(agent, held)
+
+    async def _select_agent(self, cfg: Config, lease: ResourceLease):
+        key = self._constructor_key(cfg)
+        generation = await lease.acquire_async(
+            "agent", key, lambda: self._make_agent(copy.deepcopy(cfg))
+        )
+        self._agent = generation.agent
+        await self._resources.reconcile("agent", [key])
+        return generation.agent
 
     async def _resolve_turn_model(
         self, chat_id: str, llm_config_id: str | None, chat_model: str = ""
@@ -371,26 +475,6 @@ class Gateway:
         store = LlmConfigStore(self._config.paths)
         return store.resolved_override(resolved) or self._active_model_id()
 
-    async def _ensure_subscription_fresh(self) -> None:
-        """When OpenAI runs in ChatGPT-subscription mode, refresh the OAuth access
-        token before a turn and rebuild the cached agent iff the token rotated.
-
-        The token is baked into the agent at build time; OAuth access tokens are
-        short-lived, so a long-lived cached agent would go stale. The common case
-        (token still valid) is cheap: no refresh, no rebuild. Best-effort — a
-        refresh failure surfaces as a normal turn error with a re-login hint."""
-        cfg = self._config
-        if cfg.llm.provider.lower() != "openai" or cfg.llm.auth_mode != "subscription":
-            return
-        try:
-            creds = await asyncio.to_thread(CodexAuth(cfg.paths).ensure_fresh)
-        except CodexAuthError:
-            return  # let the turn fail with model_config's own clear error
-        if creds.access_token != self._codex_token:
-            self._codex_token = creds.access_token
-            if self._agent is not None:
-                self._agent = self._make_agent()
-
     async def start(self) -> None:
         """Create the shared agent and (optionally) the on-disk chat store."""
         # One-shot legacy -> Secret-entity upgrade (idempotent). Provider keys reach
@@ -398,7 +482,14 @@ class Gateway:
         SecretStore(self._config.paths).migrate()
         setup_logging(self._config)  # rolling log + failure capture for debugging
 
-        self._agent = self._make_agent()
+        if self._memory:
+            self._knowledge_store = self._resources.acquire(
+                "memory",
+                "memory",
+                lambda: build_profile_store(self._config.data_dir / "profile.db"),
+            ).value
+        async with self._resources.lease() as lease:
+            await self._select_agent(self._config, lease)
         # Install-wide persistent grant store (config.root_dir holds global files) —
         # grants are global, not per-profile.
         self._permissions = PermissionStore(self._config.root_dir / "permissions.json")
@@ -410,34 +501,21 @@ class Gateway:
         if self._persist:
             self._config.data_dir.mkdir(parents=True, exist_ok=True)
             self._event_store = SerialStore(
-                SqliteKnowledgeStore(str(self._config.data_dir / "chats.db"))
+                self._resources.acquire(
+                    "history",
+                    "history",
+                    lambda: SqliteKnowledgeStore(str(self._config.data_dir / "chats.db")),
+                ).value
             )
             self._writer = EventLogWriter(self._event_store)
 
-    async def reload(self) -> None:
-        """Rebuild agents from fresh config + keys after a settings change.
-
-        Reference-swap, deliberately minimal: a turn already running captured the old
-        agent and finishes on it (incl. mid-tool-call); the next turn uses the new
-        agent and replays the same per-chat Stream (history is in the Streams, not
-        the agent). The task service rebuilds its planner/executor too, so scheduled
-        work doesn't keep using stale keys. Voice needs no reload (built per voice
-        session from env)."""
-        # Re-resolve via the injected factory (a profile runtime's factory re-reads
-        # the profile's registry entry + settings; the default is load_config).
-        self._config = self._config_factory()
-        self._catalog = CardCatalog(self._config)
-        # A turn already running captured the old agent and finishes on it, but
-        # its ACP subprocesses must not outlive the swap: close them now (aclose
-        # is safe/idempotent; non-ACP configs have no aclose and are skipped).
-        await self._aclose_agents([a for a in (self._agent, *self._model_agents.values()) if a])
-        if self._agent is not None:
-            self._agent = self._make_agent()
-        # Stale per-model agents were built from the pre-reload config/keys; a task
-        # run after this point must get a freshly-built one.
-        self._model_agents.clear()
-        if self._tasks is not None and hasattr(self._tasks, "reload"):
-            await self._tasks.reload()
+    async def refresh(self) -> None:
+        """Refresh runtime configuration and retire obsolete owned resources."""
+        async with self._preparation_lock:
+            self._config = self._config_factory()
+            await self._reconcile_resources(self._config)
+        if self._tasks is not None and hasattr(self._tasks, "refresh"):
+            await self._tasks.refresh()
 
     def _chat_lock(self, chat_id: str) -> asyncio.Lock:
         lock = self._locks.get(chat_id)
@@ -471,7 +549,7 @@ class Gateway:
         Returns False when nothing is in flight, so the caller runs it as a new turn.
         """
         active = self._active.get(chat_id)
-        if active is None or active.task.done():
+        if active is None or active.run is None or active.task.done():
             return False
         active.run.enqueue(text, *(attachments or []))
         # The turn may have finished between the check and the enqueue, which would
@@ -484,13 +562,8 @@ class Gateway:
         return True
 
     async def cancel_turn(self, chat_id: str = "default", reason: str = "Stopped") -> bool:
-        """Cancel the turn running on this chat; False if none is in flight.
-
-        Cancelling the task that awaits ``AgentRun.result()`` is AG2's cancellation
-        contract: ``result()`` propagates the cancel into the turn's driver, and the
-        run scope tears down. Whatever the turn already put on the stream (tool calls,
-        tool results, partial output) stays — see ``send_message``'s cancel path.
-        """
+        """Stop preparation or execution on this Chat, preserving emitted work.
+        Return False when no Turn is in flight."""
         active = self._active.get(chat_id)
         if active is None or active.task.done():
             return False
@@ -549,7 +622,159 @@ class Gateway:
         await self._writer.persist(chat_id, list(await stream.history.get_events()))  # type: ignore[arg-type]
         self._synced[chat_id] = await self._read_log(chat_id)
 
+    async def _refresh_subscription(self, config: Config) -> None:
+        if config.llm.provider == "openai" and config.llm.auth_mode == "subscription":
+            auth = self._subscription_auth
+            try:
+                await asyncio.to_thread(auth.ensure_fresh)
+            except CodexAuthError:
+                pass
+
+    async def _reconcile_resources(self, config: Config) -> None:
+        servers = profile_settings(config.data_dir).list_mcp_servers(include_env=True)
+        await self._resources.reconcile(
+            "mcp", [fingerprint(server) for server in servers if server.get("enabled", True)]
+        )
+        docker_key = fingerprint([config.tools.docker_image, config.tools.docker_network])
+        await self._resources.reconcile(
+            "docker", [docker_key] if config.tools.sandbox == "docker" else []
+        )
+        configs = [config]
+        store = LlmConfigStore(config.paths)
+        for entry in store.list_configs():
+            current = copy.deepcopy(config)
+            store.derive_onto(current, entry)
+            configs.append(current)
+        model_keys = [
+            self._model_key(current) for current in configs if current.llm.provider in ACP_PROVIDERS
+        ]
+        if self._memory and config.llm.provider in ACP_PROVIDERS:
+            model_keys.append(self._model_key(config, cheap_model(config)))
+        await self._resources.reconcile("model", model_keys)
+
+    async def _prepare_turn(
+        self,
+        lease: ResourceLease,
+        chat_id: str,
+        llm_config_id: str | None = None,
+        chat_model: str = "",
+        asker=None,
+        task_id=None,
+        surface: str = "",
+    ):
+        self._config = self._config_factory()
+        profile_config = copy.deepcopy(self._config)
+        effective = copy.deepcopy(self._config)
+        selected = await self._resolve_turn_model(chat_id, llm_config_id, chat_model)
+        if selected:
+            store = LlmConfigStore(effective.paths)
+            entry = store.get_config(selected)
+            if entry is not None:
+                store.derive_onto(effective, entry)
+        await self._refresh_subscription(effective)
+        await self._refresh_subscription(profile_config)
+        await self._reconcile_resources(profile_config)
+        agent = await self._select_agent(profile_config, lease)
+        task_id = task_id or await self._task_for_stream(chat_id)
+        extra = self._ask_kwargs(asker, chat_id, task_id or "", config=effective)
+        docker_key = fingerprint([effective.tools.docker_image, effective.tools.docker_network])
+
+        def mcp_factory(servers):
+            return [
+                lease.acquire("mcp", fingerprint(server), lambda: build_mcp_tools([server])[0])
+                for server in servers
+                if server.get("enabled", True)
+            ]
+
+        def environment_factory(**kwargs):
+            return lease.acquire(
+                "docker", docker_key, lambda: SharedEnvironment(self._environment_factory(**kwargs))
+            )
+
+        def local_environment_factory():
+            return lease.acquire("local", "local", lambda: SharedEnvironment(LocalEnvironment()))
+
+        tools = build_agent_tools(
+            effective.llm.config_type,
+            sandbox=effective.tools.sandbox,
+            docker_image=effective.tools.docker_image,
+            docker_network=effective.tools.docker_network,
+            workspace_dir=effective.workspace_dir,
+            config=effective,
+            builtin=effective.llm.builtin_tools,
+            mcp_factory=mcp_factory,
+            environment_factory=environment_factory,
+            local_environment_factory=local_environment_factory,
+            google=self._google,
+        )
+        settings = profile_settings(effective.data_dir, voice_provider=effective.voice_provider)
+        tools.extend(build_self_tools(effective, settings))
+        tools.extend(self._system_tools(effective))
+        skill_runtime = build_skills_runtime(effective)
+        tools.extend(build_skills_install_tools(effective, build_skills_runtime(effective)))
+        held_cards = self._catalog.hold()
+        plugins = [build_skills_plugin(effective, skill_runtime, catalog=held_cards, snapshot=True)]
+        guidance = [
+            effective.agent.system_prompt,
+            *universal_turn_prompt(
+                effective,
+                surface,
+                google=any(
+                    tool.name in {"gmail_search", "calendar_list_events", "drive_search"}
+                    for tool in tools
+                ),
+            ),
+        ]
+        if BEHAVIOR_GUIDANCE in agent.system_prompt:
+            guidance = [part for part in guidance if part != BEHAVIOR_GUIDANCE]
+        a2ui_runtime = held_cards.runtime() if a2ui_available(effective) else None
+        if a2ui_runtime is not None:
+            guidance.append(a2ui_runtime.capabilities_prompt(None))
+        plugins.append(Plugin(prompt=guidance))
+        extra["config"] = self._held_model(effective, lease)
+        extra["tools"] = tools
+        extra["plugins"] = plugins
+        return effective, agent, extra, a2ui_runtime
+
     async def send_message(
+        self,
+        text: str,
+        chat_id: str = "default",
+        asker=None,
+        attachments: list | None = None,
+        surface: str = "",
+        on_event=None,
+        llm_config_id: str | None = None,
+        task_id: str | None = None,
+        origin: str = "",
+        attachment_names: tuple[str, ...] = (),
+        chat_model: str = "",
+    ) -> str:
+        """Run a message with Profile shutdown and invocation scope ownership."""
+        if self._closing:
+            raise RuntimeError("Gateway closing")
+        task = asyncio.current_task()
+        if task is not None:
+            self._invocations.add(task)
+        try:
+            return await self._send_message(
+                text,
+                chat_id,
+                asker,
+                attachments,
+                surface,
+                on_event,
+                llm_config_id,
+                task_id,
+                origin,
+                attachment_names,
+                chat_model,
+            )
+        finally:
+            if task is not None:
+                self._invocations.discard(task)
+
+    async def _send_message(
         self,
         text: str,
         chat_id: str = "default",
@@ -593,15 +818,6 @@ class Gateway:
             raise RuntimeError("Gateway not started")
 
         await self._maybe_onboard(asker)
-        # Refresh first: subscription mode may rebuild the default agent with a
-        # rotated OAuth token, and this turn must run on the fresh one.
-        await self._ensure_subscription_fresh()
-        agent = self._agent_for(await self._resolve_turn_model(chat_id, llm_config_id, chat_model))
-
-        # A reply typed into a run's thread arrives without task context — resolve
-        # it so task-scoped folder/command grants cover manual turns too.
-        task_id = task_id or await self._task_for_stream(chat_id)
-        extra = self._ask_kwargs(asker, chat_id, task_id or "")
         msg = [text, *(attachments or [])]
 
         async with self._chat_lock(chat_id):
@@ -616,104 +832,98 @@ class Gateway:
             # the web page's local state and vanishes on a profile switch (full-page
             # nav). The completed-turn write below stays the authority (§_persist_turn).
             await self._ensure_transcript_stub(chat_id, text, chat_model)
-            # A turn's prompt replaces the agent's own, so it opens with it: the persona
-            # and the plugins' text, the skills catalog among them.
-            prompt = [*agent.system_prompt, *universal_turn_prompt(self._config, surface)]
-            a2ui_runtime = None
-            # The Skill's switch, read per turn: turned off, this turn is built with no
-            # A2UI at all, so nothing in it parses, validates or recovers a rich view.
-            if a2ui_available(self._config):
+            async with self._resources.lease() as lease:
+                invocation = asyncio.current_task()
+                assert invocation is not None
+                active = _ActiveTurn(None, invocation)
+                self._active[chat_id] = active
+                a2ui_handle = None
+                effective = self._config
+                usage_handle = self._watch_usage(stream)
+                hitl_pending = getattr(asker, "has_pending", None)
                 try:
-                    a2ui_runtime = self._catalog.runtime()
-                    prompt = [*prompt, a2ui_runtime.capabilities_prompt(None)]
-                except Exception as exc:
-                    log_suppressed("a2ui runtime setup", exc, chat_id=chat_id)
-            a2ui_handle = None
-            if a2ui_runtime is not None:
-                # Append a fallback that recovers surfaces when the model omits the
-                # <a2ui-json> wrapper (fires only when the runtime's own extraction
-                # can't — the two are mutually exclusive per response).
-                middleware = (
-                    *a2ui_runtime.middleware_factories(),
-                    tolerant_a2ui_middleware(a2ui_runtime.parser, a2ui_runtime.cards),
-                )
-                a2ui_handle = self._watch_a2ui(stream)
-            else:
-                middleware = ()
-            usage_handle = self._watch_usage(stream)  # tally this turn's tokens (HUD)
-            hitl_pending = getattr(asker, "has_pending", None)
-            try:
-                # `run` is `ask` with the turn left observable (`ask` is literally
-                # run-then-result). We drive `result()` in a task we own, which is what
-                # makes the turn steerable while it runs: `feed_message` enqueues onto
-                # the run's inbox, `cancel_turn` cancels this task — AG2 propagates that
-                # into the turn.
-                async with agent.run(
-                    *msg,
-                    stream=stream,
-                    prompt=prompt,
-                    middleware=middleware,
-                    **extra,
-                ) as run:
-                    turn = asyncio.ensure_future(run.result())
-                    active = _ActiveTurn(run, turn)
-                    self._active[chat_id] = active
-                    try:
-                        # wait_reply = wait_for whose clock pauses while a HITL
-                        # prompt is open or a sanctioned long run (a CLI coding
-                        # agent) holds the asker's pending-guard.
+                    async with self._preparation_lock:
+                        effective, agent, extra, a2ui_runtime = await self._prepare_turn(
+                            lease, chat_id, llm_config_id, chat_model, asker, task_id, surface
+                        )
+                    a2ui_handle = None
+                    if a2ui_runtime is not None:
+                        # Append a fallback that recovers surfaces when the model omits the
+                        # <a2ui-json> wrapper (fires only when the runtime's own extraction
+                        # can't — the two are mutually exclusive per response).
+                        middleware = (
+                            *a2ui_runtime.middleware_factories(),
+                            tolerant_a2ui_middleware(a2ui_runtime.parser, a2ui_runtime.cards),
+                        )
+                        a2ui_handle = self._watch_a2ui(stream)
+                    else:
+                        middleware = ()
+                    # `run` is `ask` with the turn left observable (`ask` is literally
+                    # run-then-result). We drive `result()` in a task we own, which is what
+                    # makes the turn steerable while it runs: `feed_message` enqueues onto
+                    # the run's inbox, `cancel_turn` cancels this task — AG2 propagates that
+                    # into the turn.
+                    async with agent.run(
+                        *msg,
+                        stream=stream,
+                        middleware=(*_build_middleware(effective), *middleware),
+                        **extra,
+                    ) as run:
+                        turn = asyncio.ensure_future(run.result())
+                        active.run, active.task = run, turn
                         if on_event is None:
                             reply = await wait_reply(
                                 turn,
-                                timeout=self._config.gateway.reply_timeout_s,
+                                timeout=effective.gateway.reply_timeout_s,
                                 hitl_pending=hitl_pending,
                             )
                         else:
                             reply = await self._forwarding_events(
-                                stream, turn, on_event, hitl_pending=hitl_pending
+                                stream,
+                                turn,
+                                on_event,
+                                hitl_pending=hitl_pending,
+                                timeout=effective.gateway.reply_timeout_s,
                             )
-                    except asyncio.CancelledError:
-                        # A cancelled turn keeps what it already did: the tool calls and
-                        # results are on the stream, so persist them whoever cancelled.
-                        # Awaiting here is safe — a cancelled task still completes its
-                        # handler's awaits (verified under a double cancel), so a
-                        # shutdown mid-turn no longer erases the work.
-                        await self._persist_turn(chat_id, stream, text, "")
-                        if not active.cancelled:
-                            raise  # not a user stop (disconnect, shutdown) — let it fly
+                except asyncio.CancelledError:
+                    if active.cancelled:
                         await self.emit_event(chat_id, TurnCancelled(chat_id, reason=active.reason))
-                        return ""
-                    finally:
-                        self._active.pop(chat_id, None)
-            except Exception as exc:
-                # snapshot the error + the exact history shape that triggered it
-                await capture_failure(
-                    self._config,
-                    chat_id=chat_id,
-                    surface=surface,
-                    user_text=text,
-                    error=exc,
-                    stream=stream,
-                )
-                # A failed turn keeps its work. Without this the turn's events are
-                # never written at all, and since the thread renders from the event
-                # log the whole chat opens blank — the user loses the record of work
-                # that actually happened (tasks created, files written). Emit the
-                # marker FIRST: _persist_turn snapshots the history, so an event sent
-                # after it would not make the log.
-                await self.emit_event(chat_id, TurnFailed(chat_id, error=_failure_text(exc)))
-                await self._persist_turn(chat_id, stream, text, "")
-                raise
-            else:
-                if a2ui_handle is not None:
-                    await self._emit_a2ui_surfaces(stream, a2ui_handle)
-                await self._persist_turn(chat_id, stream, text, reply.body)
-                await self._mirror_turn(chat_id, text, reply.body, origin, attachment_names)
-                return reply.body
-            finally:
-                if a2ui_handle is not None:
-                    self._unwatch_a2ui(stream, a2ui_handle)
-                self._record_usage(stream, usage_handle)  # always tally, even on error
+                    await self._persist_turn(chat_id, stream, text, "")
+                    if not active.cancelled:
+                        raise
+                    return ""
+                except Exception as exc:
+                    # snapshot the error + the exact history shape that triggered it
+                    await capture_failure(
+                        effective,
+                        chat_id=chat_id,
+                        surface=surface,
+                        user_text=text,
+                        error=exc,
+                        stream=stream,
+                    )
+                    # A failed turn keeps its work. Without this the turn's events are
+                    # never written at all, and since the thread renders from the event
+                    # log the whole chat opens blank — the user loses the record of work
+                    # that actually happened (tasks created, files written). Emit the
+                    # marker FIRST: _persist_turn snapshots the history, so an event sent
+                    # after it would not make the log.
+                    await self.emit_event(chat_id, TurnFailed(chat_id, error=_failure_text(exc)))
+                    await self._persist_turn(chat_id, stream, text, "")
+                    raise
+                else:
+                    if a2ui_handle is not None:
+                        await self._emit_a2ui_surfaces(stream, a2ui_handle)
+                    await self._persist_turn(chat_id, stream, text, reply.body)
+                    await self._mirror_turn(chat_id, text, reply.body, origin, attachment_names)
+                    return reply.body
+                finally:
+                    self._active.pop(chat_id, None)
+                    if a2ui_handle is not None:
+                        self._unwatch_a2ui(stream, a2ui_handle)
+                    self._record_usage(
+                        stream, usage_handle, effective.llm.model
+                    )  # always tally, even on error
 
     def _watch_usage(self, stream):
         """Subscribe to this turn's UsageEvents; returns (sub_id, collected list).
@@ -726,7 +936,7 @@ class Gateway:
 
         return stream.subscribe(collect), collected
 
-    def _record_usage(self, stream, handle) -> None:
+    def _record_usage(self, stream, handle, model: str) -> None:
         """Unsubscribe and add this turn's summed tokens to the daily ledger."""
         sub_id, collected = handle
         with contextlib.suppress(Exception):
@@ -737,7 +947,7 @@ class Gateway:
         completion = sum(u.completion_tokens or 0 for u in collected)
         total = sum(u.total_tokens or 0 for u in collected)
         with contextlib.suppress(Exception):
-            self._usage.record(self._config.llm.model, prompt, completion, total or None)
+            self._usage.record(model, prompt, completion, total or None)
 
     def _watch_a2ui(self, stream):
         collected: list = []
@@ -764,7 +974,7 @@ class Gateway:
             except Exception as exc:
                 log_suppressed("a2ui durable surface emit", exc, surface_id=surface.surface_id)
 
-    async def _forwarding_events(self, stream, turn, on_event, hitl_pending=None):
+    async def _forwarding_events(self, stream, turn, on_event, hitl_pending=None, timeout=None):
         """Await a driving turn, forwarding the agent's structured events to `on_event`.
 
         Uses AG2's stream subscription — the same event mechanism observers and the
@@ -787,7 +997,9 @@ class Gateway:
         sub_id = stream.subscribe(report)
         try:
             return await wait_reply(
-                turn, timeout=self._config.gateway.reply_timeout_s, hitl_pending=hitl_pending
+                turn,
+                timeout=timeout or self._config.gateway.reply_timeout_s,
+                hitl_pending=hitl_pending,
             )
         finally:
             stream.unsubscribe(sub_id)
@@ -868,8 +1080,10 @@ class Gateway:
                 "so it can be spoken aloud.",
             )
 
-        assistant_tools = [getattr(t, "name", "") for t in getattr(self._agent, "tools", [])]
-        assistant_tools = [n for n in assistant_tools if n]
+        async with self._resources.lease() as lease:
+            async with self._preparation_lock:
+                _, _, contributions, _ = await self._prepare_turn(lease, origin_chat or "voice")
+            assistant_tools = [tool.name for tool in contributions["tools"] if tool.name]
         return build_voice_agent(
             self._config,
             profile_settings(self._config.data_dir, voice_provider=self._config.voice_provider),
@@ -981,7 +1195,9 @@ class Gateway:
         # After the FIRST complete exchange, name the chat once (async, non-blocking —
         # like ChatGPT/Claude). A single revision: only when there's no title yet.
         if len(doc["messages"]) == 2 and not doc.get("title"):
-            asyncio.create_task(self._title_chat(chat_id, user_text, reply_text))
+            task = asyncio.create_task(self._title_chat(chat_id, user_text, reply_text))
+            self._background.add(task)
+            task.add_done_callback(self._background.discard)
 
     async def _title_chat(self, chat_id, user_text, reply_text) -> None:
         """Generate and persist a one-shot chat title (best-effort, never overwrite)."""
@@ -1315,20 +1531,21 @@ class Gateway:
             return ""
         return (run or {}).get("task_id") or ""
 
-    def _ask_kwargs(self, asker, chat_id: str = "", task_id: str = "") -> dict:
+    def _ask_kwargs(self, asker, chat_id: str = "", task_id: str = "", *, config=None) -> dict:
         """Per-turn hitl_hook + dependencies bound to this request's asker, chat, and
         (for a task run) task — so an "always allow" this turn mints persists
         task-scoped rather than globally (see PermissionManager.task_id)."""
 
+        config = config or self._config
         deps: dict = {
             PermissionManager: PermissionManager(
                 self._permissions,
                 asker,
-                sandbox=self._config.tools.sandbox,
+                sandbox=config.tools.sandbox,
                 folders=self._folders,
-                profile=self._config.data_dir.name,
+                profile=config.data_dir.name,
                 chat_id=chat_id,
-                workspace_dir=self._config.workspace_dir,
+                workspace_dir=config.workspace_dir,
                 task_id=task_id,
             )
         }
@@ -1350,24 +1567,22 @@ class Gateway:
             "chats": len(self._streams),
         }
 
-    async def _aclose_agents(self, agents: list) -> None:
-        """Tear down model-config resources (ACP subprocess sessions) held by outgoing
-        agents, deduped by config identity. A failed close only logs."""
-        seen: set[int] = set()
-        for agent in agents:
-            cfg = getattr(agent, "config", None)
-            aclose = getattr(cfg, "aclose", None)
-            if aclose is None or id(cfg) in seen:
-                continue
-            seen.add(id(cfg))
-            try:
-                await aclose()
-            except Exception as exc:
-                log_suppressed("closing ACP model sessions", exc)
-
     async def close(self) -> None:
-        """Release in-memory chat state (persisted chats stay on disk)."""
-        await self._aclose_agents([a for a in (self._agent, *self._model_agents.values()) if a])
+        """Resolve active and queued invocations, then close this Profile's resources."""
+        self._closing = True
+        tasks = [task for task in self._invocations if task is not asyncio.current_task()]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        background = list(self._background)
+        for task in background:
+            task.cancel()
+        await asyncio.gather(*background, return_exceptions=True)
+        async with self._preparation_lock:
+            await self._resources.aclose()
+            if self._acp_generation is not None:
+                await self._acp_generation.aclose()
+                self._acp_generation = None
         self._streams.clear()
         self._locks.clear()
         self._synced.clear()
@@ -1384,16 +1599,10 @@ def build_gateway(
     agent_factory: Callable | None = None,
     title_factory: Callable | None = None,
     summary_factory: Callable | None = None,
+    model_factory: Callable | None = None,
+    environment_factory: Callable | None = None,
 ) -> "tuple[Gateway, TaskService]":
-    """Canonical construction: a Gateway wired to its TaskService, so the universal
-    agent gets the task system tools (create/schedule/query). Used by the web app and
-    every channel command. Returns ``(gateway, task_service)``; the caller starts both
-    and wires ``task_service.set_emitter(gateway.emit_event)``.
-
-    ``config_factory`` (optional) is threaded into both the Gateway and TaskService so
-    their ``reload()`` re-resolves config the same way — a profile runtime passes one
-    that re-reads that profile's registry + settings (§4.1); when omitted both fall
-    back to ``load_config`` (the profile-agnostic root config)."""
+    """Build a Gateway and TaskService sharing a Profile configuration resolver."""
     config = config or load_config()
     tasks = TaskService(
         config=config, config_factory=config_factory, summary_factory=summary_factory
@@ -1407,5 +1616,7 @@ def build_gateway(
         config_factory=config_factory,
         agent_factory=agent_factory,
         title_factory=title_factory,
+        model_factory=model_factory,
+        environment_factory=environment_factory,
     )
     return gateway, tasks

@@ -69,12 +69,17 @@ class FilteredSkillRuntime:
     set.
     """
 
-    def __init__(self, inner, is_available: Callable[[DiscoveredSkill], bool]) -> None:
+    def __init__(
+        self, inner, is_available: Callable[[DiscoveredSkill], bool], *, snapshot: bool = False
+    ) -> None:
         self._inner = inner
         self._is_available = is_available
+        self._snapshot = self.skills if snapshot else None
 
     @property
     def skills(self):
+        if self.__dict__.get("_snapshot") is not None:
+            return list(self.__dict__["_snapshot"])
         return [skill for skill in self._inner.skills if self._is_available(skill)]
 
     async def read(self, name: str, context: ConversationContext) -> str:
@@ -90,6 +95,10 @@ class FilteredSkillRuntime:
         return await self._inner.execute(name, script, context, args)
 
     def _guard(self, name: str) -> None:
+        if self._snapshot is not None:
+            if not any(skill.name == name for skill in self._snapshot):
+                raise SkillNotFoundError(f"Skill {name!r} not found")
+            return
         skill = next((item for item in self._inner.skills if item.name == name), None)
         if skill is None:
             # Not this runtime's: the toolkit's "not mine" signal, raised before the

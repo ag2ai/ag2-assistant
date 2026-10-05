@@ -2,7 +2,7 @@
 
 A profile is a named, colour-coded runtime: one ``Gateway`` + one ``TaskService``,
 all alive simultaneously so background tasks in a non-viewed profile keep running.
-This module boots them all at server start and owns the create / archive / reload
+This module boots them all at server start and owns the create / archive / refresh
 lifecycle.
 
 Channels are NOT part of a runtime (ADR 0022): one adapter per registered Connection
@@ -121,6 +121,8 @@ class ProfileRuntime:
         agent_factory: Callable | None = None,
         title_factory: Callable | None = None,
         summary_factory: Callable | None = None,
+        model_factory: Callable | None = None,
+        environment_factory: Callable | None = None,
     ) -> None:
         self.meta = meta
         self.paths = paths
@@ -133,6 +135,8 @@ class ProfileRuntime:
         self._agent_factory = agent_factory
         self._title_factory = title_factory
         self._summary_factory = summary_factory
+        self._model_factory = model_factory
+        self._environment_factory = environment_factory
         self._config: Config | None = None
         self.gateway: Gateway | None = None
         self.tasks: TaskService | None = None
@@ -161,9 +165,7 @@ class ProfileRuntime:
 
     @property
     def config(self) -> Config | None:
-        """The runtime's live config. Once the gateway is up this delegates to the
-        gateway's config so a reload (model/config edit) is reflected everywhere
-        the routes read ``runtime.config`` — before start it's the prepared config."""
+        """The latest configuration resolved by this Profile's Gateway."""
         if self.gateway is not None:
             return self.gateway.config
         return self._config
@@ -227,6 +229,8 @@ class ProfileRuntime:
             agent_factory=self._agent_factory,
             title_factory=self._title_factory,
             summary_factory=self._summary_factory,
+            model_factory=self._model_factory,
+            environment_factory=self._environment_factory,
         )
         await self.gateway.start()
         self.gateway.set_mirror(self._mirror)  # completed turns -> the Attached Peer
@@ -268,6 +272,8 @@ class ProfileManager:
         channel_factory: Callable | None = None,
         title_factory: Callable | None = None,
         summary_factory: Callable | None = None,
+        model_factory: Callable | None = None,
+        environment_factory: Callable | None = None,
     ) -> None:
         # Install-level layout + config; the pair always agrees. Given neither, both come
         # from the entry-point boundary so ``serve`` needs no wiring; given ``paths``, the
@@ -287,6 +293,8 @@ class ProfileManager:
         self._channel_factory = channel_factory or channels.get_channel
         self._title_factory = title_factory
         self._summary_factory = summary_factory
+        self._model_factory = model_factory
+        self._environment_factory = environment_factory
         self._runtimes: dict[str, ProfileRuntime] = {}
         # Connection id → the live install-level adapter (ADR 0022). One per registered
         # Connection, so two bots of one platform run side by side.
@@ -381,6 +389,8 @@ class ProfileManager:
             agent_factory=self._agent_factory,
             title_factory=self._title_factory,
             summary_factory=self._summary_factory,
+            model_factory=self._model_factory,
+            environment_factory=self._environment_factory,
         )
         await runtime.start()
         self.boot_errors.pop(meta.id, None)
@@ -524,7 +534,7 @@ class ProfileManager:
             return False, msg
 
         gateway = runtime.require_gateway()
-        agent = gateway.require_agent()
+        agent = await gateway.acp_agent()
         # Sessions persist as Chats, attributed to this stored listener.
         chat_storage = ChatBackedStorage(
             paths=self.paths,
@@ -648,12 +658,11 @@ class ProfileManager:
         self._registry.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
         return await self._boot(meta)
 
-    async def reload(self, pid: str) -> None:
-        """Reference-swap reload of one profile's runtime (gateway.reload also reloads
-        its task service via the shared config factory)."""
+    async def refresh(self, pid: str) -> None:
+        """Refresh one Profile's configuration consumers and owned resources."""
         runtime = self.get(pid)
         runtime.refresh_meta()
-        await runtime.require_gateway().reload()
+        await runtime.require_gateway().refresh()
 
     async def archive(self, pid: str, new_default: str | None = None) -> None:
         """Archive a profile with the §4.9 guardrails.

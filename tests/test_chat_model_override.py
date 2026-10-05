@@ -100,7 +100,6 @@ async def test_a_chat_with_no_override_follows_the_active_model(paths, gw):
 
     _a, b = _ids(paths)
     LlmConfigStore(paths).set_active(b)
-    await gw.reload()
     assert await gw.send_message("hi", chat_id="c1") == "model-b"
 
 
@@ -221,10 +220,11 @@ class _GatedAgent(FakeRunMixin):
         self.config, self.tools = config, []
         self._started, self._gate = started, gate
 
-    async def ask(self, *msg, stream=None, **kwargs) -> FakeReply:
+    async def ask(self, *msg, stream=None, config=None, **kwargs) -> FakeReply:
+        name = config.model if config is not None else self.config.llm.model
         self._started.set()
         await self._gate.wait()
-        return FakeReply(self.config.llm.model)
+        return FakeReply(name)
 
 
 async def _wait_for_title(gw, chat_id: str) -> str:

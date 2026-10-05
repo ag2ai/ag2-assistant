@@ -1,17 +1,4 @@
-"""Named LLM configurations and their spoken counterpart, the live (voice)
-configurations. Both are install-wide lists with a single active selection.
-
-An LLM change reloads every runtime (an agent is built from the config it booted
-with); a live change does not, because the voice session reads the store fresh at
-connect.
-
-The four probe callables are ``create_app``'s parameters, not stores, so they
-arrive as keyword collaborators rather than through ``GatewayDeps``: tests swap
-them per app to keep a "Test" button from making a real provider call.
-
-Pairs with gateway/schemas/llm.py (the response models) and
-web/src/schemas/llm.ts (their zod twins).
-"""
+"""Shared Text and Live model definitions, selection and provider probes."""
 
 import asyncio
 import time
@@ -26,7 +13,7 @@ from assistant import live_configs, llm_configs, provider_catalog, voice_provide
 from assistant.builtin_tools import builtin_ids_for
 from assistant.coding.model_catalog import CatalogModel, as_view
 from assistant.config import Config
-from assistant.gateway.routes.common import reload_all
+from assistant.gateway.routes.common import refresh_all
 from assistant.gateway.routes.deps import GatewayDeps
 from assistant.gateway.schemas import (
     LiveConfigListResponse,
@@ -255,10 +242,7 @@ def build_router(
         return JSONResponse(as_view(rows, "", reason), headers={"Cache-Control": cache})
 
     async def _save_llm_config(req: LlmConfigRequest, cid: str | None):
-        """Shared create/update: dry-construct the derived model_config BEFORE
-        persisting (a bad type/kwarg fails here, 400 + the constructor's message, not on
-        the agent's next turn), then save the entry, optionally activate, and reload
-        every runtime. 404 when updating an unknown id."""
+        """Validate and save a model definition, then refresh configuration consumers."""
         entry = {
             "name": req.name,
             "type": req.type,
@@ -286,7 +270,7 @@ def build_router(
         saved = d.llm_store.save_config(entry)
         if req.activate:
             d.llm_store.set_active(saved["id"])
-        await reload_all(d.manager)
+        await refresh_all(d.manager)
         active = d.llm_store.active_id()
         return {"ok": True, "config": _llm_entry_view(saved, active), "active": active}
 
@@ -377,15 +361,15 @@ def build_router(
         if d.llm_store.get_config(cid) is None:
             return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
         d.llm_store.delete_config(cid)
-        await reload_all(d.manager)
+        await refresh_all(d.manager)
         return {"ok": True}
 
     @r.post("/api/llm-configs/{cid}/use", response_model=Ok)
     async def use_llm_config(cid: str):
-        """Make ``cid`` the active configuration and reload every runtime (404 unknown)."""
+        """Make ``cid`` the active configuration and refresh runtime consumers (404 unknown)."""
         if not d.llm_store.set_active(cid):
             return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
-        await reload_all(d.manager)
+        await refresh_all(d.manager)
         return {"ok": True}
 
     @r.post("/api/llm-configs/{cid}/test", response_model=PingResultResponse)
