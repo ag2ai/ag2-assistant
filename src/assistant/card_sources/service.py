@@ -48,7 +48,6 @@ class CardSources:
         self.executor: Callable | None = None
         self.pending: dict[tuple, asyncio.Task] = {}
         self.overlays: dict[str, tuple[str, dict]] = {}
-        self.commit_lock = asyncio.Lock()
 
     def _consent_path(self) -> Path:
         return self.config().data_dir / "card-source-consent.json"
@@ -103,9 +102,9 @@ class CardSources:
         revision = hashlib.sha256(json.dumps(authored, sort_keys=True).encode()).hexdigest()
         return data, revision, surface_id
 
-    async def _publish(self, event, chat_id="") -> dict:
+    async def _publish(self, event, chat_id, emit) -> dict:
         if chat_id and any(row["chat_id"] == chat_id for row in await self.gateway.list_chats()):
-            await self.gateway.emit_event(chat_id, event)
+            await emit(chat_id, event)
         else:
             await ConversationContext(stream=MemoryStream()).send(event)
         return {
@@ -180,7 +179,7 @@ class CardSources:
                 if isinstance(exc, TimeoutError)
                 else redact(str(exc), keys)[:500]
             )
-        async with self.commit_lock:
+        async with self.gateway.event_transaction() as emit:
             try:
                 latest, latest_revision, _ = await self._target(**target)
             except (InstanceError, OSError, ValueError):
@@ -207,10 +206,10 @@ class CardSources:
                 data=result_data,
                 code_version=source.code_version if source.code else "",
             )
-            return await self._publish(event, target.get("chat_id", ""))
+            return await self._publish(event, target.get("chat_id", ""), emit)
 
     async def approve(self, source_id, code_version, approved, secrets, **target):
-        async with self.commit_lock:
+        async with self.gateway.event_transaction() as emit:
             data, revision, surface = await self._target(**target)
             source = sources_from(data).get(source_id)
             if source is None or not source.code:
@@ -262,6 +261,7 @@ class CardSources:
                     code_version=code_version,
                 ),
                 target.get("chat_id", ""),
+                emit,
             )
 
     async def close(self):

@@ -14,7 +14,7 @@ import yaml
 from ag2.events import ToolCallEvent
 from fastapi.testclient import TestClient
 
-from assistant.events import A2UISurface
+from assistant.events import A2UISurface, A2UISurfaceDataUpdated, CardSourceUpdated
 from assistant.gateway.app import create_app
 from assistant.profiles import ProfileRegistry
 from tests.support.apps import api, make_manager
@@ -645,3 +645,76 @@ def test_quotes_generation_requires_chosen_parameters_and_retains_its_refresh_so
         assert result["status"] == "updated"
         assert result["events"][0]["data"]["data"]["quotes"][0]["price"] == 101
         assert len(models.requests) == count
+
+
+def test_chat_source_commit_does_not_overwrite_concurrent_authored_data(paths):
+    pid = ProfileRegistry(paths).create_profile("Sources", "#109e91").id
+
+    async def weather(**args):
+        return '{"summary":"Fresh"}'
+
+    manager = make_manager(paths, persist=True)
+    with TestClient(create_app(manager, card_source_tools={"get_weather": weather})) as client:
+        send(client, pid)
+        replay(client, pid)
+        gateway = manager.get(pid).require_gateway()
+        assert client.portal is not None
+        data = document()["message"]["data"]
+        client.portal.call(
+            gateway.emit_event,
+            "drafts",
+            A2UISurface(
+                "concurrent",
+                component={"id": "root", "component": "Text", "text": "Reading"},
+                data=data,
+            ),
+        )
+        edits = []
+
+        async def concurrent_edit(event):
+            edits.append(
+                asyncio.create_task(
+                    gateway.emit_event(
+                        "drafts",
+                        A2UISurfaceDataUpdated(
+                            "concurrent", data={**data, "unrelated": "Authored edit"}
+                        ),
+                    )
+                )
+            )
+            for _ in range(16):
+                await asyncio.sleep(0)
+            return event
+
+        stream = client.portal.call(gateway.stream_for, "drafts")
+        stream.subscribe(
+            concurrent_edit,
+            interrupt=True,
+            condition=lambda event: isinstance(event, CardSourceUpdated),
+        )
+        response = client.post(
+            api(pid, "/card-sources/refresh"),
+            json={
+                "chat_id": "drafts",
+                "surface_id": "concurrent",
+                "source_id": "root",
+            },
+        )
+        assert response.status_code == 200, response.text
+
+        async def finish_edits():
+            await asyncio.gather(*edits)
+
+        client.portal.call(finish_edits)
+        updates = [
+            e["data"]
+            for e in replay(client, pid)
+            if e["type"].endswith(
+                (
+                    "A2UISurfaceDataUpdated",
+                    "CardSourceUpdated",
+                )
+            )
+            and e["data"]["surface_id"] == "concurrent"
+        ]
+        assert updates[-1]["data"]["unrelated"] == "Authored edit"

@@ -233,6 +233,7 @@ class Gateway:
         self._knowledge_store: OwnedSqliteStore | None = None
         self._acp_generation: _AgentGeneration | None = None
         self._preparation_lock = asyncio.Lock()
+        self._event_commit_lock = asyncio.Lock()
         self._permissions: PermissionStore | None = None
         self._folders: FolderStore | None = None
         self._event_store: SerialStore | None = None
@@ -591,10 +592,19 @@ class Gateway:
         active.task.cancel()
         return True
 
+    @contextlib.asynccontextmanager
+    async def event_transaction(self):
+        """Serialize external event preparation and publication with Chat deletion."""
+        async with self._event_commit_lock:
+            yield self._emit_event
+
     async def emit_event(self, chat_id: str, event) -> None:
-        """Emit an event onto a chat's stream from outside an agent turn (the
-        pattern AG2's own SoundDeviceRecorder uses). It reaches any live bridge
-        subscriber and is persisted so it survives reload. Best-effort."""
+        """Publish and persist an external event on the Chat's typed stream."""
+        async with self.event_transaction() as emit:
+            await emit(chat_id, event)
+
+    async def _emit_event(self, chat_id: str, event) -> None:
+        """Publish one event while the caller holds the event transaction."""
         stream = await self.stream_for(chat_id)
         try:
             await ConversationContext(stream=stream).send(event)
@@ -1495,7 +1505,7 @@ class Gateway:
 
         if self._event_store is None:
             return False
-        async with self._chat_lock(chat_id):
+        async with self._chat_lock(chat_id), self.event_transaction():
             removed = await purge_history_for_chat(self._event_store, chat_id)
             paths = [self._transcript_path(chat_id), f"{LOG_PREFIX}{chat_id}.jsonl"]
             # dropped-turn segments are "<sid>.dropped-N.jsonl" under LOG_PREFIX
