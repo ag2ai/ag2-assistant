@@ -51,7 +51,7 @@
   }
 
   async function save() {
-    if (busy || loading || epoch !== $profileEpoch) return
+    if (busy || loading || epoch !== $profileEpoch || (result && !pending)) return
     pending ||= captureInstance(item, localData(), directory ? directory + '/' + filename : filename, crypto.randomUUID())
     busy = true; error = ''
     try {
@@ -64,7 +64,7 @@
     } catch (cause) {
       if (disposed || epoch !== $profileEpoch) return
       error = errText(cause)
-      if (isConflict(cause)) pending = null
+      if (isConflict(cause) && !result) pending = null
     } finally { busy = false }
   }
 </script>
@@ -73,6 +73,7 @@
   <button class="open" onclick={open}>Save instance</button>
   {#if result}
     <span role="status">{result.message}</span>
+    {#if error}<span role="alert">{error}</span>{/if}
     <button class="open" onclick={() => openAsideFile(result!.path)}>Open</button>
     {#if !result.history_recorded}
       <button class="open" disabled={busy} onclick={save}>{busy ? 'Recording…' : 'Retry confirmation'}</button>
