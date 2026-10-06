@@ -14,7 +14,7 @@ from ag2.tools.skills import MemoryRuntime, MemorySkill
 from ag2.tools.skills.skill_types import Resource, Script, Skill, SkillMetadata
 
 from assistant.a2ui import CATALOG_ID, CardCatalog, HeldCardCatalog
-from assistant.cards import Card, expand_card_messages
+from assistant.cards import Card, expand_card_messages, generation_contract
 from assistant.config import Config
 from assistant.skills import SkillStateStore
 from assistant.state_store import ORIGIN_BUNDLED
@@ -116,15 +116,8 @@ def a2ui_available(config: Config) -> bool:
 
 def card_fields_schema(card: Card) -> dict[str, Any]:
     """The arguments of the script that draws ``card``: the Card's own fields."""
-    properties = dict(card.fields)
-    if card.source:
-        properties["_parameters"] = {
-            "type": "object",
-            "properties": card.parameters,
-            "required": list(card.parameters),
-            "additionalProperties": False,
-        }
-    return {"type": "object", "properties": properties, "required": list(card.required)}
+    properties, required = generation_contract(card)
+    return {"type": "object", "properties": properties, "required": required}
 
 
 def _card_messages(card: Card, fields: dict[str, Any]) -> list[ServerToClientMessage]:

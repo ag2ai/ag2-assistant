@@ -96,6 +96,25 @@ class Card:
     parameters: dict = field(default_factory=dict)
 
 
+def generation_contract(card: Card) -> tuple[dict[str, Any], list[str]]:
+    """Drawing arguments retain source parameters chosen explicitly or from required fields."""
+    fields = dict(card.fields)
+    required = list(card.required)
+    if card.source:
+        fields["_parameters"] = {
+            "type": "object",
+            "properties": card.parameters,
+            "required": list(card.parameters),
+            "additionalProperties": False,
+        }
+        if any(
+            name not in card.required and "default" not in schema
+            for name, schema in card.parameters.items()
+        ):
+            required.append("_parameters")
+    return fields, required
+
+
 def bundled_cards_dir() -> Path:
     """Directory of the first-party Cards shipped with AG2 Assistant (read-only)."""
     return Path(__file__).parent / "bundled"
@@ -237,13 +256,22 @@ def validate_card(
         raise CardError("no example")
     if not all(isinstance(key, str) for key in example):
         raise CardError("example field names must be strings")
-    if stray := [key for key in example if key not in fields]:
+    if stray := [
+        key
+        for key in example
+        if key not in fields and not (key == "_parameters" and raw.get("source") is not None)
+    ]:
         raise CardError(f"example sets fields the Card does not declare: {', '.join(stray)}")
     if missing := [key for key in required if key not in example]:
         raise CardError(f"example omits required fields: {', '.join(missing)}")
     if (size := len(json.dumps(example, separators=(",", ":")))) > EXAMPLE_BUDGET:
         raise CardError(f"example is {size} characters, over {EXAMPLE_BUDGET}")
-    validate_card_data(fields, required, example, label="example")
+    validate_card_data(
+        fields,
+        required,
+        {key: value for key, value in example.items() if key != "_parameters"},
+        label="example",
+    )
     source = raw.get("source")
     parameters = raw.get("parameters", {})
     if not isinstance(parameters, dict):
@@ -254,6 +282,10 @@ def validate_card(
         Draft202012Validator.check_schema({"type": "object", "properties": parameters})
     except SchemaError as exc:
         raise CardError(f"Invalid parameter schema: {exc.message}") from exc
+    if "_parameters" in example:
+        validate_card_data(
+            parameters, tuple(parameters), example["_parameters"], label="example parameters"
+        )
     if source is not None:
         try:
             source = SourceDefinition.model_validate(source).model_dump(exclude_defaults=True)
@@ -456,7 +488,7 @@ def expand_components(
                     for key, schema in card.parameters.items()
                 }
                 if any(value is None for value in chosen.values()):
-                    continue
+                    raise CardError("Choose _parameters before drawing this source-backed Card")
             validate_card_data(card.parameters, tuple(card.parameters), chosen, label="parameters")
             instance = str(component.get("id") or "")
             source = CardSource.model_validate(

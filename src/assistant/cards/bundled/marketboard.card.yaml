@@ -138,6 +138,7 @@ layout:
   - {id: foot_asof_value, component: Text, text: {path: /asOf}, variant: caption, format: time}
 
 example:
+  _parameters: {symbols: "NVDA,AAPL", title: Technology}
   title: Technology
   currency: USD
   status: Market open

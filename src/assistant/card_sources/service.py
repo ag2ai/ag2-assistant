@@ -48,7 +48,7 @@ class CardSources:
         self.executor: Callable | None = None
         self.pending: dict[tuple, asyncio.Task] = {}
         self.overlays: dict[str, tuple[str, dict]] = {}
-        self.files_stream = MemoryStream()
+        self.commit_lock = asyncio.Lock()
 
     def _consent_path(self) -> Path:
         return self.config().data_dir / "card-source-consent.json"
@@ -107,7 +107,7 @@ class CardSources:
         if chat_id and any(row["chat_id"] == chat_id for row in await self.gateway.list_chats()):
             await self.gateway.emit_event(chat_id, event)
         else:
-            await ConversationContext(stream=self.files_stream).send(event)
+            await ConversationContext(stream=MemoryStream()).send(event)
         return {
             "status": event.status,
             "events": [
@@ -164,12 +164,11 @@ class CardSources:
                     output = await (self.executor or execute_source)(
                         self.config(), source, arguments, keys
                     )
-                    for value in keys.values():
-                        output = output.replace(value, "[redacted]")
                 if not isinstance(output, str) or len(output.encode()) > MAX_OUTPUT:
                     raise ValueError("Source output exceeds its JSON size limit")
                 parsed = json.loads(output)
                 check_json(parsed)
+                parsed = redact(parsed, keys)
                 validate_card_data(
                     source.fields, tuple(source.required), parsed, label="source result"
                 )
@@ -177,91 +176,93 @@ class CardSources:
             if status != "approval_required":
                 status = "error"
             error = (
-                "Source execution timed out" if isinstance(exc, TimeoutError) else str(exc)[:500]
+                "Source execution timed out"
+                if isinstance(exc, TimeoutError)
+                else redact(str(exc), keys)[:500]
             )
-            for value in keys.values():
-                error = error.replace(value, "[redacted]")
-        try:
-            latest, latest_revision, _ = await self._target(**target)
-        except (InstanceError, OSError, ValueError):
-            latest_revision = None
-        if revision != latest_revision:
-            status, error, result_data = "discarded", "Instance changed while refreshing", data
-        elif status == "updated":
-            if source.code and source.code_version not in self._consent():
-                status, error = "discarded", "Source approval was withdrawn"
-            else:
-                result_data = apply_result(latest, source, parsed)
-                if target.get("path"):
-                    if len(self.overlays) >= 128:
-                        self.overlays.pop(next(iter(self.overlays)))
-                    self.overlays[target["path"]] = (revision, copy.deepcopy(result_data))
-        elif latest_revision is not None:
-            result_data = latest
-        event = CardSourceUpdated(
-            surface,
-            source_id=source_id,
-            path=target.get("path", ""),
-            status=status,
-            error=error,
-            data=result_data,
-            code_version=source.code_version if source.code else "",
-        )
-        return await self._publish(event, target.get("chat_id", ""))
-
-    async def approve(self, source_id, code_version, approved, secrets, **target):
-        data, revision, surface = await self._target(**target)
-        source = sources_from(data).get(source_id)
-        if source is None or not source.code:
-            raise InstanceError("Custom source not found", 404)
-        if code_version != source.code_version:
-            raise InstanceError("Code version changed; review it again", 409)
-        if approved and set(secrets) - set(source.secret_names):
-            raise InstanceError("Secret binding is not declared by this source")
-        store = SecretStore(self.config().paths)
-        if approved and any(not store.secret_value(identity) for identity in secrets.values()):
-            raise InstanceError("Selected Secret is missing", 400)
-        consent = self._consent()
-        if approved:
-            record = consent.setdefault(code_version, {"secrets": {}})
-            for name, identity in secrets.items():
-                authorized = record["secrets"].setdefault(name, [])
-                if identity not in authorized:
-                    authorized.append(identity)
-            data = copy.deepcopy(data)
-            data[SOURCE_KEY][source_id]["secrets"] = secrets
-            if target.get("path"):
-                path = target["path"]
-                envelope = read_instance(self.config().workspace_dir, path)
-                envelope.message.data = data
-                root = self.config().workspace_dir
-                status, _ = write_text(
-                    root,
-                    path,
-                    yaml.safe_dump(envelope.model_dump(), sort_keys=False),
-                    base_token=etag_for_path(Path(root) / path),
-                )
-                if status != "ok":
-                    raise InstanceError("Instance changed before approval was saved", 409)
-                self.overlays.pop(path, None)
-        else:
-            consent.pop(code_version, None)
-        location = self._consent_path()
-        location.parent.mkdir(parents=True, exist_ok=True)
-        temporary = location.with_suffix(".tmp")
-        temporary.write_text(json.dumps(consent))
-        temporary.replace(location)
-        return await self._publish(
-            CardSourceUpdated(
+        async with self.commit_lock:
+            try:
+                latest, latest_revision, _ = await self._target(**target)
+            except (InstanceError, OSError, ValueError):
+                latest_revision = None
+            if revision != latest_revision:
+                status, error, result_data = "discarded", "Instance changed while refreshing", data
+            elif status == "updated":
+                if source.code and source.code_version not in self._consent():
+                    status, error = "discarded", "Source approval was withdrawn"
+                else:
+                    result_data = apply_result(latest, source, parsed)
+                    if target.get("path"):
+                        if len(self.overlays) >= 128:
+                            self.overlays.pop(next(iter(self.overlays)))
+                        self.overlays[target["path"]] = (revision, copy.deepcopy(result_data))
+            elif latest_revision is not None:
+                result_data = latest
+            event = CardSourceUpdated(
                 surface,
                 source_id=source_id,
                 path=target.get("path", ""),
-                status="configured",
-                data=data,
-                code_version=code_version,
-            ),
-            target.get("chat_id", ""),
-        )
+                status=status,
+                error=error,
+                data=result_data,
+                code_version=source.code_version if source.code else "",
+            )
+            return await self._publish(event, target.get("chat_id", ""))
+
+    async def approve(self, source_id, code_version, approved, secrets, **target):
+        async with self.commit_lock:
+            data, revision, surface = await self._target(**target)
+            source = sources_from(data).get(source_id)
+            if source is None or not source.code:
+                raise InstanceError("Custom source not found", 404)
+            if code_version != source.code_version:
+                raise InstanceError("Code version changed; review it again", 409)
+            if approved and set(secrets) - set(source.secret_names):
+                raise InstanceError("Secret binding is not declared by this source")
+            store = SecretStore(self.config().paths)
+            if approved and any(not store.secret_value(identity) for identity in secrets.values()):
+                raise InstanceError("Selected Secret is missing", 400)
+            consent = self._consent()
+            if approved:
+                record = consent.setdefault(code_version, {"secrets": {}})
+                for name, identity in secrets.items():
+                    authorized = record["secrets"].setdefault(name, [])
+                    if identity not in authorized:
+                        authorized.append(identity)
+                data = copy.deepcopy(data)
+                data[SOURCE_KEY][source_id]["secrets"] = secrets
+                if target.get("path"):
+                    path = target["path"]
+                    envelope = read_instance(self.config().workspace_dir, path)
+                    envelope.message.data = data
+                    root = self.config().workspace_dir
+                    status, _ = write_text(
+                        root,
+                        path,
+                        yaml.safe_dump(envelope.model_dump(), sort_keys=False),
+                        base_token=etag_for_path(Path(root) / path),
+                    )
+                    if status != "ok":
+                        raise InstanceError("Instance changed before approval was saved", 409)
+                    self.overlays.pop(path, None)
+            else:
+                consent.pop(code_version, None)
+            location = self._consent_path()
+            location.parent.mkdir(parents=True, exist_ok=True)
+            temporary = location.with_suffix(".tmp")
+            temporary.write_text(json.dumps(consent))
+            temporary.replace(location)
+            return await self._publish(
+                CardSourceUpdated(
+                    surface,
+                    source_id=source_id,
+                    path=target.get("path", ""),
+                    status="configured",
+                    data=data,
+                    code_version=code_version,
+                ),
+                target.get("chat_id", ""),
+            )
 
     async def close(self):
         tasks = list(self.pending.values())
@@ -285,3 +286,22 @@ def apply_result(data, source, values):
         target.pop(name, None)
     target.update(values)
     return updated
+
+
+def redact(value: Any, keys: dict) -> Any:
+    """Remove selected Secret values from decoded JSON and diagnostic strings."""
+    if isinstance(value, str):
+        for secret in keys.values():
+            for encoded in (
+                secret,
+                json.dumps(secret)[1:-1],
+                json.dumps(secret, ensure_ascii=False)[1:-1],
+                repr(secret)[1:-1],
+            ):
+                value = value.replace(encoded, "[redacted]")
+        return value
+    if isinstance(value, list):
+        return [redact(item, keys) for item in value]
+    if isinstance(value, dict):
+        return {redact(name, keys): redact(item, keys) for name, item in value.items()}
+    return value

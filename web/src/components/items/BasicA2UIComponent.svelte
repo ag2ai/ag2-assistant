@@ -181,10 +181,6 @@
     <BasicA2UIComponent {sourceIds} {sourceControls} {component} {components} {data} {onDataChange} {onAction} {passive} {scope} {depth} sourceWrapped />
     {@render sourceControls(component.id)}
   </div>
-{:else if depth >= MAX_DEPTH}
-  <!-- cyclic or pathologically deep component graph — stop recursing -->
-{:else if !present}
-  <!-- the data this component is conditional on is not there -->
 {:else if type === 'column'}
   <div class="a2ui-basic-col {markerClass}" style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={grow}>
     {@render kids()}

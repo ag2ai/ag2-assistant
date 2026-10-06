@@ -34,16 +34,15 @@
     (entry) => entry.kind === 'note' && entry.a2uiActionPending && entry.surfaceId === item.surfaceId
   ))
   let edits: Record<string, unknown> = {}
-  const seenSourceUpdates = new Set<string>()
+  const seenSourceUpdates = new Map<string, number | undefined>()
   let inputData: A2UIData = $state({})
 
   $effect(() => {
     const latestData = data
     const states = item.sourceStates || {}
     for (const [id, state] of Object.entries(states)) {
-      const key = id + ':' + state.created_at
-      if (state.status === 'updated' && !seenSourceUpdates.has(key)) {
-        seenSourceUpdates.add(key)
+      if (state.status === 'updated' && (!seenSourceUpdates.has(id) || seenSourceUpdates.get(id) !== state.created_at)) {
+        seenSourceUpdates.set(id, state.created_at)
         const source = sources[id]
         if (source) for (const path of Object.keys(edits)) {
           const prefix = source.path || ''

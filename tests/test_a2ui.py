@@ -394,6 +394,7 @@ def _market_emit() -> list[dict]:
             "id": "root",
             "component": "MarketBoard",
             "title": "Technology",
+            "_parameters": {"symbols": "NVDA,AAPL", "title": "Technology"},
             "currency": "USD",
             "quotes": [
                 {
@@ -420,7 +421,7 @@ async def test_the_market_board_is_offered_to_the_agent_from_its_file(config):
     schema = assistant_catalog()["components"]["MarketBoard"]
 
     assert schema["description"] == card.description
-    assert schema["required"] == ["id", "component", "title", "quotes"]
+    assert schema["required"] == ["id", "component", "title", "quotes", "_parameters"]
     assert set(schema["properties"]) >= {"id", "component", "title", "quotes"}
 
     assert card.description in await skill_body(config)
@@ -438,6 +439,7 @@ def test_the_market_board_is_drawn_from_the_vocabulary_not_from_a_component():
         "/title",
         "/currency",
         "/quotes",
+        "/_sources/root",
     ]
 
 
@@ -1312,9 +1314,9 @@ def test_a_drawn_card_persists_its_fields_and_none_of_its_layout():
         )
         data = durable_surfaces_from_messages(drawn)[0].data
 
-        assert {key: value for key, value in data.items() if key != "_sources"} == card.example, (
-            name
-        )
+        assert {key: value for key, value in data.items() if key != "_sources"} == {
+            key: value for key, value in card.example.items() if key != "_parameters"
+        }, name
 
 
 def test_a_plain_layout_root_contributes_no_data():

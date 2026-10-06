@@ -3,6 +3,9 @@
 WeatherPanel and MarketBoard can refresh through `get_weather` and `get_quotes`
 without an assistant Turn. The generating call supplies `_parameters`, for example
 `{"location":"Moscow","units":"celsius"}` or `{"symbols":"AAPL,MSFT","title":"Watchlist"}`.
+Parameters that cannot come from required displayed fields or declared defaults
+are required in `_parameters`; missing choices reject drawing instead of dropping
+the source. Worked examples can include `_parameters`.
 Instances retain their parameters, result contract and expanded layout. Existing
 source-less instances remain passive; opening old history never infers a source.
 

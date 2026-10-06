@@ -14,6 +14,7 @@ import yaml
 from ag2.events import ToolCallEvent
 from fastapi.testclient import TestClient
 
+from assistant.events import A2UISurface
 from assistant.gateway.app import create_app
 from assistant.profiles import ProfileRegistry
 from tests.support.apps import api, make_manager
@@ -206,7 +207,7 @@ def test_custom_code_needs_profile_version_approval_and_explicit_stable_secret_b
     manager = make_manager(
         paths,
         persist=True,
-        env={"PATH": str(__import__("pathlib").Path(sys.executable).parent) + ":/usr/bin:/bin"},
+        env={"PATH": str(Path(sys.executable).parent) + ":/usr/bin:/bin"},
     )
     with TestClient(create_app(manager)) as client:
         path = upload(client, pid, source=source)
@@ -244,21 +245,23 @@ def test_custom_code_needs_profile_version_approval_and_explicit_stable_secret_b
         )
 
 
-def test_composite_sources_refresh_independently_even_when_requests_overlap(paths):
+@pytest.mark.parametrize("target", ["file", "chat"])
+def test_composite_sources_refresh_independently_even_when_requests_overlap(paths, target):
     pid = ProfileRegistry(paths).create_profile("Sources", "#109e91").id
-    started, release = threading.Event(), threading.Event()
+    barrier = threading.Barrier(2)
 
     async def weather(**args):
-        started.set()
-        assert await asyncio.to_thread(release.wait, 5)
+        await asyncio.to_thread(barrier.wait, 5)
         return '{"summary":"Weather fresh"}'
 
     async def quotes(**args):
+        await asyncio.to_thread(barrier.wait, 5)
         return '{"summary":"Quotes fresh"}'
 
+    manager = make_manager(paths, persist=True)
     with TestClient(
         create_app(
-            make_manager(paths, persist=True),
+            manager,
             card_source_tools={"get_weather": weather, "get_quotes": quotes},
         )
     ) as client:
@@ -276,33 +279,56 @@ def test_composite_sources_refresh_independently_even_when_requests_overlap(path
                 },
             }
         )
-        path = "composite.card-instance.yaml"
-        assert (
-            client.post(
-                api(pid, "/files/upload"), files={"files": (path, yaml.safe_dump(file))}
-            ).status_code
-            == 200
-        )
+        if target == "file":
+            path = "composite.card-instance.yaml"
+            assert (
+                client.post(
+                    api(pid, "/files/upload"),
+                    files={"files": (path, yaml.safe_dump(file))},
+                ).status_code
+                == 200
+            )
+            request = {"path": path}
+        else:
+            send(client, pid)
+            replay(client, pid)
+            gateway = manager.get(pid).require_gateway()
+            assert client.portal is not None
+            client.portal.call(
+                gateway.emit_event,
+                "drafts",
+                A2UISurface(
+                    "composite",
+                    component=file["message"]["component"],
+                    data=file["message"]["data"],
+                ),
+            )
+            request = {"chat_id": "drafts", "surface_id": "composite"}
         with ThreadPoolExecutor() as pool:
-            pending = pool.submit(
-                client.post,
-                api(pid, "/card-sources/refresh"),
-                json={"path": path, "source_id": "weather"},
-            )
-            assert started.wait(5)
-            quote = client.post(
-                api(pid, "/card-sources/refresh"), json={"path": path, "source_id": "quotes"}
-            )
-            assert quote.json()["status"] == "updated"
-            release.set()
-            assert pending.result().json()["status"] == "updated"
-        current = client.get(api(pid, "/card-instances"), params={"path": path}).json()["message"][
-            "data"
-        ]["_cards"]
-        assert current == {
+            pending = [
+                pool.submit(
+                    client.post,
+                    api(pid, "/card-sources/refresh"),
+                    json={**request, "source_id": name},
+                )
+                for name in ("weather", "quotes")
+            ]
+            assert all(result.result().json()["status"] == "updated" for result in pending)
+        if target == "file":
+            current = client.get(api(pid, "/card-instances"), params={"path": path}).json()[
+                "message"
+            ]["data"]
+        else:
+            current = [
+                e["data"]["data"]
+                for e in replay(client, pid)
+                if e["type"].endswith("CardSourceUpdated")
+            ][-1]
+        assert current["_cards"] == {
             "weather": {"summary": "Weather fresh", "note": "Keep"},
             "quotes": {"summary": "Quotes fresh"},
         }
+        assert current["unrelated"] == "Keep"
 
 
 @pytest.mark.parametrize("change", ["edit", "move", "delete"])
@@ -506,3 +532,116 @@ def test_legacy_source_less_saved_files_remain_passive(paths):
             ).status_code
             == 404
         )
+
+
+@pytest.mark.parametrize("case", ["result", "invalid", "error"])
+def test_selected_secrets_are_redacted_after_json_decoding_and_before_error_truncation(paths, case):
+    pid = ProfileRegistry(paths).create_profile("Sources", "#109e91").id
+    secret_value = 'secret-\n"\\😀value'
+
+    async def execute(config, source, arguments, keys):
+        value = keys["DATA_KEY"]
+        if case == "error":
+            raise ValueError("x" * 490 + value)
+        return json.dumps({"summary": value, "nested": {value: [value]}})
+
+    fields = {"summary": {"type": "string"}, "nested": {"type": "object"}}
+    if case == "invalid":
+        fields["summary"]["enum"] = ["allowed"]
+    source = {"code": "print('{}')", "secret_names": ["DATA_KEY"], "fields": fields}
+    with TestClient(
+        create_app(make_manager(paths, persist=True), card_source_executor=execute)
+    ) as client:
+        path = upload(client, pid, source=source)
+        request = {"path": path, "source_id": "root"}
+        version = client.post(api(pid, "/card-sources/refresh"), json=request).json()["events"][0][
+            "data"
+        ]["code_version"]
+        identity = client.post(
+            "/api/secrets", json={"name": "Source key", "value": secret_value}
+        ).json()["secret"]["id"]
+        assert (
+            client.post(
+                api(pid, "/card-sources/approval"),
+                json={
+                    **request,
+                    "code_version": version,
+                    "approved": True,
+                    "secrets": {"DATA_KEY": identity},
+                },
+            ).status_code
+            == 200
+        )
+        response = client.post(api(pid, "/card-sources/refresh"), json=request)
+        result = response.json()
+        assert "secret-" not in json.dumps(result), response.text
+        if case == "result":
+            assert result["status"] == "updated"
+            data = result["events"][0]["data"]["data"]
+            assert data["summary"] == "[redacted]"
+            assert data["nested"] == {"[redacted]": ["[redacted]"]}
+            opened = client.get(api(pid, "/card-instances"), params={"path": path}).json()
+            assert "secret-" not in json.dumps(opened)
+        else:
+            assert result["status"] == "error"
+            assert result["events"][0]["data"]["data"]["summary"] == "Last good"
+
+
+def test_quotes_generation_requires_chosen_parameters_and_retains_its_refresh_source(paths):
+    pid = ProfileRegistry(paths).create_profile("Sources", "#109e91").id
+    fields = {
+        "title": "Chosen quotes",
+        "quotes": [{"symbol": "AAPL", "name": "Apple", "price": 100, "changePercent": 0}],
+    }
+    calls = [fields, {**fields, "_parameters": {"symbols": "AAPL", "title": "Chosen quotes"}}]
+    models = ScriptedModels(
+        lambda cfg, model: [
+            *[
+                ToolCallEvent(
+                    name="run_skill_script",
+                    arguments=json.dumps(
+                        {
+                            "name": "rich-views",
+                            "script": "MarketBoard",
+                            "args": args,
+                        }
+                    ),
+                )
+                for args in calls
+            ],
+            "done",
+        ]
+    )
+
+    async def quotes(**args):
+        assert args == {"symbols": "AAPL", "title": "Chosen quotes"}
+        return json.dumps(
+            {
+                **fields,
+                "quotes": [{"symbol": "AAPL", "name": "Apple", "price": 101, "changePercent": 1}],
+            }
+        )
+
+    with TestClient(
+        create_app(
+            make_manager(paths, persist=True, model_factory=models),
+            card_source_tools={"get_quotes": quotes},
+        )
+    ) as client:
+        send(client, pid)
+        surfaces = [e["data"] for e in replay(client, pid) if e["type"].endswith("A2UISurface")]
+        assert len(surfaces) == 1
+        surface = surfaces[0]
+        assert surface["data"]["_sources"]["root"]["parameters"] == calls[1]["_parameters"]
+        count = len(models.requests)
+        result = client.post(
+            api(pid, "/card-sources/refresh"),
+            json={
+                "chat_id": "drafts",
+                "surface_id": surface["surface_id"],
+                "source_id": "root",
+            },
+        ).json()
+        assert result["status"] == "updated"
+        assert result["events"][0]["data"]["data"]["quotes"][0]["price"] == 101
+        assert len(models.requests) == count

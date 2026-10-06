@@ -77,12 +77,12 @@
 </script>
 
 <div class="source-controls" bind:this={element}>
-  <span>{target.source_id} · {source.tool || 'Custom source'}</span>
+  <span>{source.tool === 'get_weather' ? 'Weather' : source.tool === 'get_quotes' ? 'Quotes' : 'Custom source'}</span>
   <button class="open" disabled={busy} onclick={refresh}>{busy ? 'Refreshing…' : 'Refresh'}</button>
   {#if source.code}<button class="open" disabled={busy} onclick={review}>Review source</button>{/if}
   {#if error || refreshState?.error}<span role="alert">{error || refreshState?.error}</span>{/if}
 </div>
-<dialog bind:this={dialog} aria-label="Approve Card source">
+<dialog class="source-approval" bind:this={dialog} aria-label="Approve Card source">
   <h2>Approve Card source</h2>
   <p>Allow this version to run automatically in this Profile while its Card is shown.</p>
   <pre>{source.code}</pre>
@@ -102,11 +102,11 @@
 
 <style>
   .source-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 8px 0; font-size: 12px; }
-  [role=alert] { color: var(--negative); }
-  dialog { color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 16px; width: min(680px, 90vw); max-height: 85vh; overflow: auto; padding: 24px; }
+  [role=alert] { color: var(--danger); }
+  dialog { color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 16px; width: min(680px, 90vw); max-height: 85vh; overflow: auto; padding: 24px; }
   dialog::backdrop { background: #0007; }
-  pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg2); padding: 12px; font-size: 12px; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--code); padding: 12px; font-size: 12px; }
   label { display: flex; justify-content: space-between; gap: 12px; margin: 12px 0; }
-  select { color: var(--text); background: var(--bg); padding: 6px; border: 1px solid var(--line); border-radius: 8px; }
+  select { color: var(--ink); background: var(--surface); padding: 6px; border: 1px solid var(--line); border-radius: 8px; }
   .buttons { display: flex; justify-content: end; gap: 12px; }
 </style>
