@@ -246,7 +246,7 @@ def validate_card(
         description=description,
         fields=dict(fields),
         required=required,
-        layout=_layout(raw.get("layout"), frozenset(components)),
+        layout=validate_layout(raw.get("layout"), frozenset(components)),
         example=dict(example),
         topic=topic,
         path=path,
@@ -276,7 +276,9 @@ def validate_card_data(fields: dict, required: tuple[str, ...], data: Any, *, la
         raise CardError(f"invalid fields reference: {exc}") from exc
 
 
-def _layout(raw: Any, components: frozenset[str]) -> tuple[dict[str, Any], ...]:
+def validate_layout(
+    raw: Any, components: frozenset[str], *, root_id: str = LAYOUT_ROOT
+) -> tuple[dict[str, Any], ...]:
     """The layout's components, checked for unique ids and resolvable references."""
     if not isinstance(raw, list) or not raw:
         raise CardError("no layout")
@@ -294,8 +296,8 @@ def _layout(raw: Any, components: frozenset[str]) -> tuple[dict[str, Any], ...]:
     ids = [node["id"] for node in nodes]
     if duplicates := sorted({node_id for node_id in ids if ids.count(node_id) > 1}):
         raise CardError(f"duplicate layout ids: {', '.join(duplicates)}")
-    if LAYOUT_ROOT not in ids:
-        raise CardError(f"layout has no {LAYOUT_ROOT!r} component to be rooted at")
+    if root_id not in ids:
+        raise CardError(f"layout has no {root_id!r} component to be rooted at")
     known = set(ids)
     for node in nodes:
         try:
@@ -305,7 +307,7 @@ def _layout(raw: Any, components: frozenset[str]) -> tuple[dict[str, Any], ...]:
         for reference in _references(node):
             if reference not in known:
                 raise CardError(f"layout references unknown id {reference!r}")
-    _binding_scopes({node["id"]: node for node in nodes})
+    _binding_scopes({node["id"]: node for node in nodes}, root_id)
     return tuple(nodes)
 
 
@@ -321,7 +323,7 @@ def _values_for(value: Any, key: str):
             yield from _values_for(item, key)
 
 
-def _binding_scopes(nodes: dict[str, dict]) -> None:
+def _binding_scopes(nodes: dict[str, dict], root_id: str) -> None:
     """Check bindings in their inherited repeated-item or Table-template scope."""
     visited: set[tuple[str, bool]] = set()
 
@@ -350,7 +352,7 @@ def _binding_scopes(nodes: dict[str, dict]) -> None:
         for ref in _references(node):
             visit(ref, scoped or ref == repeated or ref in templates, ancestors | {node_id})
 
-    visit(LAYOUT_ROOT, False, frozenset())
+    visit(root_id, False, frozenset())
     for node_id in nodes:
         if not any(key[0] == node_id for key in visited):
             visit(node_id, False, frozenset())

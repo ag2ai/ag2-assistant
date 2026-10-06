@@ -102,6 +102,17 @@ class CardDefinitionSaved(AssistantEvent):
     request_id: str = ""
 
 
+class CardInstanceSaved(AssistantEvent):
+    """An independent rendered message copy was explicitly saved to Files."""
+
+    surface_id: str = Field(kw_only=False)
+    path: str = ""
+    instance_id: str = ""
+    saved_at: str = ""
+    request_id: str = ""
+    request_hash: str = ""
+
+
 class A2UISurfaceDataUpdated(AssistantEvent):
     """Durable data-model snapshot emitted after an A2UI server action."""
 

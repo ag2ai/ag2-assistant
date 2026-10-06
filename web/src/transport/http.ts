@@ -18,19 +18,13 @@ export class ApiError extends Error {
   }
 }
 
-// A scoped route returning 410 means the active profile was archived under us;
-// 404 on /api/p/ means an unknown pid. Both recover by re-resolving.
-function profileGone(status: number, path: string): boolean {
-  return status === 410 || (status === 404 && path.startsWith('/api/p/'))
+// Recover only when the Profile itself is missing or archived.
+function profileGone(status: number, path: string, payload: unknown): boolean {
+  const error = (payload as { error?: unknown } | null)?.error
+  return status === 410 || (status === 404 && path.startsWith('/api/p/') && typeof error === 'string' && error.startsWith('unknown profile:'))
 }
 
-// The one response check every helper shares: profile-gone recovery first, then
-// the error extraction off a non-2xx body. Returns the parsed JSON on success.
 async function checkResponse(r: Response, method: string, path: string): Promise<unknown> {
-  if (profileGone(r.status, path)) {
-    onProfileGone('fetch ' + r.status)
-    throw new ApiError(`${method} ${path} -> ${r.status}`, r.status, null)
-  }
   if (!r.ok) {
     let message = `${method} ${path} -> ${r.status}`
     let payload: unknown = null
@@ -38,9 +32,8 @@ async function checkResponse(r: Response, method: string, path: string): Promise
       payload = await r.json()
       const error = (payload as { error?: unknown } | null)?.error
       if (error) message = String(error)
-    } catch {
-      // A non-JSON error body leaves the status-line message in place.
-    }
+    } catch { /* Preserve the status-line message for non-JSON errors. */ }
+    if (profileGone(r.status, path, payload)) onProfileGone('fetch ' + r.status)
     throw new ApiError(message, r.status, payload)
   }
   return r.json()

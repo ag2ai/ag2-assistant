@@ -4,7 +4,7 @@
 // md / code / text render in-app; anything unknown is download-only.
 
 // Every render mode the Viewer knows; 'download' means no in-app preview.
-export type ViewerKind = 'html' | 'image' | 'pdf' | 'markdown' | 'text' | 'code' | 'download'
+export type ViewerKind = 'html' | 'image' | 'pdf' | 'markdown' | 'text' | 'code' | 'download' | 'card-instance'
 
 const KIND: Record<string, ViewerKind> = {
   html: 'html',
@@ -48,6 +48,7 @@ const KIND: Record<string, ViewerKind> = {
 
 // The render mode for a file name (by extension), or 'download' if not previewable.
 export function viewerKind(name: string | null | undefined): ViewerKind {
+  if (name?.endsWith('.card-instance.yaml')) return 'card-instance'
   const ext = ((name || '').split('.').pop() ?? '').toLowerCase()
   return KIND[ext] || 'download'
 }

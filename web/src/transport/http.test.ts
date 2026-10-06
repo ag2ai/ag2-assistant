@@ -78,3 +78,12 @@ test('post sends a JSON body and patch uses the PATCH verb', async () => {
   await patch('/api/rows/a', { n: 2 }, Row)
   assert.equal(seen?.init?.method, 'PATCH')
 })
+
+test('a missing instance stays a resource error and keeps the current Profile open', async () => {
+  const { notice } = await import('../store.ts')
+  const { get: readStore } = await import('svelte/store')
+  notice.set(null)
+  stubFetch(404, { error: 'File not found' })
+  await assert.rejects(() => get('/api/p/work/card-instances?path=missing.card-instance.yaml', Row), (error: unknown) => error instanceof ApiError && error.message === 'File not found')
+  assert.equal(readStore(notice), null)
+})

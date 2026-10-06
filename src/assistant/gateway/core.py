@@ -63,6 +63,7 @@ from assistant.agent import (
     universal_turn_prompt,
 )
 from assistant.card_drafts import CardDrafts
+from assistant.card_instances import CardInstances
 from assistant.codex_auth import CodexAuth, CodexAuthError
 from assistant.coding.detect import parse_bridge
 from assistant.config import Config, load_config
@@ -244,6 +245,9 @@ class Gateway:
         self._locks: dict[str, asyncio.Lock] = {}
         self._log_locks: dict[str, asyncio.Lock] = {}
         self.card_drafts = CardDrafts(self._config_factory, self._draft_history, self._commit_draft)
+        self.card_instances = CardInstances(
+            self._config_factory, self._draft_history, self._commit_draft
+        )
         # chat_id -> the turn currently running on it (feed_message / cancel_turn)
         self._active: dict[str, _ActiveTurn] = {}
         self._invocations: set[asyncio.Task] = set()
@@ -654,6 +658,11 @@ class Gateway:
         """Save a current draft through the same operation as the Card author Skill."""
         context = ConversationContext(stream=await self.stream_for(chat_id))
         return await self.card_drafts.save(context, **request)
+
+    async def save_card_instance(self, chat_id: str, **request) -> dict:
+        """Retain a browser-captured message from this Chat as an independent file."""
+        context = ConversationContext(stream=await self.stream_for(chat_id))
+        return await self.card_instances.save(context, **request)
 
     async def _commit_draft(self, context: ConversationContext, event) -> None:
         writer = self._writer

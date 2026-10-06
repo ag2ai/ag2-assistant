@@ -209,22 +209,22 @@
    would style those as buttons. A page that renders outside a modal/panel opts in
    by adding its root class to the list below (today: .taskpage, .tf) — never by
    copying this block into the component. */
-.modal .open, .panel .open, .taskpage .open, .tf .open, .draft-save .open {
+.modal .open, .panel .open, .taskpage .open, .tf .open, :is(.draft-save, .instance-save, .instance-save-dialog, .note) .open {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   flex: none; font-family: var(--sans); font-size: 13px; font-weight: var(--fw-medium); cursor: pointer;
   border: 1px solid var(--line); background: var(--surface); color: var(--ink);
   border-radius: var(--radius-sm); padding: 7px 14px;
   transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
 }
-.modal .open:hover, .panel .open:hover, .taskpage .open:hover, .tf .open:hover, .draft-save .open:hover { border-color: color-mix(in srgb, var(--ink) 22%, var(--line)); background: var(--code); }
-.modal .open:active, .panel .open:active, .taskpage .open:active, .tf .open:active, .draft-save .open:active { background: var(--code); }
-.modal .open:disabled, .panel .open:disabled, .taskpage .open:disabled, .tf .open:disabled, .draft-save .open:disabled { opacity: .5; cursor: default; border-color: var(--line); color: var(--muted); background: var(--surface); }
+.modal .open:hover, .panel .open:hover, .taskpage .open:hover, .tf .open:hover, :is(.draft-save, .instance-save, .instance-save-dialog, .note) .open:hover { border-color: color-mix(in srgb, var(--ink) 22%, var(--line)); background: var(--code); }
+.modal .open:active, .panel .open:active, .taskpage .open:active, .tf .open:active, :is(.draft-save, .instance-save, .instance-save-dialog, .note) .open:active { background: var(--code); }
+.modal .open:disabled, .panel .open:disabled, .taskpage .open:disabled, .tf .open:disabled, :is(.draft-save, .instance-save, .instance-save-dialog, .note) .open:disabled { opacity: .5; cursor: default; border-color: var(--line); color: var(--muted); background: var(--surface); }
 /* Primary CTA — accent-outlined, filled on hover. The one action that matters. */
-.modal .open.primary, .panel .open.primary, .taskpage .open.primary, .tf .open.primary, .draft-save .open.primary { border-color: var(--accent); color: var(--accent); }
-.modal .open.primary:hover:not(:disabled), .panel .open.primary:hover:not(:disabled), .taskpage .open.primary:hover:not(:disabled), .tf .open.primary:hover:not(:disabled), .draft-save .open.primary:hover:not(:disabled) { background: var(--accent-soft); }
+.modal .open.primary, .panel .open.primary, .taskpage .open.primary, .tf .open.primary, :is(.draft-save, .instance-save, .instance-save-dialog, .note) .open.primary { border-color: var(--accent); color: var(--accent); }
+.modal .open.primary:hover:not(:disabled), .panel .open.primary:hover:not(:disabled), .taskpage .open.primary:hover:not(:disabled), .tf .open.primary:hover:not(:disabled), :is(.draft-save, .instance-save, .instance-save-dialog, .note) .open.primary:hover:not(:disabled) { background: var(--accent-soft); }
 /* Destructive action (e.g. Delete task) + its inline confirm. */
-.modal .open.danger, .panel .open.danger, .taskpage .open.danger, .tf .open.danger, .draft-save .open.danger { border-color: color-mix(in srgb, var(--danger) 55%, var(--line)); color: var(--danger); background: none; }
-.modal .open.danger:hover, .panel .open.danger:hover, .taskpage .open.danger:hover, .tf .open.danger:hover, .draft-save .open.danger:hover { border-color: var(--danger); color: #fff; background: var(--danger); }
+.modal .open.danger, .panel .open.danger, .taskpage .open.danger, .tf .open.danger, :is(.draft-save, .instance-save, .instance-save-dialog, .note) .open.danger { border-color: color-mix(in srgb, var(--danger) 55%, var(--line)); color: var(--danger); background: none; }
+.modal .open.danger:hover, .panel .open.danger:hover, .taskpage .open.danger:hover, .tf .open.danger:hover, :is(.draft-save, .instance-save, .instance-save-dialog, .note) .open.danger:hover { border-color: var(--danger); color: #fff; background: var(--danger); }
 /* Icon-only square button (Edit / Delete / revoke). Muted glyph, NEUTRAL hover —
    matches the app's other icon buttons (.cbtn / .fttool / .rowkebab), never accent.
    Safe as a bare global: `.iconbtn` is not overloaded as a state modifier. */
@@ -1159,3 +1159,6 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .usagehud .uhlabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The Files browser now lives in the Drawer as the third tab (FilesTree.svelte,
    ADR 0007) with its own scoped styles — the old modal's .files styles are gone. */
+
+.a2ui-button:disabled { opacity: .5; cursor: default; }
+.a2ui-field input:disabled, .a2ui-field textarea:disabled, .a2ui-checkbox input:disabled, .a2ui-choice:disabled { opacity: .7; cursor: default; }

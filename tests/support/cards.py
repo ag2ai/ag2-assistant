@@ -4,17 +4,20 @@
 plugin is built from, so what a test reads is what a turn would be handed.
 """
 
+import json
 from pathlib import Path
 
 import yaml
 from ag2.a2ui import A2UIMessageEvent
 from ag2.context import ConversationContext
+from ag2.events import ToolCallEvent
 from ag2.stream import MemoryStream
 
 from assistant.a2ui_skill import A2UI_SKILL, PROTOCOL_RESOURCE, card_resource
 from assistant.agent import resolve_a2ui_skill
 from assistant.config import Config
 from assistant.skills import FilteredSkillRuntime
+from tests.support.apps import api
 
 # One minimal Card: a title drawn in a Card, which is the smallest file that loads.
 CARD = """
@@ -92,3 +95,32 @@ async def draw(
     ctx.stream.subscribe(collect)
     reply = await (view or a2ui_view(config)).execute(A2UI_SKILL, card, ctx, args)
     return reply, published
+
+
+def author(script, args):
+    return ToolCallEvent(
+        name="run_skill_script",
+        arguments=json.dumps(
+            {
+                "name": "card-author",
+                "script": script,
+                "args": args,
+            }
+        ),
+    )
+
+
+def replay(client, pid, chat="drafts"):
+    events = []
+    with client.websocket_connect(api(pid, f"/stream?chat={chat}")) as ws:
+        while True:
+            frame = ws.receive_json()
+            if frame.get("type") == "ready":
+                return events
+            if "event" in frame:
+                events.append(frame["event"])
+
+
+def send(client, pid, text="Draw", chat="drafts"):
+    result = client.post(api(pid, "/message"), json={"text": text, "chat_id": chat})
+    assert result.status_code == 200, result.text

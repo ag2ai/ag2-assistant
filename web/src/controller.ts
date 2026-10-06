@@ -2,7 +2,7 @@
 // folds events into items, runs turns, and (for tasks) polls the durable panel.
 
 import { get, writable, type Writable } from 'svelte/store'
-import { thread, runInfo, chats, tasks, inquiries, inspectorEvents, viewer, profiles, profileEpoch, chatModel } from './store.ts'
+import { thread, runInfo, chats, tasks, inquiries, inspectorEvents, viewer, profiles, profileEpoch, chatModel, refreshFiles } from './store.ts'
 import type { ThreadKind } from './store.ts'
 import { NO_CHAT_MODEL, openedChat, sentFirstMessage } from './lib/chatModel.ts'
 import { StreamClient } from './transport/stream.ts'
@@ -71,6 +71,7 @@ export function openThread(kind: ThreadKind, id: string): void {
     onEvent: (ev) => {
       _inspect(ev)
       if (_suppressStream) return
+      if (!_replaying && ev.type.endsWith('.CardInstanceSaved') && typeof ev.data.path === 'string') refreshFiles(ev.data.path)
       if (_replaying) { foldEvent(_replayBuf, ev); return }   // replay → buffer, don't render half-built
       thread.update((t) => { foldEvent(t.items, ev); return { ...t, items: t.items, busy: isBusy(t.items) } })
     },

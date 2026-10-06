@@ -138,9 +138,9 @@ _Avoid_: component (the A2UI protocol's word for a node in a rendered tree —
 including the primitive literally named `Card`), widget, template
 
 **Card instance**:
-One Card actually rendered, holding the data of one answer — what the user sees in
-the **Thread**. Many instances of one Card can exist; the instance carries the
-data, the Card carries only the shape.
+A self-contained rendered **Card** message with specific values and its own
+appearance. Explicit saving creates an editable copy of that message in **Files**,
+independent of its originating **Chat** and the reusable Card definition.
 _Avoid_: surface (the protocol's word, and `surfaceId` in the code; in this
 glossary the rendered thing is a Card instance)
 
@@ -154,7 +154,7 @@ say whether it is rendered or catalogued)
 **Card draft**:
 One **Ephemeral Card** being iterated in a **Chat**, with its own identity and current
 version. A Chat may contain several independent drafts; earlier versions remain in
-history, and only the current version of each draft can be saved.
+history, and only the current definition of each draft can be saved for reuse.
 _Avoid_: active draft (there may be several), selected Card (no separate selection state)
 
 **Card catalog**:

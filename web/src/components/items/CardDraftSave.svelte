@@ -68,7 +68,7 @@
 <div class="draft-save">
   <div class="draft-row">
     <span>{item.draft?.name} · Version {item.draft?.version}</span>
-    <button class="open" onclick={open}>Save</button>
+    <button class="open" onclick={open}>Save definition</button>
   </div>
   {#if saved}<p role="status">{saved}</p>{/if}
   {#if opened}
@@ -82,7 +82,7 @@
           <button type="button" class="open" onclick={copy} disabled={busy}>Save as copy</button>
         </div>
       {:else}
-        <button type="submit" class="open" disabled={busy || !name.trim() || !filename.trim()}>{busy ? 'Saving…' : 'Save card'}</button>
+        <button type="submit" class="open" disabled={busy || !name.trim() || !filename.trim()}>{busy ? 'Saving…' : 'Save definition'}</button>
       {/if}
       {#if error}<p role="alert">{error}</p>{/if}
       <button type="button" class="open" onclick={() => opened = false} disabled={busy}>Cancel</button>

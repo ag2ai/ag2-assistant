@@ -70,6 +70,10 @@ export const EventData = {
     definition: z.object({ name: z.string() }),
   }),
   CardDefinitionSaved: z.object({ name: z.string(), path: z.string() }),
+  CardInstanceSaved: z.object({
+    surface_id: z.string(), path: z.string(), instance_id: z.string(),
+    request_id: z.string(), saved_at: z.string(),
+  }),
   A2UISurfaceDataUpdated: z.object({
     surface_id: z.string(),
     data: z.record(z.string(), z.unknown()).optional(),
@@ -119,7 +123,7 @@ export const HANDLED_EVENTS = [
   'ModelRequest', 'DrainedModelRequest', 'ModelMessageChunk', 'ModelResponse',
   'ToolCallsEvent', 'TaskCreated', 'TaskScheduled', 'TaskStarted', 'TaskCompleted',
   'TaskFailed', 'TaskCancelled', 'SubagentTrace', 'ObserverAlert', 'DeliverableProduced',
-  'ImageGenerated', 'A2UISurface', 'EphemeralCard', 'CardDefinitionSaved', 'A2UISurfaceDataUpdated', 'A2UIActionSubmitted',
+  'ImageGenerated', 'A2UISurface', 'EphemeralCard', 'CardDefinitionSaved', 'CardInstanceSaved', 'A2UISurfaceDataUpdated', 'A2UIActionSubmitted',
   'A2UIMessageEvent', 'Attachment', 'InquiryRaised', 'InquiryAnswered', 'TurnCancelled',
   'TurnFailed', 'FeedbackGiven', 'FeedbackCleared',
 ] as const
@@ -218,7 +222,7 @@ export type ThreadItem =
   | (ItemBase & { kind: 'user'; text: string; queued?: boolean; voice?: boolean })
   | (ItemBase & { kind: 'agent'; text: string; streaming?: boolean; empty?: boolean; voice?: boolean; feedback?: Feedback })
   | (ItemBase & { kind: 'tools'; names: { name: string; n: number }[]; cards: ToolCard[] })
-  | (ItemBase & { kind: 'note'; icon: string; text: string; alert?: boolean; ends?: boolean; pending?: boolean; a2uiActionPending?: boolean; surfaceId?: string })
+  | (ItemBase & { kind: 'note'; icon: string; text: string; alert?: boolean; ends?: boolean; pending?: boolean; a2uiActionPending?: boolean; surfaceId?: string; savedPath?: string; saveRequestId?: string })
   | (ItemBase & { kind: 'taskcard'; taskId: string; title?: string; scheduled: boolean })
   | (ItemBase & { kind: 'subagent'; taskId: string; agent: string; objective: string; status?: string; result?: string; error?: string; items: ThreadItem[] })
   | (ItemBase & { kind: 'deliverable'; taskId?: string; deliverableId: string; description?: string; preview?: string; path?: string; feedback?: Feedback })
