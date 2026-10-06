@@ -139,7 +139,7 @@ def decode_instance(data: bytes) -> CardInstanceResponse:
 
 
 @contextmanager
-def instance_location(root: Path, rel: str) -> Iterator[tuple[int, str]]:
+def instance_location(root: str | os.PathLike[str], rel: str) -> Iterator[tuple[int, str]]:
     """Open an existing Files Directory without following links or escaping its root."""
     parts = rel.split("/")
     if (
@@ -148,7 +148,7 @@ def instance_location(root: Path, rel: str) -> Iterator[tuple[int, str]]:
         or any("\\" in part or "\x00" in part for part in parts)
     ):
         raise InstanceError("Use a Files relative path ending .card-instance.yaml")
-    fd = os.open(root.resolve(), os.O_RDONLY | os.O_DIRECTORY)
+    fd = os.open(Path(root).resolve(), os.O_RDONLY | os.O_DIRECTORY)
     try:
         for part in parts[:-1]:
             try:
@@ -170,16 +170,17 @@ def _read_at(directory: int, filename: str) -> bytes:
         raise InstanceError("File not found", 404) from exc
     except OSError as exc:
         raise InstanceError("Instance path is not a readable regular file") from exc
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise InstanceError("Instance path is not a regular file")
     with os.fdopen(fd, "rb") as source:
-        if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
-            raise InstanceError("Instance path is not a regular file")
         data = source.read(_MAX_WRITE_BYTES + 1)
     if len(data) > _MAX_WRITE_BYTES:
         raise InstanceError("File too large", 413)
     return data
 
 
-def read_instance(root: Path, rel: str) -> CardInstanceResponse:
+def read_instance(root: str | os.PathLike[str], rel: str) -> CardInstanceResponse:
     """Read a portable instance from this Profile's Files space."""
     with instance_location(root, rel) as (directory, filename):
         return decode_instance(_read_at(directory, filename))
@@ -237,8 +238,16 @@ class CardInstances:
             if any(event.request_hash != request_hash for event in notices):
                 raise InstanceError("Save request_id was already used for different input", 409)
             root = self.config().workspace_dir
-            envelope = None
-            for row in list_files(root):
+            try:
+                envelope = read_instance(root, path)
+            except InstanceError:
+                envelope = None
+            if envelope is not None:
+                if envelope.save_request_id != request_id:
+                    envelope = None
+                elif envelope.request_hash != request_hash:
+                    raise InstanceError("Save request_id was already used for different input", 409)
+            for row in list_files(root) if envelope is None else []:
                 if not row["path"].endswith(INSTANCE_SUFFIX):
                     continue
                 try:

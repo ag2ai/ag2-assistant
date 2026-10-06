@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from assistant.gateway.app import create_app
 from assistant.profiles import ProfileRegistry
 from tests.support.apps import api, make_manager
-from tests.support.cards import author, card_definition, replay, send, write_card
+from tests.support.cards import author, card_definition, replay, send, snapshot_message, write_card
 from tests.support.fakes import ScriptedModels
 
 
@@ -30,10 +30,7 @@ def test_save_local_values_as_an_independent_file_that_survives_restart(paths):
         source = next(e["data"] for e in replay(client, pid) if e["type"].endswith("EphemeralCard"))
         before_catalog = client.get(api(pid, "/cards")).json()
         assert not client.get(api(pid, "/files")).json()["files"]
-        snapshot = {
-            key: source[key]
-            for key in ("version", "catalog_id", "component", "data", "title", "intent")
-        }
+        snapshot = snapshot_message(source)
         snapshot["data"] = {"title": "Locally entered", "extra": {"rows": [1, 2]}}
         request = {
             "surface_id": source["surface_id"],
@@ -96,10 +93,7 @@ def test_retries_collisions_source_edits_and_portable_copies_are_independent(pat
     with TestClient(create_app(manager, persist=True)) as client:
         send(client, pid)
         source = next(e["data"] for e in replay(client, pid) if e["type"].endswith("EphemeralCard"))
-        snapshot = {
-            key: source[key]
-            for key in ("version", "catalog_id", "component", "data", "title", "intent")
-        }
+        snapshot = snapshot_message(source)
         request = {
             "surface_id": source["surface_id"],
             "message": snapshot,
@@ -111,6 +105,11 @@ def test_retries_collisions_source_edits_and_portable_copies_are_independent(pat
         assert first["history_recorded"]
         raw_url = api(pid, "/files/raw")
         raw = client.get(raw_url, params={"path": first["path"]})
+        transferred = client.post(
+            api(pid, "/files/upload"), files={"files": ("backup.card-instance.yaml", raw.content)}
+        )
+        assert transferred.status_code == 200
+        assert client.post(save_url, json=request).json() == first
         edited = yaml.safe_load(raw.text)
         edited["message"]["data"]["title"] = "Edited copy"
         edit_text = yaml.safe_dump(edited, sort_keys=False)
@@ -205,10 +204,7 @@ def test_invalid_instances_and_destinations_are_contained_and_source_is_repairab
     with TestClient(create_app(manager, persist=True)) as client:
         send(client, pid)
         source = next(e["data"] for e in replay(client, pid) if e["type"].endswith("EphemeralCard"))
-        snapshot = {
-            key: source[key]
-            for key in ("version", "catalog_id", "component", "data", "title", "intent")
-        }
+        snapshot = snapshot_message(source)
         request = {
             "surface_id": source["surface_id"],
             "message": snapshot,
@@ -365,10 +361,7 @@ def test_an_older_composite_draft_keeps_nested_bindings_and_complete_local_value
             "rows": [{"name": "One", "note": "Local edit"}, {"name": "Two", "note": "B"}],
             "unbound": {"retain": True},
         }
-        snapshot = {
-            key: old[key]
-            for key in ("version", "catalog_id", "component", "data", "title", "intent")
-        }
+        snapshot = snapshot_message(old)
         snapshot["data"] = local
         # An alternate transport representation is normalized without losing IDs.
         snapshot["components"] = snapshot["component"]["_components"]
@@ -476,10 +469,7 @@ def test_catalogued_copies_outlive_catalog_changes_and_their_source_chat(paths, 
         source = next(e["data"] for e in replay(client, pid) if e["type"].endswith("A2UISurface"))
         request = {
             "surface_id": source["surface_id"],
-            "message": {
-                key: source[key]
-                for key in ("version", "catalog_id", "component", "data", "title", "intent")
-            },
+            "message": snapshot_message(source),
             "path": "retained.card-instance.yaml",
             "request_id": "retain",
         }
@@ -530,10 +520,7 @@ def test_a_file_write_failure_leaves_previous_files_and_chat_intact(paths):
         (root / "existing.txt").write_text("Keep existing content")
         request = {
             "surface_id": source["surface_id"],
-            "message": {
-                key: source[key]
-                for key in ("version", "catalog_id", "component", "data", "title", "intent")
-            },
+            "message": snapshot_message(source),
             "path": "new.card-instance.yaml",
             "request_id": "failure",
         }

@@ -2,7 +2,7 @@
 
 from assistant.events import CardInstanceSaved, EphemeralCard
 from tests.support.apps import real_gateway
-from tests.support.cards import author, card_definition
+from tests.support.cards import author, card_definition, snapshot_message
 from tests.support.fakes import ControlledHistory, ScriptedModels
 
 
@@ -30,10 +30,7 @@ async def test_a_saved_file_is_reported_truthfully_and_retry_finishes_feedback(c
         source = next(
             event for event in await stream.history.get_events() if isinstance(event, EphemeralCard)
         )
-        message = {
-            key: source.to_dict()[key]
-            for key in ("version", "catalog_id", "component", "data", "title", "intent")
-        }
+        message = snapshot_message(source.to_dict())
         request = {
             "surface_id": source.surface_id,
             "message": message,

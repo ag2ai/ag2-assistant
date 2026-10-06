@@ -60,7 +60,7 @@
       result = saved
       refreshFiles(saved.path)
       dialog.close()
-      pending = null
+      if (saved.history_recorded) pending = null
     } catch (cause) {
       if (disposed || epoch !== $profileEpoch) return
       error = errText(cause)
@@ -74,6 +74,9 @@
   {#if result}
     <span role="status">{result.message}</span>
     <button class="open" onclick={() => openAsideFile(result!.path)}>Open</button>
+    {#if !result.history_recorded}
+      <button class="open" disabled={busy} onclick={save}>{busy ? 'Recording…' : 'Retry confirmation'}</button>
+    {/if}
   {/if}
 </div>
 <dialog class="instance-save-dialog" bind:this={dialog} aria-label="Save instance as" oncancel={(event) => { if (busy) event.preventDefault() }}>

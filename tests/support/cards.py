@@ -124,3 +124,11 @@ def replay(client, pid, chat="drafts"):
 def send(client, pid, text="Draw", chat="drafts"):
     result = client.post(api(pid, "/message"), json={"text": text, "chat_id": chat})
     assert result.status_code == 200, result.text
+
+
+def snapshot_message(source: dict) -> dict:
+    """The rendering fields of a replayed message, with draft metadata omitted."""
+    return {
+        key: source[key]
+        for key in ("version", "catalog_id", "component", "data", "title", "intent")
+    }
