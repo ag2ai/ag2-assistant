@@ -8,15 +8,15 @@ export const cardsApi = {
     post(P('/chats/' + encodeURIComponent(chat) + '/cards/save'), request, CardSave),
   cards: () => get(G('/cards'), CardList),
   setCardState: (name: string, enabled: boolean) =>
-    post(G('/cards/' + encodeURIComponent(name) + '/state'), { enabled }, CardMutated),
-  deleteCard: (name: string) => del(G('/cards/' + encodeURIComponent(name)), CardMutated),
+    post(G('/cards/state?name=' + encodeURIComponent(name)), { enabled }, CardMutated),
+  deleteCard: (name: string) => del(G('/cards?name=' + encodeURIComponent(name)), CardMutated),
   profileCards: () => get(P('/cards'), ProfileCardList),
   setProfileCardState: (name: string, enabled: boolean) =>
-    post(P('/cards/' + encodeURIComponent(name) + '/state'), { enabled }, ProfileCardMutated),
+    post(P('/cards/state?name=' + encodeURIComponent(name)), { enabled }, ProfileCardMutated),
   suppressCard: (name: string, suppressed: boolean) =>
     suppressed
-      ? post(P('/cards/' + encodeURIComponent(name) + '/suppress'), undefined, ProfileCardMutated)
-      : del(P('/cards/' + encodeURIComponent(name) + '/suppress'), ProfileCardMutated),
+      ? post(P('/cards/suppress?name=' + encodeURIComponent(name)), undefined, ProfileCardMutated)
+      : del(P('/cards/suppress?name=' + encodeURIComponent(name)), ProfileCardMutated),
   deleteProfileCard: (name: string) =>
-    del(P('/cards/' + encodeURIComponent(name)), ProfileCardMutated),
+    del(P('/cards?name=' + encodeURIComponent(name)), ProfileCardMutated),
 }

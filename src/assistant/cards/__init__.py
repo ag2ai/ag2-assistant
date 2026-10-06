@@ -195,8 +195,8 @@ def validate_card(
 ) -> Card:
     """Validate a file or in-memory definition using the same Card rules."""
     try:
-        size = len(json.dumps(raw, ensure_ascii=False).encode())
-    except (TypeError, ValueError) as exc:
+        size = len(json.dumps(raw, ensure_ascii=False, allow_nan=False).encode())
+    except (TypeError, ValueError, RecursionError) as exc:
         raise CardError(f"definition must be JSON-compatible: {exc}") from exc
     if size > FILE_BUDGET:
         raise CardError(f"definition is {size} bytes, over {FILE_BUDGET}")
@@ -219,6 +219,8 @@ def validate_card(
     fields = raw.get("fields")
     if not isinstance(fields, dict) or not fields:
         raise CardError("no fields")
+    if not all(isinstance(key, str) for key in fields):
+        raise CardError("fields names must be strings")
     if reserved := set(fields) & {"id", "component", "accessibility", "type"}:
         raise CardError(f"fields use reserved component metadata: {', '.join(sorted(reserved))}")
     required_raw = raw.get("required", [])
@@ -230,6 +232,8 @@ def validate_card(
     example = raw.get("example")
     if not isinstance(example, dict) or not example:
         raise CardError("no example")
+    if not all(isinstance(key, str) for key in example):
+        raise CardError("example field names must be strings")
     if stray := [key for key in example if key not in fields]:
         raise CardError(f"example sets fields the Card does not declare: {', '.join(stray)}")
     if missing := [key for key in required if key not in example]:

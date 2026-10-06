@@ -99,14 +99,14 @@ def build_router(d: GatewayDeps) -> APIRouter:
     async def list_cards():
         return _snapshot(d)
 
-    @r.post("/api/cards/{name}/state", response_model=CardMutatedResponse)
+    @r.post("/api/cards/state", response_model=CardMutatedResponse)
     async def set_state(name: str, req: CardStateRequest):
         if name not in {c["name"] for c in _snapshot(d)["cards"]}:
             return JSONResponse({"error": f"unknown card: {name}"}, status_code=404)
         CardStateStore(d.paths.root).set_enabled(name, req.enabled)
         return {"ok": True, **_snapshot(d)}
 
-    @r.delete("/api/cards/{name}", response_model=CardMutatedResponse)
+    @r.delete("/api/cards", response_model=CardMutatedResponse)
     async def delete_card(name: str):
         row = next((c for c in _snapshot(d)["cards"] if c["name"] == name), None)
         if row is None:
@@ -145,7 +145,7 @@ def build_profile_router(d: GatewayDeps, get_runtime) -> APIRouter:
     async def list_cards(runtime: ProfileRuntime = Depends(get_runtime)):
         return _snapshot(d, runtime)
 
-    @r.post("/cards/{name}/state", response_model=ProfileCardMutatedResponse)
+    @r.post("/cards/state", response_model=ProfileCardMutatedResponse)
     async def set_state(
         name: str, req: CardStateRequest, runtime: ProfileRuntime = Depends(get_runtime)
     ):
@@ -168,15 +168,15 @@ def build_profile_router(d: GatewayDeps, get_runtime) -> APIRouter:
         )
         return {"ok": True, **_snapshot(d, runtime)}
 
-    @r.post("/cards/{name}/suppress", response_model=ProfileCardMutatedResponse)
+    @r.post("/cards/suppress", response_model=ProfileCardMutatedResponse)
     async def suppress_card(name: str, runtime: ProfileRuntime = Depends(get_runtime)):
         return suppress(name, runtime, True)
 
-    @r.delete("/cards/{name}/suppress", response_model=ProfileCardMutatedResponse)
+    @r.delete("/cards/suppress", response_model=ProfileCardMutatedResponse)
     async def unsuppress_card(name: str, runtime: ProfileRuntime = Depends(get_runtime)):
         return suppress(name, runtime, False)
 
-    @r.delete("/cards/{name}", response_model=ProfileCardMutatedResponse)
+    @r.delete("/cards", response_model=ProfileCardMutatedResponse)
     async def delete_card(name: str, runtime: ProfileRuntime = Depends(get_runtime)):
         row = next((c for c in _snapshot(d, runtime)["cards"] if c["name"] == name), None)
         if row is None:
