@@ -2,6 +2,7 @@
 // narrows on its tail. Each known event pins the fields the reducer reads; an
 // unknown type falls through to the catch-all so a new backend event never
 // breaks the UI.
+import { CardSourceEvent } from './card_source.ts'
 import { z } from 'zod'
 import type { KeyedToolCard as ToolCard } from '../lib/toolcards.ts'
 import type { A2UIComponent, A2UIData } from '../lib/a2ui.ts'
@@ -74,6 +75,7 @@ export const EventData = {
     surface_id: z.string(), path: z.string(), instance_id: z.string(),
     request_id: z.string(), saved_at: z.string(),
   }),
+  CardSourceUpdated: CardSourceEvent,
   A2UISurfaceDataUpdated: z.object({
     surface_id: z.string(),
     data: z.record(z.string(), z.unknown()).optional(),
@@ -123,7 +125,7 @@ export const HANDLED_EVENTS = [
   'ModelRequest', 'DrainedModelRequest', 'ModelMessageChunk', 'ModelResponse',
   'ToolCallsEvent', 'TaskCreated', 'TaskScheduled', 'TaskStarted', 'TaskCompleted',
   'TaskFailed', 'TaskCancelled', 'SubagentTrace', 'ObserverAlert', 'DeliverableProduced',
-  'ImageGenerated', 'A2UISurface', 'EphemeralCard', 'CardDefinitionSaved', 'CardInstanceSaved', 'A2UISurfaceDataUpdated', 'A2UIActionSubmitted',
+  'ImageGenerated', 'A2UISurface', 'EphemeralCard', 'CardDefinitionSaved', 'CardInstanceSaved', 'CardSourceUpdated', 'A2UISurfaceDataUpdated', 'A2UIActionSubmitted',
   'A2UIMessageEvent', 'Attachment', 'InquiryRaised', 'InquiryAnswered', 'TurnCancelled',
   'TurnFailed', 'FeedbackGiven', 'FeedbackCleared',
 ] as const
@@ -229,4 +231,4 @@ export type ThreadItem =
   | (ItemBase & { kind: 'genimage'; path: string; prompt?: string; feedback?: Feedback })
   | (ItemBase & { kind: 'attachment'; path: string; name?: string })
   | (ItemBase & { kind: 'inquiry'; inquiryId: string; question: string; detail: string; options: string[]; qkind?: string; resolved: boolean; answer?: string; resolution?: string })
-  | (ItemBase & { kind: 'a2ui'; surfaceId: string; version?: string; catalogId?: string; title?: string; intent?: string; component: A2UIComponent; components?: A2UIComponent[]; data: Record<string, unknown>; messages?: unknown[]; draft?: { id: string; version: number; name: string } })
+  | (ItemBase & { kind: 'a2ui'; sourceStates?: Record<string, z.infer<typeof CardSourceEvent>>; surfaceId: string; version?: string; catalogId?: string; title?: string; intent?: string; component: A2UIComponent; components?: A2UIComponent[]; data: Record<string, unknown>; messages?: unknown[]; draft?: { id: string; version: number; name: string } })

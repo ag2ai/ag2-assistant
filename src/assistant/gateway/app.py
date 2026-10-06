@@ -141,6 +141,7 @@ from assistant.gateway.routes import (
     acp,
     card,
     card_instance,
+    card_source,
     chat,
     connection,
     file,
@@ -294,6 +295,8 @@ def create_app(
     llm_catalog_probe: Callable = provider_catalog.probe_provider_models,
     live_probe: Callable = _live_key_probe,
     skills_client: SkillsClient | None = None,
+    card_source_tools: dict[str, Callable] | None = None,
+    card_source_executor: Callable | None = None,
 ) -> FastAPI:
     """Build the FastAPI app around a (constructed-but-not-started) ``ProfileManager``.
 
@@ -513,6 +516,11 @@ def create_app(
     p.include_router(chat.build_profile_router(deps, get_runtime))
     p.include_router(card.build_profile_router(deps, get_runtime))
     p.include_router(card_instance.build_profile_router(deps, get_runtime))
+    p.include_router(
+        card_source.build_profile_router(
+            get_runtime, tools=card_source_tools, executor=card_source_executor
+        )
+    )
     p.include_router(task.build_profile_router(deps, get_runtime))
     p.include_router(permission.build_profile_router(deps, get_runtime))
 

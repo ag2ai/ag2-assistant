@@ -64,6 +64,7 @@ from assistant.agent import (
 )
 from assistant.card_drafts import CardDrafts
 from assistant.card_instances import CardInstances
+from assistant.card_sources.service import CardSources
 from assistant.codex_auth import CodexAuth, CodexAuthError
 from assistant.coding.detect import parse_bridge
 from assistant.config import Config, load_config
@@ -248,6 +249,7 @@ class Gateway:
         self.card_instances = CardInstances(
             self._config_factory, self._draft_history, self._commit_draft
         )
+        self.card_sources = CardSources(self._config_factory, self)
         # chat_id -> the turn currently running on it (feed_message / cancel_turn)
         self._active: dict[str, _ActiveTurn] = {}
         self._invocations: set[asyncio.Task] = set()
@@ -1647,6 +1649,7 @@ class Gateway:
     async def close(self) -> None:
         """Resolve active and queued invocations, then close this Profile's resources."""
         self._closing = True
+        await self.card_sources.close()
         tasks = [task for task in self._invocations if task is not asyncio.current_task()]
         for task in tasks:
             task.cancel()

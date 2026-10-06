@@ -116,7 +116,15 @@ def a2ui_available(config: Config) -> bool:
 
 def card_fields_schema(card: Card) -> dict[str, Any]:
     """The arguments of the script that draws ``card``: the Card's own fields."""
-    return {"type": "object", "properties": card.fields, "required": list(card.required)}
+    properties = dict(card.fields)
+    if card.source:
+        properties["_parameters"] = {
+            "type": "object",
+            "properties": card.parameters,
+            "required": list(card.parameters),
+            "additionalProperties": False,
+        }
+    return {"type": "object", "properties": properties, "required": list(card.required)}
 
 
 def _card_messages(card: Card, fields: dict[str, Any]) -> list[ServerToClientMessage]:
@@ -136,11 +144,22 @@ def _card_messages(card: Card, fields: dict[str, Any]) -> list[ServerToClientMes
 def _card_detail(card: Card) -> str:
     """One Card's detail: the fields its script takes, and the call that draws it."""
     schema = json.dumps(card_fields_schema(card), indent=2, ensure_ascii=False)
-    example = json.dumps(card.example, ensure_ascii=False, separators=(",", ":"))
+    values = dict(card.example)
+    if card.source:
+        values["_parameters"] = {
+            name: schema.get("default", card.example.get(name, "<choose once>"))
+            for name, schema in card.parameters.items()
+        }
+    example = json.dumps(values, ensure_ascii=False, separators=(",", ":"))
     return (
         f"# {card.name}\n\n{card.description}\n\nPass exactly these fields; a value you do "
         f"not have is left out, never invented.\n\n```json\n{schema}\n```\n\nDraw it:\n"
         f'run_skill_script(name="{A2UI_SKILL}", script="{card.name}", args={example})\n'
+        + (
+            "Choose _parameters once for this instance's later source refresh. Refresh never starts another Turn.\n"
+            if card.source
+            else ""
+        )
     )
 
 

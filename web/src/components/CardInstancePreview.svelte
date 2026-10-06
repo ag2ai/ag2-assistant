@@ -33,7 +33,7 @@
   <p class="muted">Open Edit to repair the source, or download the file.</p>
 {:else if item}
   <p class="muted">Saved instance · Actions and inputs are inactive.</p>
-  <A2UISurface {item} passive />
+  <A2UISurface {item} passive filePath={path} />
 {:else}
   <p class="muted" role="status">Loading instance…</p>
 {/if}

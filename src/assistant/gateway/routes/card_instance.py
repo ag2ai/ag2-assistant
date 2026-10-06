@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from assistant.card_instances import InstanceError, read_instance
+from assistant.card_instances import InstanceError
 from assistant.gateway.profile_manager import ProfileRuntime
 from assistant.gateway.routes.deps import GatewayDeps
 from assistant.gateway.schemas.card_instance import CardInstanceResponse, CardInstanceSaveResponse
@@ -50,7 +50,7 @@ def build_profile_router(d: GatewayDeps, get_runtime) -> APIRouter:
     @r.get("/card-instances", response_model=CardInstanceResponse)
     async def get_instance(path: str, runtime: ProfileRuntime = Depends(get_runtime)):
         try:
-            return read_instance(runtime.require_config().workspace_dir, path)
+            return runtime.require_gateway().card_sources.file_instance(path)
         except InstanceError as exc:
             return JSONResponse({"error": str(exc)}, status_code=exc.status)
         except OSError as exc:

@@ -138,11 +138,31 @@ _Avoid_: component (the A2UI protocol's word for a node in a rendered tree —
 including the primitive literally named `Card`), widget, template
 
 **Card instance**:
-A self-contained rendered **Card** message with specific values and its own
-appearance. Explicit saving creates an editable copy of that message in **Files**,
-independent of its originating **Chat** and the reusable Card definition.
+A self-contained rendered **Card** message with its own appearance, values and
+optional **Card source** settings. Explicit saving creates an editable copy of its
+current state in **Files**, independent of the Chat instance and reusable definition.
 _Avoid_: surface (the protocol's word, and `surfaceId` in the code; in this
 glossary the rendered thing is a Card instance)
+
+**Card source**:
+A backend data provider supplying fresh values to a **Card instance** without an
+assistant **Turn**. Each instance holds its own source settings and **Card parameters**.
+_Avoid_: live Card (ambiguous between a definition and an instance), agent refresh
+
+**Card parameters**:
+The values selecting what a **Card source** fetches for one **Card instance**, such
+as a city or an airport. Distinct from the fetched values displayed by the instance.
+_Avoid_: fields (the displayed data), Card settings (ambiguous with availability)
+
+**Card source approval**:
+One **Profile**'s user authorization for automatic execution of a particular version
+of custom **Card source** code, shared by that Profile's instances of the same code.
+_Avoid_: Card state (catalog availability), trusted Card (does not identify the approved code)
+
+**Card secret binding**:
+A user-selected association between a **Card source**'s key input and one **Secret**.
+Access is authorized within one **Profile**, independently of a copied instance's settings.
+_Avoid_: source secret (the Secret is reusable, not owned by a source)
 
 **Ephemeral Card**:
 A Card generated within a **Chat**, kept in its history across restarts and available
@@ -675,13 +695,13 @@ Known model may not exist; an existing model may be unknown)
 **Secret**:
 A named, reusable API key — a name, a write-only value (only a last-4 hint is ever
 shown back), and an optional provider tag. Referenced by any number of Text and
-Live models; rotating its value re-keys every model that references it. Secrets are
+Live models or authorized **Card sources**; rotating its value re-keys every
+consumer that references it. Secrets are
 unique by value: no two Secrets may hold the same key — pasting a known key in the
 model form snaps to the existing Secret, and an explicit add with a duplicate value
 is rejected with a pointer to it. The provider tag is soft: it groups and sorts,
 never forbids — a Secret with no tag (or any tag) can be attached to any model,
-which is what keeps custom/unknown endpoints workable. Covers LLM provider keys
-only — channel bot tokens and the GitHub token are separate, non-reusable concepts.
+which is what keeps custom/unknown endpoints workable. Covers LLM provider and Card data-provider keys; channel bot tokens and the GitHub token are separate, non-reusable concepts.
 _Avoid_: API key (the value inside a Secret, not the entity), credential, token
 (collides with channel bot tokens), key (bare)
 

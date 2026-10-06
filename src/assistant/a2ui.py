@@ -338,7 +338,24 @@ def assistant_catalog(cards: dict[str, Card] | None = None) -> dict:
         "components": {
             **{
                 card.name: _component_schema(
-                    card.name, card.description, card.fields, list(card.required)
+                    card.name,
+                    card.description,
+                    {
+                        **card.fields,
+                        **(
+                            {
+                                "_parameters": {
+                                    "type": "object",
+                                    "properties": card.parameters,
+                                    "required": list(card.parameters),
+                                    "additionalProperties": False,
+                                }
+                            }
+                            if card.source
+                            else {}
+                        ),
+                    },
+                    list(card.required),
                 )
                 for card in (bundled_cards() if cards is None else cards).values()
             },

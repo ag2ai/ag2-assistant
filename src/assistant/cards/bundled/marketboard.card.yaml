@@ -164,3 +164,13 @@ example:
       exchange: NasdaqGS
       spark: [100, 82, 90, 60, 66, 48, 40, 20]
       state: open
+
+parameters:
+  symbols: {type: string}
+  title: {type: string, default: ""}
+source:
+  tool: get_quotes
+  args:
+    symbols: {parameter: symbols}
+    title: {parameter: title}
+  interval_seconds: 60

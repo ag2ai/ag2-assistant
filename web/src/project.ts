@@ -2,6 +2,7 @@
 // projection: the GUI is a view of the event stream. History (replay) and live
 // use the same reducer, so they produce identical items.
 
+import { projectSourceEvent } from './lib/cardSources.ts'
 import { cardFor } from './lib/toolcards.ts'
 import type { ToolCard } from './lib/toolcards.ts'
 import { fmtDateTime } from './lib/time.ts'
@@ -370,6 +371,15 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
       if (!items.some(item => item.kind === 'note' && item.saveRequestId === d.request_id)) {
         items.push({ id: nid(), kind: 'note', icon: 'check', text: `Saved to ${d.path}`,
           savedPath: d.path, saveRequestId: d.request_id })
+      }
+      break
+    }
+    case 'CardSourceUpdated': {
+      for (let index = 0; index < items.length; index++) {
+        const item = items[index]
+        if (item.kind !== 'a2ui') continue
+        const updated = { ...item }
+        if (projectSourceEvent(updated, { type: 'assistant.events.CardSourceUpdated', data })) items[index] = updated
       }
       break
     }
