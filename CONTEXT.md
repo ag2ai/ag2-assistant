@@ -301,8 +301,8 @@ The one file the preview rail is currently showing, reflected back in the Files
 tree as a highlighted row. Derived from the URL's aside slot (`aside=file:<path>`),
 so it is whatever file the rail names — nothing is "active" when the rail is closed
 or holds the Inspector. The `<path>` is either a **Files**-space-relative path or an
-absolute path into a granted **Folder** (the rail and the raw endpoint tell the two
-apart by absoluteness alone). Distinct from **selected** (the Files tree's
+absolute path into a mounted shared **Card** layer or a granted **Folder**.
+Distinct from **selected** (the Files tree's
 upload-target Directory) and from **Active** (model): those are unrelated senses of
 the word.
 _Avoid_: selected (that is the upload target), focused, current, open

@@ -53,8 +53,10 @@ store and per-profile Suppression. Cards mirror that, with one deliberate deviat
 ## Consequences
 
 - **The same artifact appears in two places in the UI.** Profile Cards are ordinary rows in
-  the Files tree; Bundled and Global Cards need a mounted section, as user-managed Skills do.
-  This is the price of the deviation and is paid in the Settings work, not in the loader.
+  the Files tree; Bundled and Global Cards appear in the Shared Cards section. Their
+  absolute file paths use the ordinary Files routes: Bundled is read-only, Global
+  is read+write, confined to immediate Card-suffixed files inside the mounted layer.
+  Settings lists the resolved Cards and reports the loader's skipped-file diagnostics.
 - **The Profile layer is user-writable at any moment**, by an editor, by the agent's file
   tools, or by a Settings write — with no API call to hook. Freshness therefore cannot rely
   on explicit invalidation: the catalog is re-resolved from disk, short-circuited by a
@@ -62,3 +64,6 @@ store and per-profile Suppression. Cards mirror that, with one deliberate deviat
 - **A Card may be deleted by ordinary means.** In the Files space `rm` is `rm`; that is the
   cost of the file space being the user's, and it is symmetric with every other artifact
   living there.
+  Deleting through Settings or Files clears the deleted copy's availability records:
+  shared Delete purges Disable and shared Suppression; Profile Delete clears only
+  that profile's own Disable. An external `rm` has no such cascade.

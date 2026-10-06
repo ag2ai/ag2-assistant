@@ -9,6 +9,9 @@ import { AcpListener, AcpListenerCreated, AcpListenerList, AcpListenerTokenRotat
 import { ChatList, MessageReply, Transcript } from './chat.ts'
 import { CardSave } from './card.ts'
 import {
+  CardList, CardMutated, ProfileCardList, ProfileCardMutated,
+} from './card.ts'
+import {
   Connection,
   ConnectionExposure,
   ConnectionGroups,
@@ -212,6 +215,14 @@ export const ROUTES: Record<string, z.ZodTypeAny> = {
   // resolve `suppressed` and `available`, so the install-wide surface never
   // pretends to.
   'GET /api/skills': SkillList,
+  'GET /api/cards': CardList,
+  'POST /api/cards/{name}/state': CardMutated,
+  'DELETE /api/cards/{name}': CardMutated,
+  'GET /api/p/{pid}/cards': ProfileCardList,
+  'POST /api/p/{pid}/cards/{name}/state': ProfileCardMutated,
+  'POST /api/p/{pid}/cards/{name}/suppress': ProfileCardMutated,
+  'DELETE /api/p/{pid}/cards/{name}/suppress': ProfileCardMutated,
+  'DELETE /api/p/{pid}/cards/{name}': ProfileCardMutated,
   'POST /api/skills/{name}/state': SkillMutated,
   'DELETE /api/skills/{name}': SkillMutated,
   // Search and discover touch no state, so both scopes answer the same shape;

@@ -39,12 +39,11 @@
   // load: null until it arrives, then read | read_write. A Files-space file reads back
   // read_write; a Folder file carries its Thread-scoped Grant mode (ticket 04).
   let fileMode = $state<string | null>(null)
-  // In-place editing (ADR 0011) is offered for path-backed markdown only: the
-  // transient body has nowhere to save, and other kinds don't opt in yet. A Folder
-  // (absolute) file additionally needs a read_write Grant — a read-only Folder file
-  // is preview + download only (the server would 403 a write anyway; ticket 04).
+  // Markdown and Card files use the in-place editor. Absolute paths need the
+  // server's read_write mode; Bundled Cards and read-only Folders stay preview-only.
   const editable = $derived(
-    kind === 'markdown' && !!path && (isFolderPath(path) ? folderAffordances(fileMode).edit : true)
+    (kind === 'markdown' || !!name?.endsWith('.card.yaml')) && !!path &&
+      (isFolderPath(path) ? folderAffordances(fileMode).edit : true)
   )
 
   // Close strips the aside key from the URL for a file; clears the store for a
@@ -132,7 +131,7 @@
     dlView = 'preview'; rawText = ''; rawErr = ''; rawLoaded = false  // unknown-kind raw view resets per file
     fileMode = null              // re-resolve the Grant mode for the newly-opened file
     if (tr) { text = tr.text; draft = tr.text }
-    else if (p && k === 'markdown') {
+    else if (p && (k === 'markdown' || p.endsWith('.card.yaml'))) {
       api.fileTextWithEtag(p, cid)
         .then(({ text: t, etag: e, mode: m }) => { if (!stale) { text = t; draft = t; etag = e; fileMode = m } })
         .catch((e) => { if (!stale) err = errText(e) })
@@ -415,8 +414,11 @@
       {:else}
         <img class="vimg" src={url} alt={title} onerror={() => (imgErr = true)} />
       {/if}
+    {:else if editable && mode === 'edit'}
+      <textarea class="vedit" bind:value={draft} spellcheck="false"
+                aria-label={`Edit ${name}`}></textarea>
     {:else if kind === 'code'}
-      <pre class="vcode">{text}</pre>
+      <pre class="vcode">{draft}</pre>
     {:else if kind === 'text'}
       <pre class="vtext">{text}</pre>
     {:else if kind === 'download'}
@@ -432,9 +434,6 @@
           or <a class="dl" href={downloadUrl}>download it</a>.
         </p>
       {/if}
-    {:else if editable && mode === 'edit'}
-      <textarea class="vedit" bind:value={draft} spellcheck="false"
-                aria-label={`Edit ${name}`}></textarea>
     {:else}
       <Markdown text={draft} />
     {/if}

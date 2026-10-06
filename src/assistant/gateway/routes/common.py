@@ -6,9 +6,35 @@ module; one used by a single domain travels with that domain instead.
 """
 
 import contextlib
+from pathlib import Path
 
+from assistant.cards import CARD_SUFFIX, CardStateStore, bundled_cards_dir
+from assistant.config import Config
+from assistant.folders import READ, READ_WRITE
 from assistant.gateway.profile_manager import ProfileManager, ProfileRuntime
 from assistant.hitl import DurableAsker, GatewayAsker, NullAsker
+from assistant.state_store import DISABLE_OWN, ORIGIN_PROFILE
+
+
+def purge_card_state(config: Config, name: str, origin: str) -> None:
+    """Clear only the deleted Card's own or shared availability records."""
+    store = CardStateStore(config.root_dir)
+    if origin == ORIGIN_PROFILE:
+        store.set_suppressed(name, config.data_dir.name, False, kind=DISABLE_OWN)
+    else:
+        store.purge(name)
+
+
+def shared_card_file(config: Config, path: str) -> tuple[Path | None, str | None]:
+    """The mounted layer and mode for an immediate Card file that stays inside its layer."""
+    candidate = Path(path)
+    if not candidate.is_absolute() or not candidate.name.endswith(CARD_SUFFIX):
+        return None, None
+    for directory, mode in ((bundled_cards_dir(), READ), (config.paths.cards_dir, READ_WRITE)):
+        root = directory.resolve()
+        if candidate.parent.resolve() == root and candidate.resolve().parent == root:
+            return root, mode
+    return None, None
 
 
 async def refresh_all(manager: ProfileManager) -> None:
