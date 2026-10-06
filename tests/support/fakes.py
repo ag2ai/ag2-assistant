@@ -10,6 +10,7 @@ import types
 from contextlib import asynccontextmanager
 from pathlib import PurePosixPath
 
+from ag2.knowledge import SqliteKnowledgeStore
 from ag2.testing import TestClient, TestConfig
 from ag2.tools.sandbox.base import ExecResult
 from fast_depends import Provider
@@ -283,6 +284,24 @@ class _RecordingClient(TestClient):
         if self.models.before_call is not None:
             await self.models.before_call(messages, context)
         return await super().__call__(messages, context, **kwargs)
+
+
+class SignallingSqliteStore(SqliteKnowledgeStore):
+    """A real SQLite store signalling when a designated write starts."""
+
+    def __init__(self, path):
+        super().__init__(path)
+        self.entered = asyncio.Event()
+        self.reading = asyncio.Event()
+
+    async def write(self, path, content):
+        if content == "blocked":
+            self.entered.set()
+        await super().write(path, content)
+
+    async def list_versions_under(self, path):
+        self.reading.set()
+        return await super().list_versions_under(path)
 
 
 class StatefulEnvironment:

@@ -9,6 +9,10 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any
 
+from ag2.knowledge import SqliteKnowledgeStore
+from ag2.knowledge.base import ChangeCallback, ChangeSubscription
+from ag2.knowledge.polling import PollingChangeWatcher
+
 from assistant.observability import log_suppressed
 
 
@@ -170,6 +174,99 @@ class ProfileResources:
             self._retired.difference_update(
                 generation for generation in generations if generation.closed
             )
+
+
+@dataclass(eq=False)
+class _StoreSubscription:
+    subscription: ChangeSubscription
+    owner: "OwnedSqliteStore"
+    closing: asyncio.Task | None = None
+
+    async def close(self) -> None:
+        if self.closing is None:
+            self.closing = asyncio.create_task(self.subscription.close())
+        try:
+            await _finish_cleanup(self.closing)
+        finally:
+            self.owner._subscriptions.discard(self)
+
+
+class OwnedSqliteStore:
+    """Complete SQLite operations before cancellation or owned connection shutdown."""
+
+    def __init__(self, store: SqliteKnowledgeStore) -> None:
+        self._store = store
+        self._tasks: set[asyncio.Future] = set()
+        self._subscriptions: set[_StoreSubscription] = set()
+        self._closing: asyncio.Task | None = None
+
+    async def _run(self, operation: Callable, *args):
+        if self._closing is not None:
+            raise RuntimeError("SQLite store closed")
+        task = asyncio.ensure_future(operation(*args))
+        self._tasks.add(task)
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            try:
+                await _finish_cleanup(task)
+            except Exception as exc:
+                log_suppressed("cancelled SQLite operation", exc)
+            raise
+        finally:
+            self._tasks.discard(task)
+
+    async def read(self, path: str) -> str | None:
+        return await self._run(self._store.read, path)
+
+    async def write(self, path: str, content: str) -> None:
+        await self._run(self._store.write, path, content)
+
+    async def list(self, path: str = "/") -> list[str]:
+        return await self._run(self._store.list, path)
+
+    async def delete(self, path: str) -> None:
+        await self._run(self._store.delete, path)
+
+    async def exists(self, path: str) -> bool:
+        return await self._run(self._store.exists, path)
+
+    async def append(self, path: str, content: str) -> int:
+        return await self._run(self._store.append, path, content)
+
+    async def read_range(self, path: str, start: int, end: int | None = None) -> str:
+        return await self._run(self._store.read_range, path, start, end)
+
+    async def list_versions_under(self, path: str) -> dict[str, int]:
+        return await self._run(self._store.list_versions_under, path)
+
+    async def on_change(self, path: str, callback: ChangeCallback) -> ChangeSubscription:
+        subscription = None
+
+        async def subscribe():
+            nonlocal subscription
+            watcher = PollingChangeWatcher(backend=self, prefix=path, callback=callback)
+            await watcher.start()
+            subscription = _StoreSubscription(watcher, self)
+            self._subscriptions.add(subscription)
+            return subscription
+
+        try:
+            return await self._run(subscribe)
+        except asyncio.CancelledError:
+            if subscription is not None:
+                await _finish_cleanup(subscription.close())
+            raise
+
+    async def aclose(self) -> None:
+        if self._closing is None:
+            self._closing = asyncio.create_task(self._close())
+        await _finish_cleanup(self._closing)
+
+    async def _close(self) -> None:
+        await asyncio.gather(*self._tasks, return_exceptions=True)
+        await asyncio.gather(*(subscription.close() for subscription in tuple(self._subscriptions)))
+        self._store.close()
 
 
 class SharedEnvironment:

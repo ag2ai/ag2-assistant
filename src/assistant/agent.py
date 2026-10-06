@@ -39,7 +39,7 @@ from assistant.middleware import ACPInstructionsMiddleware, LLMRetryMiddleware, 
 from assistant.observability import agent_logging_middleware, log_suppressed
 from assistant.observers import build_observers
 from assistant.permissions import PermissionManager, PermissionStore
-from assistant.resources import ProfileResources, SharedEnvironment, fingerprint
+from assistant.resources import OwnedSqliteStore, ProfileResources, SharedEnvironment, fingerprint
 from assistant.secrets import DEFAULT_OLLAMA_BASE, KEY_ENV, OLLAMA_BASE_ENV
 from assistant.self_tools import build_self_tools
 from assistant.settings import profile_settings
@@ -659,7 +659,9 @@ def create_agent(
     if memory:
         if owner is not None and knowledge_store is None:
             knowledge_store = owned_resource(
-                "memory", "memory", lambda: build_profile_store(config.data_dir / "profile.db")
+                "memory",
+                "memory",
+                lambda: OwnedSqliteStore(build_profile_store(config.data_dir / "profile.db")),
             )
         knowledge = build_knowledge_config(
             platform=platform,

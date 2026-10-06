@@ -81,7 +81,13 @@ from assistant.observability import (
 )
 from assistant.peers import PeerStore
 from assistant.permissions import PermissionManager, PermissionStore
-from assistant.resources import ProfileResources, ResourceLease, SharedEnvironment, fingerprint
+from assistant.resources import (
+    OwnedSqliteStore,
+    ProfileResources,
+    ResourceLease,
+    SharedEnvironment,
+    fingerprint,
+)
 from assistant.secrets import KEY_ENV, OLLAMA_BASE_ENV, SecretStore
 from assistant.self_tools import build_self_tools
 from assistant.settings import profile_settings
@@ -219,7 +225,7 @@ class Gateway:
         self._catalog = CardCatalog(self._config)
         self._onboarding_done = False
         self._agent: Agent | None = None
-        self._knowledge_store: SqliteKnowledgeStore | None = None
+        self._knowledge_store: OwnedSqliteStore | None = None
         self._acp_generation: _AgentGeneration | None = None
         self._preparation_lock = asyncio.Lock()
         self._permissions: PermissionStore | None = None
@@ -486,7 +492,7 @@ class Gateway:
             self._knowledge_store = self._resources.acquire(
                 "memory",
                 "memory",
-                lambda: build_profile_store(self._config.data_dir / "profile.db"),
+                lambda: OwnedSqliteStore(build_profile_store(self._config.data_dir / "profile.db")),
             ).value
         async with self._resources.lease() as lease:
             await self._select_agent(self._config, lease)
@@ -504,7 +510,9 @@ class Gateway:
                 self._resources.acquire(
                     "history",
                     "history",
-                    lambda: SqliteKnowledgeStore(str(self._config.data_dir / "chats.db")),
+                    lambda: OwnedSqliteStore(
+                        SqliteKnowledgeStore(str(self._config.data_dir / "chats.db"))
+                    ),
                 ).value
             )
             self._writer = EventLogWriter(self._event_store)
