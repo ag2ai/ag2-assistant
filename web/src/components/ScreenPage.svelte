@@ -1,7 +1,7 @@
 <script lang="ts">
   import { api } from '../transport/api/index.ts'
   import { StreamClient } from '../transport/stream.ts'
-  import { route, openAsideFile } from '../router.ts'
+  import { route } from '../router.ts'
   import { profileEpoch } from '../store.ts'
   import { errText } from '../lib/errors.ts'
   import { asComponent, asComponents } from '../lib/a2ui.ts'
@@ -56,9 +56,6 @@
 
 <AppBar title={screen?.title || 'Screens'} />
 <div class="thread">
-  <div class="screen-actions">
-    {#if $route.id}<button class="open" onclick={() => openAsideFile($route.id)}>Edit Screen</button>{/if}
-  </div>
   {#if error}
     <div class="empty" role="alert"><h1>Screen could not be opened</h1><p>{error}</p><p>Repair its layout or referenced instance in Files.</p></div>
   {:else if screen}
@@ -78,5 +75,4 @@
 
 <style>
   .screen-content { width: 100%; max-width: 1280px; margin: 0 auto; padding: 16px 24px 48px; }
-  .screen-actions { display: flex; justify-content: end; padding: 12px 24px 0; }
 </style>

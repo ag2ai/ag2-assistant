@@ -44,7 +44,7 @@ Relative bindings such as `./title` are permitted only inside repeated templates
 including Table cell templates. Invalid layouts, unsafe paths and missing files
 produce repair errors; they never substitute a catalog Card or start an agent Turn.
 
-Click **Edit Screen** to open its source in Files. Reorder `children` to rearrange
+Open the `.screen.yaml` source in **Files** to edit it. Reorder `children` to rearrange
 Cards, nest them in `Row`/`Column` primitives, or reuse an existing instance path in
 another Screen. Ordinary Files editing, ETag conflicts, rename and deletion apply.
 Renaming an instance requires updating the paths that reference it. Invalid Screen
