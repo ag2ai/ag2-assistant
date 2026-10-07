@@ -70,7 +70,7 @@
 {#snippet sourceControls(id: string)}
   {@const target = screen!.sources[id]}
   <CardSourceControls source={CardSource.parse(target.source)} refreshState={states[id]}
-    target={{ path: target.path, source_id: target.source_id }} onEvent={sourceEvent} />
+    target={{ path: target.path, source_id: target.source_id }} onEvent={sourceEvent} showControls={false} refreshOnLoad />
 {/snippet}
 
 <style>

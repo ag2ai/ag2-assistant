@@ -50,10 +50,12 @@ another Screen. Ordinary Files editing, ETag conflicts, rename and deletion appl
 Renaming an instance requires updating the paths that reference it. Invalid Screen
 files remain listed with a repair indicator.
 
+Source controls stay hidden during successful automatic refresh. They appear when
+an update fails or a custom code version needs approval.
 Source Refresh, approval and Secret binding use the same Profile-owned service as
-saved-instance previews. Visible sources refresh on show and at their declared
-interval; offscreen or hidden sources stop interval requests. Automatic requests
-for the same object share its declared interval across Screens and Chat references;
+saved-instance previews. Sources refresh once when the Screen is opened, including
+Cards below the fold. Screens do not schedule interval updates. Automatic requests
+for the same object share its declared interval with Chat references;
 manual Refresh always requests an update. Concurrent requests coalesce. Typed source
 events update every open view of that file and keep last-good values on failures.
 Fetching creates no assistant Turn. Authored configuration survives restart; fetched
