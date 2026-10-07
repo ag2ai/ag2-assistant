@@ -66,6 +66,8 @@ current file state on replay and subscribes to the same source events. This diff
 from ordinary drawn Chat Cards and **Save instance**, whose independent-copy behavior
 is unchanged. A copied file remains a separate object even if its stored UUID matches.
 
-Screen and referenced-file inputs/actions remain passive. Source Refresh and approval
-are active buttons. Dragging Cards between columns and writing values back without a
-Turn are follow-up work; Screens do not enable historical actions.
+External HTTP(S) links, such as publication IDs, open in a new browser tab without an
+assistant Turn. Screen and referenced-file inputs/actions and in-app navigation links
+remain passive. Source Refresh and approval are active buttons. Dragging Cards between
+columns and writing values back without a Turn are follow-up work; Screens do not enable
+historical actions.

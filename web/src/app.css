@@ -670,9 +670,10 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .a2ui-cell-end > .a2ui-basic-row { justify-content: flex-end; }
 .a2ui-overflow-nowrap .a2ui-text, .a2ui-overflow-ellipsis .a2ui-text { white-space: nowrap; overflow-wrap: normal; }
 .a2ui-overflow-nowrap .a2ui-basic-row, .a2ui-overflow-ellipsis .a2ui-basic-row { flex-wrap: nowrap; }
+.a2ui-overflow-nowrap.a2ui-cell-end .a2ui-text { flex-shrink: 0; }
 .a2ui-overflow-ellipsis .a2ui-text { overflow: hidden; text-overflow: ellipsis; }
 .a2ui-overflow-ellipsis .a2ui-link { min-width: 0; max-width: 100%; }
-.a2ui-table-data { border-left: 0; border-top-width: 1px; }
+.a2ui-table-data { border-left: 0; border-top: 1px solid var(--a2ui-rule, var(--line)); }
 .a2ui-table-data .a2ui-th, .a2ui-table-data .a2ui-td { border-right: 0; background: transparent; }
 .a2ui-table-data .a2ui-th { white-space: nowrap; }
 .a2ui-table-data .a2ui-td { padding-right: 12px; }
