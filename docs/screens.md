@@ -7,6 +7,12 @@ top”). The **screens** Skill creates independent Card instance files and a Scr
 that references them. The available sources remain those supported by Cards:
 Weather, Quotes and approved custom code; other data needs a suitable Card source.
 
+For a publication or monitoring dashboard, ask for a compact data table. The Card
+author can keep ID, date, class, preview and metrics in separate columns, truncate
+long previews, align numeric cells, and place toned percentage pills beside counts.
+Summary and baseline rows share the columns of the records. The table follows the
+app's theme and scrolls horizontally on narrow screens; its widths use design tokens.
+
 A Screen file ends in `.screen.yaml` and lives anywhere in the Profile's Files:
 
 ```yaml

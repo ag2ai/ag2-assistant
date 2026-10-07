@@ -20,6 +20,8 @@ DESCRIPTION = "Create and refine a custom interactive Card in this Chat when the
 INSTRUCTIONS = """Prefer a suitable available Card from rich-views before authoring a custom one.
 Read vocabulary.md and examples.md before authoring. Use the existing primitives, styling
 words, bindings and repeated templates; never add CSS, JavaScript or backend handlers.
+For analytics or publication tables read tables.md. Keep identifiers and previews in
+separate columns; compose numbers and toned pills instead of flattening cells into prose.
 Gather factual values from the user's context and available tools; leave missing facts
 absent and explain gaps. For a requested template only, clearly label example values as
 illustrative. Definition.example is a worked example, separate from the current data.
@@ -59,7 +61,8 @@ class _CardAuthorSkill(MemorySkill):
         return replace(
             super().descriptor,
             resources=tuple(
-                Resource(name=name) for name in ("vocabulary.md", "examples.md", "drafts.md")
+                Resource(name=name)
+                for name in ("vocabulary.md", "examples.md", "tables.md", "drafts.md")
             ),
             scripts=tuple(
                 Script(name=name)
@@ -110,6 +113,8 @@ class CardAuthorRuntime(MemoryRuntime):
                 ],
                 ensure_ascii=False,
             )
+        if resource == "tables.md":
+            return (Path(__file__).parent / "cards" / "TABLES.md").read_text()
         if resource == "drafts.md" and self.drafts is not None:
             return json.dumps(await self.drafts.index(context), ensure_ascii=False)
         raise FileNotFoundError(resource)

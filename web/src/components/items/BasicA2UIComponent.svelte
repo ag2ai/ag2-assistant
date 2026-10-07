@@ -6,6 +6,7 @@
   import WeatherBanner from './WeatherBanner.svelte'
   import { a2uiIconName, a2uiPresent, a2uiText, a2uiTone, a2uiValue, actionContext, axisScopes, bindingPath, childSlots, diffLines, markedColumn, metricParts, rows, sparkPath, str, templateStart } from '../../lib/a2ui.ts'
   import type { A2UIAction, A2UIComponent, A2UIData, A2UIOption } from '../../lib/a2ui.ts'
+  import { tableColumn, tableRowVariant } from '../../lib/table.ts'
 
   type Props = {
     sourceIds?: string[]
@@ -156,8 +157,9 @@
   const tableRows = $derived(axisScopes(component.rows, data, scope))
   const tablePick = $derived(markedColumn(component.key, component.pick, data, tableColumns, scope))
   const tableLead = $derived(child(component.lead))
+  const tableStyles = $derived(tableColumns.map(column => tableColumn(component, data, column)))
   const tableGrid = $derived(
-    `${tableLead ? 'minmax(118px, .9fr) ' : ''}repeat(${tableColumns.length}, minmax(94px, 1fr))`
+    `${tableLead ? 'minmax(118px, .9fr) ' : ''}${tableStyles.map(column => column.track).join(' ')}`
   )
 
   function clickButton() {
@@ -207,7 +209,7 @@
   <!-- Text that resolves to nothing draws nothing, so an optional field a Card
        binds leaves no blank line behind. -->
   {#if textValue}
-    <div class="a2ui-text a2ui-tone-{tone} {textVariant ? `a2ui-t-${textVariant}` : ''}" class:a2ui-main={!textVariant && component.variant && component.variant !== 'body'} class:a2ui-strong={component.emphasis === 'strong'} style:flex-grow={grow}>{textValue}</div>
+    <div class="a2ui-text a2ui-tone-{tone} {textVariant ? `a2ui-t-${textVariant}` : ''}" class:a2ui-main={!textVariant && component.variant && component.variant !== 'body'} class:a2ui-strong={component.emphasis === 'strong'} style:flex-grow={grow} title={textValue}>{textValue}</div>
   {/if}
 {:else if type === 'metric'}
   {#if metric.value || metric.delta}
@@ -239,27 +241,30 @@
   {@const body = child(component.cell)}
   {#if tableColumns.length}
   <div class="a2ui-tablewrap" style:flex-grow={grow}>
-    <div class="a2ui-table" style:grid-template-columns={tableGrid}>
+    <div class="a2ui-table" class:a2ui-table-data={component.variant === 'data'} class:a2ui-table-compact={component.density === 'compact'} style:grid-template-columns={tableGrid} role="table">
       {#if head}
-        {#if tableLead}<div class="a2ui-th"></div>{/if}
+        <div class="a2ui-tr" role="row">
+        {#if tableLead}<div class="a2ui-th" role="columnheader"></div>{/if}
         {#each tableColumns as column, index}
-          <div class="a2ui-th" class:pick={index === tablePick}>
+          <div class="a2ui-th a2ui-cell-{tableStyles[index].align}" class:pick={index === tablePick} role="columnheader">
             <BasicA2UIComponent {sourceIds} {sourceControls} component={head} {components} {data} {onDataChange} {onAction} {passive} scope={column} depth={depth + 1} />
           </div>
         {/each}
+        </div>
       {/if}
       {#each tableRows as row}
         {@const cells = axisScopes(component.cells, data, row)}
         {@const won = markedColumn(component.key, component.win, data, tableColumns, row)}
+        <div class="a2ui-tr a2ui-tr-{tableRowVariant(component, data, row)}" role="row">
         {#if tableLead}
-          <div class="a2ui-td a2ui-th-row">
+          <div class="a2ui-td a2ui-th-row" role="rowheader">
             <BasicA2UIComponent {sourceIds} {sourceControls} component={tableLead} {components} {data} {onDataChange} {onAction} {passive} scope={row} depth={depth + 1} />
           </div>
         {/if}
         {#each tableColumns as _, index}
           <!-- A row with fewer cells than there are columns keeps the columns it
                does not fill, so every row still lines up under its option. -->
-          <div class="a2ui-td" class:pick={index === tablePick} class:win={index === won}>
+          <div class="a2ui-td a2ui-cell-{tableStyles[index].align} a2ui-overflow-{tableStyles[index].overflow}" class:pick={index === tablePick} class:win={index === won} role="cell">
             {#if body && cells[index] !== undefined}
               <BasicA2UIComponent {sourceIds} {sourceControls} component={body} {components} {data} {onDataChange} {onAction} {passive} scope={cells[index]} depth={depth + 1} />
             {:else}
@@ -268,6 +273,7 @@
             {#if index === won}<span class="a2ui-td-win" role="img" aria-label="Wins this row">●</span>{/if}
           </div>
         {/each}
+        </div>
       {/each}
     </div>
   </div>
