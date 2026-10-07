@@ -16,12 +16,16 @@ from assistant.cards import CardError
 from assistant.cards.layout import PROPERTIES, primitive_schema
 
 CARD_AUTHOR = "card-author"
-DESCRIPTION = "Create and refine a custom interactive Card in this Chat when the user requests a custom view or no available rich view fits. Save its reusable definition only on explicit request."
+DESCRIPTION = "Create and refine a custom interactive Card in this Chat when the user requests a custom view or no available rich view fits. Table supports compact rows and different column widths: read the current tables.md before editing tabular views, including saved Screen instances. Save its reusable definition only on explicit request."
 INSTRUCTIONS = """Prefer a suitable available Card from rich-views before authoring a custom one.
 Read vocabulary.md and examples.md before authoring. Use the existing primitives, styling
 words, bindings and repeated templates; never add CSS, JavaScript or backend handlers.
-For analytics or publication tables read tables.md. Keep identifiers and previews in
-separate columns; compose numbers and toned pills instead of flattening cells into prose.
+For analytics or publication tables read the current tables.md before creating or editing
+a view, even when an earlier version of the references is already in Chat history.
+Use Table for aligned columns, never independent Row components. Set variant="data",
+density="compact" and columnWidth={"path":"./width"}; give each column item a width
+token (narrow, regular or wide). Without that binding the columns retain equal widths.
+Keep identifiers and previews in separate columns; compose numbers and toned pills.
 Gather factual values from the user's context and available tools; leave missing facts
 absent and explain gaps. For a requested template only, clearly label example values as
 illustrative. Definition.example is a worked example, separate from the current data.

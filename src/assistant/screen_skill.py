@@ -40,6 +40,8 @@ run_skill_script(name="screens", script="save_screen", args={"path":"morning.scr
 creates one Screen. Each CardInstance is a reference, never inline Card data or a catalog name.
 Layouts use the Card vocabulary (Column, Row, Text, etc.); relative ./ bindings are permitted
 only within repeated templates. Read card-author's vocabulary when choosing primitives.
+When editing table density or column widths, read card-author's current tables.md. Keep a
+Table with explicit columnWidth bindings; independent Rows do not share aligned columns.
 Paths are relative to the Profile's Files root, including references in nested directories.
 To show the SAME file-backed instance in Chat, use show_instance with its path. This is an
 explicit reference; ordinary drawn Chat Cards and Save instance copies remain independent.

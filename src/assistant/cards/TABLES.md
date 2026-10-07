@@ -5,6 +5,14 @@ its own column, give a long preview `wide` + `ellipsis`, and use `end` + `nowrap
 numeric cells. Choose `density: compact` when the user asks for many single-line records.
 On a narrow view the table scrolls; never merge ID and preview to make it fit.
 
+Different widths require both `Table.columnWidth: {"path": "./width"}` and a `width`
+token on each item in `columns` (for example `{"name": "PREVIEW", "width": "wide"}`).
+Adding metadata to the data alone does not configure the Table. The available tokens are
+`narrow`, `regular` and `wide`. Read this current reference when revising an older table;
+update its component properties as well as its data. Independent `Row` components do not
+share column widths, and `grow` cannot align cells across rows. Use a `Row` inside a Table
+cell only to compose that cell's contents.
+
 Widths and tones are renderer tokens, not pixels or arbitrary colours. `columnWidth`,
 `columnAlign` and `columnOverflow` read the column item; `rowVariant` reads the row item.
 Set `summary` for aggregate rows and `baseline` for comparison-period rows. Supply those
