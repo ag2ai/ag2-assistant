@@ -56,8 +56,9 @@ Source Refresh, approval and Secret binding use the same Profile-owned service a
 saved-instance previews. Sources refresh once when the Screen is opened, including
 Cards below the fold. Screens do not schedule interval updates. Automatic requests
 for the same object share its declared interval with Chat references;
-manual Refresh always requests an update. Concurrent requests coalesce. Typed source
-events update every open view of that file and keep last-good values on failures.
+manual Refresh always requests an update. Concurrent requests coalesce. Responses
+use typed source events and keep last-good values on failures. The Screen remains
+a snapshot until the page is reloaded; edits and updates from other views do not change it.
 Fetching creates no assistant Turn. Authored configuration survives restart; fetched
 file values use the existing bounded runtime cache and may return to the saved values
 until refreshed after restart. Opening a Screen never executes unapproved code.

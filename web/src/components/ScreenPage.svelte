@@ -1,6 +1,5 @@
 <script lang="ts">
   import { api } from '../transport/api/index.ts'
-  import { StreamClient } from '../transport/stream.ts'
   import { route } from '../router.ts'
   import { profileEpoch } from '../store.ts'
   import { errText } from '../lib/errors.ts'
@@ -18,9 +17,7 @@
   let states: Record<string, CardSourceEvent> = $state({})
   const components = $derived.by(() => screen ? asComponents(screen.message.component._components) : [])
   const sourceIds = $derived.by(() => Object.keys(screen?.sources || {}))
-  let duringLoad: WireEvent[] | null = null
   function sourceEvent(event: WireEvent) {
-    if (duringLoad) duringLoad.push(event)
     if (!screen) return
     states = { ...states, ...projectScreenEvent(screen, event) }
     screen = { ...screen }
@@ -29,28 +26,14 @@
     const path = $route.id
     const epoch = $profileEpoch
     let stale = false
-    let loading = false
     screen = null; error = ''; states = {}
     if (!path) return
-    const load = async () => {
-      if (loading || stale) return
-      const buffer: WireEvent[] = []
-      loading = true; duringLoad = buffer
-      try {
-        const result = await api.screen(path)
-        if (stale || epoch !== $profileEpoch) return
-        for (const event of buffer) projectScreenEvent(result, event)
-        screen = result; error = ''
-      } catch (cause) { if (!stale) { error = errText(cause); screen = null } }
-      finally { loading = false; if (duringLoad === buffer) duringLoad = null }
-    }
-    const stream = new StreamClient('', {
-      onEvent: event => { if (!stale && epoch === $profileEpoch) sourceEvent(event) },
-      onReady: () => { void load() },
-    }, '/card-sources/stream').connect()
-    void load()
-    const timer = setInterval(() => { void load() }, 5000)
-    return () => { stale = true; duringLoad = null; clearInterval(timer); stream.close() }
+    void api.screen(path).then(result => {
+      if (!stale && epoch === $profileEpoch) screen = result
+    }).catch(cause => {
+      if (!stale && epoch === $profileEpoch) error = errText(cause)
+    })
+    return () => { stale = true }
   })
 </script>
 
