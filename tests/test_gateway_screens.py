@@ -74,7 +74,8 @@ def view(client, pid, path="morning.screen.yaml"):
     return response.json()
 
 
-def test_shared_references_refresh_once_and_publish_to_other_views_without_chat(paths):
+@pytest.mark.parametrize("binding", ["/summary", "summary"])
+def test_shared_references_refresh_once_and_publish_to_other_views_without_chat(paths, binding):
     pid = ProfileRegistry(paths).create_profile("Screens", "#109e91").id
     results = iter(["Fresh once", "Manual update"])
 
@@ -85,7 +86,9 @@ def test_shared_references_refresh_once_and_publish_to_other_views_without_chat(
     with TestClient(
         create_app(make_manager(paths), card_source_tools={"get_weather": weather})
     ) as client:
-        upload(client, pid, "reading.card-instance.yaml", instance())
+        saved = instance()
+        saved["message"]["component"]["text"]["path"] = binding
+        upload(client, pid, "reading.card-instance.yaml", saved)
         upload(client, pid, "copy.card-instance.yaml", instance())
         upload(client, pid, "morning.screen.yaml", screen())
         upload(client, pid, "evening.screen.yaml", screen(title="Evening"))
@@ -124,6 +127,35 @@ def test_shared_references_refresh_once_and_publish_to_other_views_without_chat(
         assert client.get(api(pid, "/chats")).json()["chats"] == []
         raw = client.get(api(pid, "/files/raw"), params={"path": "morning.screen.yaml"}).text
         assert yaml.safe_load(raw) == screen()
+
+
+def test_file_refresh_broadcasts_without_retaining_event_history(paths):
+    pid = ProfileRegistry(paths).create_profile("Screens", "#109e91").id
+    readings = iter(range(140))
+
+    async def weather(**args):
+        return json.dumps({"summary": f"Reading {next(readings)}"})
+
+    manager = make_manager(paths)
+    with TestClient(create_app(manager, card_source_tools={"get_weather": weather})) as client:
+        upload(client, pid, "reading.card-instance.yaml", instance())
+        with client.websocket_connect(api(pid, "/card-sources/stream")) as ws:
+            assert ws.receive_json()["type"] == "ready"
+            for reading in range(140):
+                response = client.post(
+                    api(pid, "/card-sources/refresh"),
+                    json={"path": "reading.card-instance.yaml", "source_id": "root"},
+                )
+                assert response.status_code == 200, response.text
+                assert ws.receive_json()["event"]["data"]["data"]["summary"] == f"Reading {reading}"
+            stream = manager.get(pid).require_gateway().card_sources.file_stream
+            assert client.portal.call(stream.history.get_events) == []
+            assert (
+                client.get(
+                    api(pid, "/card-instances"), params={"path": "reading.card-instance.yaml"}
+                ).json()["message"]["data"]["summary"]
+                == "Reading 139"
+            )
 
 
 def screen_call(script, args):

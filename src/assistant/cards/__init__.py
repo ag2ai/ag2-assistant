@@ -573,7 +573,8 @@ def _rerooted(value: Any, ids: dict[str, str], prefix: str) -> Any:
     drawn: dict[str, Any] = {}
     for key, item in value.items():
         if key == "path" and isinstance(item, str):
-            drawn[key] = item if item.startswith(".") else f"{prefix}{item}"
+            suffix = item if not item or item.startswith("/") else f"/{item}"
+            drawn[key] = item if item.startswith(".") else f"{prefix}{suffix}"
         elif key == "componentId" and isinstance(item, str):
             drawn[key] = ids.get(item, item)
         else:

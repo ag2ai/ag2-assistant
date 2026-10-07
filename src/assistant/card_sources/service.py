@@ -109,7 +109,10 @@ class CardSources:
         if chat_id and any(row["chat_id"] == chat_id for row in await self.gateway.list_chats()):
             await emit(chat_id, event)
         else:
-            await self.file_stream.send(event, ConversationContext(stream=self.file_stream))
+            try:
+                await self.file_stream.send(event, ConversationContext(stream=self.file_stream))
+            finally:
+                await self.file_stream.history.replace(())
         return {
             "status": event.status,
             "events": [
