@@ -332,6 +332,7 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
       items.push({ id: nid(), kind: 'genimage', path: d.path, prompt: d.prompt })
       break
     }
+    case 'CardInstanceReference':
     case 'EphemeralCard':
     case 'A2UISurface': {
       const d = EventData.A2UISurface.parse(data)
@@ -354,6 +355,11 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
         item.components = tree
       }
       item.data = d.data ?? {}
+      if (type === 'CardInstanceReference') {
+        const reference = EventData.CardInstanceReference.parse(data)
+        item.filePath = reference.file_path
+        item.fileSurfaceId = reference.file_surface_id
+      }
       if (type === 'EphemeralCard') {
         const draft = EventData.EphemeralCard.parse(data)
         item.draft = { id: draft.draft_id, version: draft.draft_version, name: draft.definition.name }

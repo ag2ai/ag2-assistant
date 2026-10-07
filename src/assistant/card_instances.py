@@ -144,15 +144,17 @@ def decode_instance(data: bytes) -> CardInstanceResponse:
 
 
 @contextmanager
-def instance_location(root: str | os.PathLike[str], rel: str) -> Iterator[tuple[int, str]]:
+def document_location(
+    root: str | os.PathLike[str], rel: str, suffix: str
+) -> Iterator[tuple[int, str]]:
     """Open an existing Files Directory without following links or escaping its root."""
     parts = rel.split("/")
     if (
-        not rel.endswith(INSTANCE_SUFFIX)
+        not rel.endswith(suffix)
         or any(part in {"", ".", ".."} for part in parts)
         or any("\\" in part or "\x00" in part for part in parts)
     ):
-        raise InstanceError("Use a Files relative path ending .card-instance.yaml")
+        raise InstanceError(f"Use a Files relative path ending {suffix}")
     fd = os.open(Path(root).resolve(), os.O_RDONLY | os.O_DIRECTORY)
     try:
         for part in parts[:-1]:
@@ -165,6 +167,13 @@ def instance_location(root: str | os.PathLike[str], rel: str) -> Iterator[tuple[
         yield fd, parts[-1]
     finally:
         os.close(fd)
+
+
+@contextmanager
+def instance_location(root: str | os.PathLike[str], rel: str) -> Iterator[tuple[int, str]]:
+    """Open the Directory of an instance within this Profile's Files space."""
+    with document_location(root, rel, INSTANCE_SUFFIX) as location:
+        yield location
 
 
 def _read_at(directory: int, filename: str) -> bytes:
@@ -191,6 +200,12 @@ def read_instance(root: str | os.PathLike[str], rel: str) -> CardInstanceRespons
         return decode_instance(_read_at(directory, filename))
 
 
+def read_document(root: str | os.PathLike[str], rel: str, suffix: str) -> bytes:
+    """Read a bounded regular document without following any path links."""
+    with document_location(root, rel, suffix) as (directory, filename):
+        return _read_at(directory, filename)
+
+
 def _create_at(directory: int, filename: str, data: bytes) -> None:
     """Publish complete bytes atomically without replacing an occupied destination."""
     temporary = f".instance-{uuid.uuid4().hex}"
@@ -205,6 +220,17 @@ def _create_at(directory: int, filename: str, data: bytes) -> None:
         )
     finally:
         os.unlink(temporary, dir_fd=directory)
+
+
+def create_document(root: str | os.PathLike[str], path: str, suffix: str, data: bytes) -> None:
+    """Create a complete document within Files without overwriting an existing file."""
+    if len(data) > _MAX_WRITE_BYTES:
+        raise InstanceError("File too large", 413)
+    with document_location(root, path, suffix) as (directory, filename):
+        try:
+            _create_at(directory, filename, data)
+        except FileExistsError as exc:
+            raise InstanceError("Destination already exists", 409) from exc
 
 
 class CardInstances:

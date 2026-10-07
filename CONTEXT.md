@@ -144,6 +144,12 @@ current state in **Files**, independent of the Chat instance and reusable defini
 _Avoid_: surface (the protocol's word, and `surfaceId` in the code; in this
 glossary the rendered thing is a Card instance)
 
+**Screen**:
+A user-composed page outside Chats, stored as a primitive layout and references to
+Card instance files in one Profile's Files. Several Screens and explicit Chat file
+references may display the same instance, sharing its source updates.
+_Avoid_: dashboard (an example), Thread, widget board
+
 **Card source**:
 A backend data provider supplying fresh values to a **Card instance** without an
 assistant **Turn**. Each instance holds its own source settings and **Card parameters**.
@@ -265,13 +271,13 @@ _Avoid_: archive (archive keeps the data; delete does not)
 
 **Page**:
 The full composition of the main application view — the active **Tab** plus the open
-**Thread** together. This is what the path addresses; switching between Chats, Tasks,
+**Thread**, or a standalone **Screen**. This is what the path addresses; switching between Chats, Tasks,
 and Files, or opening a Chat/Task, moves you between Pages. Distinct from a Settings
 **Section** (nav *inside* a Modal) and from a **Modal** layered on top.
 _Avoid_: screen, route, view
 
 **Tab**:
-The Drawer's top-level switch between **Chats**, **Tasks**, and **Files** — which
+The Drawer's top-level switch between **Chats**, **Tasks**, **Files**, and **Screens** — which
 list or tree fills the left rail. Exactly one Tab is active. A Tab is orthogonal to
 the open **Thread**; the two together compose the current **Page**. Switching Tabs
 changes only the rail, never the main pane.

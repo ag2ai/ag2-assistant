@@ -5,6 +5,7 @@ import copy
 import hashlib
 import inspect
 import json
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -48,6 +49,8 @@ class CardSources:
         self.executor: Callable | None = None
         self.pending: dict[tuple, asyncio.Task] = {}
         self.overlays: dict[str, tuple[str, dict]] = {}
+        self.file_stream = MemoryStream()
+        self.automatic_results: dict[tuple, tuple[float, dict]] = {}
 
     def _consent_path(self) -> Path:
         return self.config().data_dir / "card-source-consent.json"
@@ -106,7 +109,7 @@ class CardSources:
         if chat_id and any(row["chat_id"] == chat_id for row in await self.gateway.list_chats()):
             await emit(chat_id, event)
         else:
-            await ConversationContext(stream=MemoryStream()).send(event)
+            await self.file_stream.send(event, ConversationContext(stream=self.file_stream))
         return {
             "status": event.status,
             "events": [
@@ -114,12 +117,23 @@ class CardSources:
             ],
         }
 
-    async def refresh(self, source_id: str, **target) -> dict:
+    async def refresh(self, source_id: str, *, trigger: str = "manual", **target) -> dict:
         data, revision, surface = await self._target(**target)
         source = sources_from(data).get(source_id)
         if source is None:
             raise InstanceError("Source not found on this instance", 404)
         key = (target.get("path", ""), target.get("chat_id", ""), surface, source_id, revision)
+        cached = self.automatic_results.get(key)
+        if (
+            trigger != "manual"
+            and source.interval_seconds
+            and cached
+            and time.monotonic() - cached[0] < source.interval_seconds
+        ):
+            result = copy.deepcopy(cached[1])
+            for event in result["events"]:
+                event["data"]["data"] = data
+            return result
         if key not in self.pending:
             self.pending[key] = asyncio.create_task(
                 self._refresh(source_id, source, data, revision, surface, target)
@@ -127,7 +141,12 @@ class CardSources:
             self.pending[key].add_done_callback(lambda done: self.pending.pop(key, None))
         task = self.pending[key]
         try:
-            return await asyncio.shield(task)
+            result = await asyncio.shield(task)
+            if result["status"] != "discarded":
+                if len(self.automatic_results) >= 128:
+                    self.automatic_results.pop(next(iter(self.automatic_results)))
+                self.automatic_results[key] = (time.monotonic(), copy.deepcopy(result))
+            return result
         finally:
             if task.done() and self.pending.get(key) is task:
                 self.pending.pop(key)

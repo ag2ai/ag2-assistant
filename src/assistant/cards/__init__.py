@@ -542,6 +542,13 @@ def _escaped(part: str) -> str:
     return part.replace("~", "~0").replace("/", "~1")
 
 
+def namespace_components(
+    nodes: list[dict[str, Any]], ids: dict[str, str], data_path: str
+) -> list[dict[str, Any]]:
+    """Namespace primitive ids and absolute bindings, retaining repeated-item scopes."""
+    return [_rewritten(node, ids, data_path) for node in nodes]
+
+
 def _rewritten(node: dict[str, Any], ids: dict[str, str], prefix: str) -> dict[str, Any]:
     """One layout component with its ids namespaced and its bindings re-rooted."""
     named = _id_keys(node)

@@ -12,6 +12,7 @@
   import ProfileForm, { type ProfileDraft } from './ProfileForm.svelte'
   import ChatFolders from './ChatFolders.svelte'
   import FilesTree from './FilesTree.svelte'
+  import ScreensNav from './ScreensNav.svelte'
   import { fmtNextIn, fmtAgoShort, dayRows, fmtDayShort, taskRecencyAt } from '../lib/time.ts'
   import ag2Logo from '../assets/ag2.svg'
   import ag2LogoWhite from '../assets/ag2-white.svg'
@@ -471,6 +472,7 @@
     <button class="seg" class:on={$route.tab === 'chats'} role="tab" aria-selected={$route.tab === 'chats'} onclick={() => go('/chats')}><Icon name="message" size={14} /> Chats</button>
     <button class="seg" class:on={$route.tab === 'tasks'} role="tab" aria-selected={$route.tab === 'tasks'} onclick={() => go('/tasks')}><Icon name="list" size={14} /> Tasks</button>
     <button class="seg" class:on={$route.tab === 'files'} role="tab" aria-selected={$route.tab === 'files'} onclick={() => go('/files')}><Icon name="folder" size={14} /> Files</button>
+    <button class="seg" class:on={$route.tab === 'screens'} role="tab" aria-selected={$route.tab === 'screens'} onclick={() => goTab('screens')}>Screens</button>
   </div>
 
   {#snippet chatRow(s: ChatRow)}
@@ -606,7 +608,9 @@
     </div>
   {/snippet}
 
-  {#if $route.tab === 'files'}
+  {#if $route.tab === 'screens'}
+    <ScreensNav />
+  {:else if $route.tab === 'files'}
     <FilesTree />
   {:else}
   <div class="dlist" onscroll={() => { menuChat = ''; menuTask = '' }}>
@@ -647,6 +651,7 @@
 </div>
 
 <style>
+  .segbar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-radius: var(--radius-sm); }
   /* Profile switcher chips (§5.4). A row of palette-tinted monogram chips below
      the brand header — the active profile filled with its palette colour, others
      outlined in it. The active profile's name sits beside the row (kept visible

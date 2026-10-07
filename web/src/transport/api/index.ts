@@ -18,6 +18,7 @@ import { permissionsApi } from './permissions.ts'
 import { profileSkillsApi } from './profileSkills.ts'
 import { profilesApi } from './profiles.ts'
 import { secretsApi } from './secrets.ts'
+import { screensApi } from './screen.ts'
 import { settingsApi } from './settings.ts'
 import { skillsApi } from './skills.ts'
 import { systemApi } from './system.ts'
@@ -38,6 +39,7 @@ export const api = {
   ...cardsApi,
   ...cardInstancesApi,
   ...cardSourceApi,
+  ...screensApi,
   ...tasksApi,
   ...filesApi,
   ...settingsApi,

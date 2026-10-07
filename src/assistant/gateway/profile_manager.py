@@ -202,6 +202,10 @@ class ProfileRuntime:
         its WS handlers here to close sockets with code 4001)."""
         self._close_callbacks.append(callback)
 
+    def off_close(self, callback: Callable) -> None:
+        """Remove a disconnected view's runtime-close callback."""
+        self._close_callbacks.remove(callback)
+
     async def notify_channel(self, connection: str, chat_id: str, text: str) -> None:
         """Push a message to a chat on a Connection — the task service delivers run
         outcomes through here. The Channel is install-level, so the push is handed to

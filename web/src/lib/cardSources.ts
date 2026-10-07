@@ -14,7 +14,7 @@ export function cardSources(data: Record<string, unknown>): Record<string, CardS
 export function projectSourceEvent(item: Surface, wire: WireEvent, path = ''): boolean {
   if (!wire.type.endsWith('.CardSourceUpdated')) return false
   const event = CardSourceEvent.parse(wire.data)
-  if (event.path !== path || event.surface_id !== item.surfaceId) return false
+  if (event.path !== path || event.surface_id !== (item.fileSurfaceId || item.surfaceId)) return false
   item.sourceStates = { ...item.sourceStates, [event.source_id]: event }
   if (event.status === 'updated' || event.status === 'configured') item.data = event.data
   return true

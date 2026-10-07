@@ -685,3 +685,5 @@ the single-shot `ag2-assistant agent` CLI command doesn't carry task tools.)
 5. The response is sent back through the same channel
 
 Your agent runs locally on your machine. Your messages and data stay on your device. API keys are used only to call the LLM provider.
+
+Saved Cards can be arranged outside conversations in [Screens](screens.md).

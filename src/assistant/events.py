@@ -84,6 +84,13 @@ class A2UISurface(AssistantEvent):
     intent: str = ""
 
 
+class CardInstanceReference(A2UISurface):
+    """An explicitly displayed reference to an existing Card instance in Files."""
+
+    file_path: str = ""
+    file_surface_id: str = ""
+
+
 class EphemeralCard(A2UISurface):
     """One durable definition revision and its expanded interactive surface."""
 

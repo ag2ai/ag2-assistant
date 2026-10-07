@@ -41,6 +41,7 @@ from assistant.observability import agent_logging_middleware, log_suppressed
 from assistant.observers import build_observers
 from assistant.permissions import PermissionManager, PermissionStore
 from assistant.resources import OwnedSqliteStore, ProfileResources, SharedEnvironment, fingerprint
+from assistant.screen_skill import ScreenSkillRuntime
 from assistant.secrets import DEFAULT_OLLAMA_BASE, KEY_ENV, OLLAMA_BASE_ENV
 from assistant.self_tools import build_self_tools
 from assistant.settings import profile_settings
@@ -307,10 +308,16 @@ def build_skills_plugin(
         _availability(config),
         snapshot=snapshot,
     )
+    screens = FilteredSkillRuntime(
+        ScreenSkillRuntime(config, catalog or CardCatalog(config)),
+        _availability(config),
+        snapshot=snapshot,
+    )
     if snapshot:
         runtime.invalidate()
         return SkillPlugin(
             author,
+            screens,
             FilteredSkillRuntime(
                 A2UISkillRuntime(catalog or CardCatalog(config)),
                 _availability(config),
@@ -318,7 +325,7 @@ def build_skills_plugin(
             ),
             FilteredSkillRuntime(runtime, _availability(config), snapshot=True),
         )
-    return SkillPlugin(author, resolve_a2ui_skill(config), resolve_skills(config, runtime))
+    return SkillPlugin(author, screens, resolve_a2ui_skill(config), resolve_skills(config, runtime))
 
 
 def build_skills_install_tools(config: Config, runtime) -> list:

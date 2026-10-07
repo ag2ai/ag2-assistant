@@ -149,6 +149,7 @@ from assistant.gateway.routes import (
     llm,
     permission,
     profile,
+    screen,
     secret,
     settings,
     skill,
@@ -516,6 +517,7 @@ def create_app(
     p.include_router(chat.build_profile_router(deps, get_runtime))
     p.include_router(card.build_profile_router(deps, get_runtime))
     p.include_router(card_instance.build_profile_router(deps, get_runtime))
+    p.include_router(screen.build_profile_router(get_runtime))
     p.include_router(
         card_source.build_profile_router(
             get_runtime, tools=card_source_tools, executor=card_source_executor
@@ -542,6 +544,40 @@ def create_app(
     #  Profile-scoped WebSockets (registered directly, not on the router  #
     #  — Starlette APIRouter WS + Depends is fiddly; resolve inline)      #
     # ------------------------------------------------------------------ #
+
+    @app.websocket("/api/p/{pid}/card-sources/stream")
+    async def file_sources_ws(websocket: WebSocket, pid: str) -> None:
+        """Forward typed file source events to views in the current Profile."""
+        if not _origin_ok(
+            websocket.headers.get("origin"), websocket.headers.get("host"), allowed_origins
+        ):
+            await websocket.close(code=1008)
+            return
+        runtime = await _ws_runtime(websocket, pid)
+        if runtime is None:
+            return
+        await websocket.accept()
+        stream = runtime.require_gateway().card_sources.file_stream
+
+        async def forward(event):
+            with contextlib.suppress(WebSocketDisconnect, RuntimeError, OSError):
+                await websocket.send_json({"event": to_wire(event)})
+
+        async def close():
+            with contextlib.suppress(WebSocketDisconnect, RuntimeError, OSError):
+                await websocket.close(code=_WS_PROFILE_ARCHIVED)
+
+        runtime.on_close(close)
+        subscription = stream.subscribe(forward)
+        try:
+            await websocket.send_json({"type": "ready", "chat": ""})
+            while True:
+                await websocket.receive_text()
+        except WebSocketDisconnect:
+            pass
+        finally:
+            stream.unsubscribe(subscription)
+            runtime.off_close(close)
 
     @app.websocket("/api/p/{pid}/stream")
     async def stream_ws(websocket: WebSocket, pid: str) -> None:
@@ -836,7 +872,9 @@ def create_app(
             # StreamBridge) so the voice client folds it with the one shared reducer
             # → tool chips/cards, task cards, deliverables, all "for free".
             with contextlib.suppress(Exception):
-                await websocket.send_json({"event": to_wire(as_drawn(event, gateway.catalog))})
+                await websocket.send_json(
+                    {"event": to_wire(as_drawn(event, gateway.catalog, gateway.card_sources))}
+                )
 
         # The voice agent can hang up the call itself via its end_call tool, which
         # trips this event; wait_end() (below) then ends the job race → teardown.

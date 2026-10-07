@@ -43,7 +43,7 @@
   // Markdown and Card files use the in-place editor. Absolute paths need the
   // server's read_write mode; Bundled Cards and read-only Folders stay preview-only.
   const editable = $derived(
-    (kind === 'card-instance' || kind === 'markdown' || !!name?.endsWith('.card.yaml')) && !!path &&
+    (kind === 'card-instance' || kind === 'markdown' || !!name?.endsWith('.card.yaml') || !!name?.endsWith('.screen.yaml')) && !!path &&
       (isFolderPath(path) ? folderAffordances(fileMode).edit : true)
   )
 
@@ -132,7 +132,7 @@
     dlView = 'preview'; rawText = ''; rawErr = ''; rawLoaded = false  // unknown-kind raw view resets per file
     fileMode = null              // re-resolve the Grant mode for the newly-opened file
     if (tr) { text = tr.text; draft = tr.text }
-    else if (p && (k === 'card-instance' || k === 'markdown' || p.endsWith('.card.yaml'))) {
+    else if (p && (k === 'card-instance' || k === 'markdown' || p.endsWith('.card.yaml') || p.endsWith('.screen.yaml'))) {
       api.fileTextWithEtag(p, cid)
         .then(({ text: t, etag: e, mode: m }) => { if (!stale) { text = t; draft = t; etag = e; fileMode = m } })
         .catch((e) => { if (!stale) err = errText(e) })
