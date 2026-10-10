@@ -76,7 +76,7 @@ test('featured is a subset of known, and every family features at least one', ()
 })
 
 test('a price reads per million tokens, and a local model reads as free', () => {
-  assert.match(priceLabel(knownModel('claude-sonnet-5')), /\$3.*\$15.*M/)
+  assert.match(priceLabel(knownModel('claude-sonnet-5')), /\$2.*\$10.*M/)
   assert.equal(priceLabel(knownModel('llama3.2')), 'Free')
   // Absence of a price is the signal that a name is newer than this table.
   assert.equal(priceLabel(undefined), '')
@@ -84,8 +84,10 @@ test('a price reads per million tokens, and a local model reads as free', () => 
 })
 
 test('a context window reads in K or M', () => {
-  assert.equal(contextLabel(knownModel('gemini-3.6-flash')), '1M context')
-  assert.equal(contextLabel(knownModel('claude-sonnet-5')), '200K context')
+  assert.equal(contextLabel(knownModel('gemini-3.6-flash')), '1.05M context')
+  assert.equal(contextLabel(knownModel('claude-sonnet-5')), '1M context')
+  assert.equal(contextLabel(knownModel('gpt-6.1-sol')), '1.05M context')
+  assert.equal(contextLabel(knownModel('claude-haiku-4.5')), '200K context')
   assert.equal(contextLabel(undefined), '')
   assert.equal(contextLabel({}), '')
 })

@@ -46,8 +46,8 @@ test('a row carries its price and context window ready to render', () => {
   const row = suggestModels({ type: 'anthropic' }).find((r) => r.id === 'claude-sonnet-5')
   assert.ok(row, 'Claude Sonnet 5 is not offered')
   assert.equal(row.label, 'Claude Sonnet 5')
-  assert.match(row.price, /\$3.*\$15/)
-  assert.equal(row.context, '200K context')
+  assert.match(row.price, /\$2.*\$10/)
+  assert.equal(row.context, '1M context')
 })
 
 test('typing filters by substring of the id', () => {

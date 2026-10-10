@@ -27,25 +27,33 @@ const TYPE_FAMILY: Record<string, string> = {
   anthropic: 'anthropic', gemini: 'gemini', ollama: 'ollama',
 }
 
-// Prices are USD per million tokens as published at the last release bump; a local
-// model is priced zero and reads as free. Context is the window in tokens.
+// Standard text API prices in USD per million input/output tokens, checked 2026-10-10.
+// Long-context premiums, caching, processing tiers and tool charges are not included.
 export const KNOWN_MODELS: KnownModel[] = [
-  { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash', provider: 'gemini', price: { in: 0.3, out: 2.5 }, context: 1_000_000, featured: true },
-  { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash Lite', provider: 'gemini', price: { in: 0.1, out: 0.4 }, context: 1_000_000, featured: true },
-  { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro Preview', provider: 'gemini', price: { in: 1.25, out: 10 }, context: 1_000_000, featured: true },
+  // https://ai.google.dev/gemini-api/docs/pricing
+  // Gemini 3.6 Flash promotional rates apply through 2026-12-31.
+  { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash', provider: 'gemini', price: { in: 0.75, out: 3.75 }, context: 1_048_576, featured: true },
+  { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash Lite', provider: 'gemini', price: { in: 0.25, out: 1.5 }, context: 1_048_576, featured: true },
+  { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro Preview', provider: 'gemini', price: { in: 2, out: 12 }, context: 1_048_576, featured: true },
 
-  { id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna', provider: 'openai', price: { in: 0.25, out: 2 }, context: 400_000, featured: true },
-  { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra', provider: 'openai', price: { in: 1.25, out: 10 }, context: 400_000, featured: true },
-  { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', provider: 'openai', price: { in: 5, out: 40 }, context: 400_000, featured: true },
-  { id: 'gpt-5.4-mini', label: 'GPT-5.4 Mini', provider: 'openai', price: { in: 0.25, out: 2 }, context: 400_000, featured: true },
-  { id: 'gpt-5.4-nano', label: 'GPT-5.4 Nano', provider: 'openai', price: { in: 0.05, out: 0.4 }, context: 400_000, featured: true },
+  // https://developers.openai.com/api/docs/models
+  { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', provider: 'openai', price: { in: 2, out: 10 }, context: 1_050_000, featured: true },
+  { id: 'gpt-6-astra', label: 'GPT-6 Astra', provider: 'openai', price: { in: 10, out: 50 }, context: 1_050_000, featured: true },
+  { id: 'gpt-6-luna', label: 'GPT-6 Luna', provider: 'openai', price: { in: 0.1, out: 0.5 }, context: 1_050_000, featured: true },
+  { id: 'gpt-6-sol', label: 'GPT-6 Sol', provider: 'openai', price: { in: 2, out: 10 }, context: 1_050_000, featured: false },
+  { id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna', provider: 'openai', price: { in: 0.2, out: 1.2 }, context: 1_050_000, featured: false },
+  { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra', provider: 'openai', price: { in: 2, out: 12 }, context: 1_050_000, featured: false },
+  { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', provider: 'openai', price: { in: 4, out: 20 }, context: 1_050_000, featured: false },
+  { id: 'gpt-5.4-mini', label: 'GPT-5.4 Mini', provider: 'openai', price: { in: 0.75, out: 4.5 }, context: 400_000, featured: false },
+  { id: 'gpt-5.4-nano', label: 'GPT-5.4 Nano', provider: 'openai', price: { in: 0.2, out: 1.25 }, context: 400_000, featured: false },
 
-  { id: 'claude-sonnet-5', label: 'Claude Sonnet 5', provider: 'anthropic', price: { in: 3, out: 15 }, context: 200_000, featured: true },
+  // https://platform.claude.com/docs/en/about-claude/pricing
+  { id: 'claude-sonnet-5', label: 'Claude Sonnet 5', provider: 'anthropic', price: { in: 2, out: 10 }, context: 1_000_000, featured: true },
   { id: 'claude-haiku-4.5', label: 'Claude Haiku 4.5', provider: 'anthropic', price: { in: 1, out: 5 }, context: 200_000, featured: true },
-  { id: 'claude-opus-4-8', label: 'Claude Opus 4.8', provider: 'anthropic', price: { in: 5, out: 25 }, context: 200_000, featured: true },
-  // MiniMax speaks the Anthropic wire from its own endpoint, so it is that family's
-  // model without being one Anthropic serves.
-  { id: 'MiniMax-M2.5', label: 'MiniMax M2.5', provider: 'anthropic', price: { in: 0.3, out: 1.2 }, context: 200_000, featured: false },
+  { id: 'claude-opus-4-8', label: 'Claude Opus 4.8', provider: 'anthropic', price: { in: 5, out: 25 }, context: 1_000_000, featured: true },
+  // https://platform.minimax.io/docs/pricing/overview
+  // MiniMax uses the Anthropic protocol at its own endpoint.
+  { id: 'MiniMax-M2.5', label: 'MiniMax M2.5', provider: 'anthropic', price: { in: 0.3, out: 1.2 }, context: 204_800, featured: false },
 
   { id: 'llama3.2', label: 'Llama 3.2', provider: 'ollama', price: { in: 0, out: 0 }, context: 128_000, featured: true },
 ]
@@ -86,6 +94,6 @@ export function priceLabel(entry: ModelEntry | null | undefined): string {
 export function contextLabel(entry: ModelEntry | null | undefined): string {
   const context = entry?.context
   if (typeof context !== 'number' || !context) return ''
-  const size = context >= 1_000_000 ? `${+(context / 1_000_000).toFixed(1)}M` : `${Math.round(context / 1000)}K`
+  const size = context >= 1_000_000 ? `${+(context / 1_000_000).toFixed(2)}M` : `${Math.round(context / 1000)}K`
   return `${size} context`
 }
