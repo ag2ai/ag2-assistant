@@ -4,6 +4,7 @@ Ids are the provider's own constructor names; entries carry no user-facing strin
 """
 
 from dataclasses import dataclass
+from typing import Literal
 
 
 @dataclass(frozen=True)
@@ -11,8 +12,8 @@ class ModelParam:
     """One parameter as ONE configuration type offers it."""
 
     id: str
-    # "choice" (one of ``choices``), "int" or "float" (within the bounds, if any).
-    kind: str
+    # "choice" is one of ``choices``; "int" and "float" sit within the bounds, if any.
+    kind: Literal["choice", "int", "float"]
     choices: tuple[str, ...] = ()
     minimum: float | None = None
     maximum: float | None = None
@@ -58,7 +59,7 @@ register("anthropic", _temperature(1), _output_limit("max_tokens"))
 
 register("ollama", _temperature(2), _output_limit("max_tokens"))
 
-# Registered empty rather than omitted: "this type offers none" is an answer.
+# The types that offer no parameters.
 for _ctype in ("openai_subscription", "claude_code", "codex"):
     register(_ctype)
 
@@ -97,3 +98,17 @@ def clean_params(ctype: str, raw: object) -> dict:
         if value is not None:
             cleaned[param.id] = _checked(param, value)
     return cleaned
+
+
+def usable_params(ctype: str, raw: object) -> dict:
+    """The stored parameters fit to send: offered by this type and well-formed."""
+    usable = {}
+    for param in params_for(ctype):
+        value = raw.get(param.id) if isinstance(raw, dict) else None
+        if value is None:
+            continue
+        try:
+            usable[param.id] = _checked(param, value)
+        except ValueError:
+            continue
+    return usable

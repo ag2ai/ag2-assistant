@@ -7,6 +7,8 @@
 // tool under each provider: one `web_fetch` is Anthropic's citing fetcher, another
 // is Gemini's `url_context`. Lookups stay total — an id with no entry here reads
 // as its own id rather than vanishing from the form.
+import { parseParam } from './modelParams.ts'
+
 export type BuiltinToolText = { label: string; description: string; note?: string }
 
 // `note` shows only while the switch is on, so a consequence appears at the moment
@@ -103,8 +105,5 @@ export function parseOption(kind: string, text: string): unknown {
     const domains = text.split(',').map((d) => d.trim()).filter(Boolean)
     return domains.length ? domains : undefined
   }
-  const t = text.trim()
-  if (!t) return undefined
-  const n = Number(t)
-  return Number.isNaN(n) ? t : n
+  return parseParam(kind, text)
 }

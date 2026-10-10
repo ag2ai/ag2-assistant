@@ -688,10 +688,10 @@ def test_a_config_type_with_no_builtins_derives_an_empty_selection(store, paths)
     assert cfg.llm.builtin_tools == {}
 
 
-# ---- Parameters: per-type settings stored on the Text model ----------------------
+# ---- Parameters stored on the Text model ------------------------------------------
 
 
-def test_a_reasoning_level_is_saved_on_the_text_model(store):
+def test_a_parameter_is_saved_on_the_text_model(store):
     entry = store.save_config(
         {"name": "G", "type": "gemini", "model": "g", "params": {"thinking_level": "high"}}
     )
@@ -699,7 +699,7 @@ def test_a_reasoning_level_is_saved_on_the_text_model(store):
 
 
 def test_a_text_model_without_parameters_stores_none(store):
-    """Absent means provider default, so an entry predating the feature is unchanged."""
+    """Absent means the provider's default."""
     entry = store.save_config({"name": "G", "type": "gemini", "model": "g"})
     assert entry["params"] == {}
 
@@ -725,7 +725,7 @@ def test_changing_type_drops_parameters_the_new_type_does_not_offer(store):
     assert moved["params"] == {}
 
 
-def test_a_level_the_provider_does_not_have_is_refused(store):
+def test_a_choice_the_provider_does_not_have_is_refused(store):
     with pytest.raises(ValueError, match="thinking_level"):
         store.save_config(
             {"name": "G", "type": "gemini", "model": "g", "params": {"thinking_level": "xhigh"}}
@@ -812,11 +812,41 @@ def test_an_output_limit_overrides_the_app_s_own_budget_and_advanced_overrides_b
 
 
 def test_a_subscription_text_model_offers_no_parameters(store):
-    """The ChatGPT backend rejects every tunable, so none is stored for it."""
     entry = store.save_config(
         {"name": "S", "type": "openai_subscription", "model": "gpt-5", "params": {"temperature": 1}}
     )
     assert entry["params"] == {}
+
+
+def _hand_edited(**fields):
+    """An entry as a hand-edited Global config holds it: never through the save path."""
+    return {"id": "c_hand", "name": "H", "model": "m", **fields}
+
+
+def test_a_hand_edited_parameter_the_type_does_not_offer_never_reaches_the_provider(store):
+    entry = _hand_edited(
+        type="gemini", params={"thinking_level": "high", "reasoning_effort": "low"}
+    )
+    assert store.entry_options(entry) == {"thinking_level": "high"}
+
+
+def test_a_hand_edited_parameter_that_is_malformed_is_left_out_of_the_turn(store, paths):
+    entry = _hand_edited(type="gemini", params={"thinking_level": "max", "temperature": 0.3})
+    cfg = Config.for_paths(paths)
+    store.derive_onto(cfg, entry)
+    built = model_config(cfg)
+    assert built.thinking_level is None
+    assert built.temperature == 0.3
+
+
+def test_a_hand_edited_params_value_that_is_not_an_object_sets_nothing(store):
+    entry = _hand_edited(type="gemini", params=["high"])
+    assert store.entry_options(entry) == {}
+
+
+def test_a_hand_edited_parameter_cannot_reach_a_type_that_offers_none(store):
+    entry = _hand_edited(type="codex", params={"temperature": 0.3})
+    assert store.entry_options(entry) == {}
 
 
 # ---- Provider-tool options ---------------------------------------------------------

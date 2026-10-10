@@ -19,7 +19,7 @@ def test_every_type_states_what_it_offers():
     assert set(_REGISTRY) == set(TYPES)
 
 
-def test_reasoning_levels_are_the_pinned_ag2_s_own():
+def test_reasoning_choices_are_the_pinned_ag2_s_own():
     by_id = {(ctype, p.id): p for ctype, p in OFFERED}
     assert by_id["openai", "reasoning_effort"].choices == get_args(ReasoningEffort)
     assert by_id["gemini", "thinking_level"].choices == get_args(ThinkingLevel)

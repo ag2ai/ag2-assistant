@@ -32,7 +32,7 @@ test('no words are written for a parameter its type does not offer', () => {
   }
 })
 
-test('the same setting reads in each provider own words', () => {
+test('the same parameter reads in each provider own words', () => {
   assert.equal(modelParamText('openai', 'reasoning_effort').label, 'Reasoning effort')
   assert.equal(modelParamText('gemini', 'thinking_level').label, 'Thinking level')
 })
@@ -58,10 +58,6 @@ test('a typed number becomes a value, and an emptied field becomes no value', ()
   assert.equal(parseParam('int', '  '), undefined)
   assert.equal(parseParam('choice', 'high'), 'high')
   assert.equal(parseParam('choice', ''), undefined)
-})
-
-test('text that is not a number is kept, so the server can name the mistake', () => {
-  assert.equal(parseParam('int', 'many'), 'many')
 })
 
 test('the Advanced box names the parameters it overrides', () => {

@@ -5,7 +5,7 @@
 // they are called. Keyed by `${type}.${id}`; an id with no entry reads as itself.
 export type ModelParamText = { label: string; description: string }
 
-// Shared words: the same setting is the same sentence wherever it is offered.
+// Words shared by every type that offers the parameter.
 const TEMPERATURE: ModelParamText = {
   label: 'Temperature',
   description: 'Lower is more predictable, higher is more varied.',
@@ -59,8 +59,7 @@ export function parseParam(kind: string, text: string): unknown {
   const t = text.trim()
   if (!t) return undefined
   if (kind === 'choice') return t
-  const n = Number(t)
-  return Number.isNaN(n) ? t : n
+  return Number(t)
 }
 
 // The names the Advanced (JSON) box sets — each one overrides its parameter.

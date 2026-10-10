@@ -44,7 +44,7 @@ from secrets import token_hex
 
 from assistant.builtin_tools import clean_options, find_builtin
 from assistant.config import apply_provider_defaults, read_global_config, update_global_section
-from assistant.model_params import clean_params
+from assistant.model_params import clean_params, usable_params
 from assistant.paths import Paths
 from assistant.secrets import SecretStore
 
@@ -389,8 +389,8 @@ class LlmConfigStore:
         placeholder is forced instead. It is non-empty on purpose (the OpenAI SDK
         refuses a missing key and llama.cpp-style servers expect some bearer value);
         endpoints that need a real key (e.g. MiniMax) take it via a referenced Secret."""
-        opts = {**(entry.get("params") or {}), **(entry.get("options") or {})}
-        ctype = entry.get("type")
+        ctype = entry.get("type") or ""
+        opts = {**usable_params(ctype, entry.get("params")), **(entry.get("options") or {})}
         if ctype == "openai_subscription":
             # model_config routes this type through codex_auth off cfg.llm.auth_mode and
             # ignores provider_options entirely — so no api/base_url/key derivation here;

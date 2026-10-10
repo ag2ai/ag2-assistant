@@ -145,7 +145,9 @@ not offered. The other options the AG2 classes take stay reachable only in code.
 Options are stored where decision 5 left room for them, in the `{id: options}` map, so
 there is no migration. On save an option the type does not declare is dropped, a
 malformed one is refused, and an allowed list together with a blocked list is refused —
-Anthropic accepts one or the other. Switching a tool off removes its entry and its
+Anthropic accepts one or the other. A turn applies the same filter to what it reads, so
+a hand-edited option that is undeclared never reaches the tool, and a malformed set
+leaves the tool on its defaults. Switching a tool off removes its entry and its
 options with it. The gateway ships `builtin_options_by_type`; the option's words are
 `lib/builtinTools.ts`'s, keyed by the option id alone because a name means the same on
 every tool that takes it.

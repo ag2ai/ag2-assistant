@@ -190,9 +190,16 @@ def test_a_draft_test_refuses_a_parameter_a_save_would_refuse(client):
     assert "reasoning_effort" in r.json()["error"]
 
 
+def test_a_draft_test_refuses_tool_options_a_save_would_refuse(client):
+    both = {"allowed_domains": ["a.example"], "blocked_domains": ["b.example"]}
+    body = {"name": "Main", "type": "anthropic", "model": "claude"}
+    r = client.post("/api/llm-configs/test", json={**body, "builtin_tools": {"web_fetch": both}})
+    assert r.status_code == 400
+    assert "allowed_domains" in r.json()["error"]
+
+
 def test_the_list_describes_the_parameters_of_every_type(client):
-    """Every type, not just the configured ones: the editor renders a type before
-    any Text model uses it."""
+    """Every type is described, not just the configured ones."""
     by_type = client.get("/api/llm-configs").json()["params_by_type"]
     assert set(by_type) == set(llm_configs.TYPES)
     assert by_type["gemini"][0] == {

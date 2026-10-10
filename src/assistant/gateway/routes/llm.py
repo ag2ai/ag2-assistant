@@ -369,6 +369,7 @@ def build_router(
                     "secret_id": req.secret_id or "",
                     "options": req.options,
                     "params": req.params,
+                    "builtin_tools": req.builtin_tools,
                 }
             )
         except ValueError as exc:

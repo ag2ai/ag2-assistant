@@ -97,7 +97,7 @@ class LlmConfigListResponse(BaseModel):
     builtin_tools_by_type: dict[str, list[str]]
     # type -> tool id -> the options that tool takes there.
     builtin_options_by_type: dict[str, dict[str, list[BuiltinOptionOut]]]
-    # type -> the parameters it offers, for every type. Ids only, as above.
+    # type -> the parameters it offers, for every type.
     params_by_type: dict[str, list[ModelParamOut]]
 
 

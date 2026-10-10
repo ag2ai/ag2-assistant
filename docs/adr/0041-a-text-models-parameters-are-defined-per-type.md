@@ -55,7 +55,9 @@ The editor marks a control whose Parameter the Advanced box also names.
 ### 5. The server validates; the web names
 
 A value outside a Parameter's choices or bounds is refused on save, and a Parameter the
-type does not offer is dropped, as an unoffered provider tool is. The gateway ships
+type does not offer is dropped, as an unoffered provider tool is. The same filter runs
+again when a turn derives the Text model, leniently: a hand-edited Global config never
+passes through a save, and a Parameter it got wrong is left out rather than sent. The gateway ships
 `params_by_type` — id, kind, choices and bounds — and `web/src/lib/modelParams.ts`
 supplies the words, the same split as `lib/builtinTools.ts`.
 

@@ -28,7 +28,7 @@ configs keep today's behaviour).
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import TypedDict
+from typing import Literal, TypedDict
 
 from ag2.tools import CodeExecutionTool, WebFetchTool, WebSearchTool
 
@@ -76,8 +76,12 @@ _FETCH: _KindFields = {"capability": "web", "suppresses": ("web_fetch",)}
 _CODE: _KindFields = {"capability": "code"}
 
 # Option name -> its kind: "int" is a whole number of at least 1, "domains" a list
-# of host names. One table, because a name means the same on every tool that takes it.
-OPTION_KINDS = {"max_uses": "int", "allowed_domains": "domains", "blocked_domains": "domains"}
+# of host names.
+OPTION_KINDS: dict[str, Literal["int", "domains"]] = {
+    "max_uses": "int",
+    "allowed_domains": "domains",
+    "blocked_domains": "domains",
+}
 
 _ANTHROPIC_WEB = ("max_uses", "allowed_domains", "blocked_domains")
 
@@ -88,7 +92,7 @@ register(
     BuiltinTool("code_execution", CodeExecutionTool, **_CODE),
 )
 
-# The Responses mapper sends max_uses too, but OpenAI documents no such field.
+# max_uses is not offered here (ADR 0029, amendment).
 register(
     "openai_responses",
     BuiltinTool("web_search", WebSearchTool, fields=("allowed_domains",), **_SEARCH),
@@ -157,6 +161,14 @@ def clean_options(spec: BuiltinTool, raw: Mapping) -> dict:
     return cleaned
 
 
+def usable_options(spec: BuiltinTool, raw: object) -> dict:
+    """One tool's stored options fit to send; a malformed set reads as none."""
+    try:
+        return clean_options(spec, raw if isinstance(raw, Mapping) else {})
+    except ValueError:
+        return {}
+
+
 def active_builtins(
     ctype: str, enabled: Mapping[str, Mapping], capabilities: list[str] | None = None
 ) -> list[tuple[BuiltinTool, dict]]:
@@ -170,7 +182,7 @@ def active_builtins(
     for tool_id, options in (enabled or {}).items():
         spec = find_builtin(ctype, tool_id)
         if spec is not None and want(spec.capability):
-            pairs.append((spec, dict(options or {})))
+            pairs.append((spec, usable_options(spec, options)))
     return pairs
 
 

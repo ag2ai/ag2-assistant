@@ -187,3 +187,17 @@ async def test_a_saved_option_is_on_the_provider_tool_the_agent_is_built_with():
     assert schema.max_uses == 3
     assert schema.blocked_domains == ["spam.example"]
     assert schema.allowed_domains is None
+
+
+def test_a_hand_edited_option_the_type_does_not_honour_never_reaches_the_tool():
+    """max_uses is Anthropic's; the Responses registration does not declare it."""
+    stored = {"web_search": {"max_uses": 3, "allowed_domains": ["example.com"], "invented": 1}}
+    ((_, options),) = active_builtins("openai_responses", stored)
+    assert options == {"allowed_domains": ["example.com"]}
+
+
+def test_hand_edited_options_that_are_malformed_leave_the_tool_on_its_defaults():
+    stored = {"web_search": {"max_uses": "few", "blocked_domains": ["spam.example"]}}
+    ((spec, options),) = active_builtins("anthropic", stored)
+    assert spec.id == "web_search"
+    assert options == {}
