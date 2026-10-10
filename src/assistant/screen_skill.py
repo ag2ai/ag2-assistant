@@ -40,6 +40,10 @@ run_skill_script(name="screens", script="save_screen", args={"path":"morning.scr
 creates one Screen. Each CardInstance is a reference, never inline Card data or a catalog name.
 Layouts use the Card vocabulary (Column, Row, Text, etc.); relative ./ bindings are permitted
 only within repeated templates. Read card-author's vocabulary when choosing primitives.
+Read card-author's layout.md for sizing. Grid with columns=2 gives equal responsive halves;
+two grow=true columns only share leftover space. width="content" fits a frame to its contents;
+width="fill" fills its container. A parent's align affects the child; inner align does not
+resize the enclosing frame. These properties also work in retained instance layouts.
 When editing table density or column widths, read card-author's current tables.md. Keep a
 Table with explicit columnWidth bindings; independent Rows do not share aligned columns.
 Paths are relative to the Profile's Files root, including references in nested directories.

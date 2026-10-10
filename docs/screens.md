@@ -78,3 +78,9 @@ assistant Turn. Screen and referenced-file inputs/actions and in-app navigation 
 remain passive. Source Refresh and approval are active buttons. Dragging Cards between
 columns and writing values back without a Turn are follow-up work; Screens do not enable
 historical actions.
+
+For equal responsive columns use `Grid` with `columns: 2` (or up to 6). Its equal
+tracks collapse as available space narrows; `minColumnWidth: sm/md/lg` selects the
+minimum. Use `width: content` on a Card or Table to fit its contents, and `width: fill`
+to fill its container. Existing layouts keep their sizing when width is omitted.
+The card-author skill's `layout.md` explains these options with a worked example.
