@@ -1,12 +1,15 @@
 <script lang="ts">
-  // Settings → General (per-device): Appearance, Animations, Notifications, Re-run setup.
+  // Device appearance and notifications, plus profile preview configuration.
   import { getSettings } from './context.svelte.ts'
   import { soundOnInput, animations, type AnimationQuality } from '../../store.ts'
   import { chime } from '../../lib/chime.ts'
   import Icon from '../Icon.svelte'
   import Appearance from '../Appearance.svelte'
+  import { api } from '../../transport/api/index.ts'
 
   const ctx = getSettings()
+  let browser = $state('')
+  $effect(() => { browser = ctx.s?.preview_browser || '' })
 
   // App-wide animation tiers (per-device; see store.animations)
   const FX_MODES: { id: AnimationQuality; label: string; hint: string }[] = [
@@ -34,6 +37,13 @@
   <input type="checkbox" bind:checked={$soundOnInput} onchange={(e) => e.currentTarget.checked && chime()} />
   Play a sound when the assistant needs my input
 </label>
+
+<div class="setgroup">Visual preview</div>
+<p class="setsub">Let the Screen skill inspect rendered Cards and Screens. Choose the absolute path to a Chromium executable on the server. An empty path disables preview for this profile.</p>
+<div class="keyrow">
+  <input aria-label="Chromium executable" bind:value={browser} placeholder="Absolute path to Chromium or Chrome" disabled={ctx.busy || !ctx.s} />
+  <button class="open" disabled={ctx.busy || !ctx.s || browser === ctx.s.preview_browser} onclick={() => ctx.run(() => api.setPreviewBrowser(browser))}>Save</button>
+</div>
 
 <div class="setgroup">Re-run setup</div>
 <div class="setrowwrap">

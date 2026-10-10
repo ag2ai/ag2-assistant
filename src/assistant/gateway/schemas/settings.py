@@ -126,6 +126,7 @@ class ProfileSettingsResponse(BaseModel):
     mcp_servers: list[McpServerOut]
     focuses: list[str]
     reply_timeout_s: float
+    preview_browser: str
     fs: FsRootsOut
 
 
@@ -225,3 +226,10 @@ class ReplyTimeoutSavedResponse(BaseModel):
 
     ok: Literal[True]
     reply_timeout_s: float
+
+
+class PreviewBrowserSavedResponse(BaseModel):
+    """The persisted Chromium executable for this Profile."""
+
+    ok: Literal[True]
+    preview_browser: str

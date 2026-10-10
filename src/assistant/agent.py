@@ -300,7 +300,7 @@ def resolve_a2ui_skill(config: Config):
 
 
 def build_skills_plugin(
-    config: Config, runtime, *, catalog=None, snapshot: bool = False, drafts=None
+    config: Config, runtime, *, catalog=None, snapshot: bool = False, drafts=None, preview=None
 ):
     """Build progressive disclosure and activation tools over resolved Skill availability."""
     author = FilteredSkillRuntime(
@@ -309,7 +309,7 @@ def build_skills_plugin(
         snapshot=snapshot,
     )
     screens = FilteredSkillRuntime(
-        ScreenSkillRuntime(config, catalog or CardCatalog(config)),
+        ScreenSkillRuntime(config, catalog or CardCatalog(config), drafts=drafts, preview=preview),
         _availability(config),
         snapshot=snapshot,
     )

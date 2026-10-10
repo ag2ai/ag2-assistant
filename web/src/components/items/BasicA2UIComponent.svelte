@@ -188,25 +188,25 @@
     {@render sourceControls(component.id)}
   </div>
 {:else if type === 'column'}
-  <div class="a2ui-basic-col {markerClass}" style:width={width} style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={layoutGrow}>
+  <div data-a2ui-id={component.id} data-a2ui-scope={scope} data-a2ui-type={component.component} class="a2ui-basic-col {markerClass}" style:width={width} style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={layoutGrow}>
     {@render kids()}
   </div>
 {:else if type === 'row'}
-  <div class="a2ui-basic-row {markerClass}" style:width={width} style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={layoutGrow}>
+  <div data-a2ui-id={component.id} data-a2ui-scope={scope} data-a2ui-type={component.component} class="a2ui-basic-row {markerClass}" style:width={width} style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={layoutGrow}>
     {@render kids()}
   </div>
 {:else if type === 'grid'}
-  <div class="a2ui-grid" style:width={width} style:flex-grow={layoutGrow} style:align-items={align}
+  <div data-a2ui-id={component.id} data-a2ui-scope={scope} data-a2ui-type={component.component} class="a2ui-grid" style:width={width} style:flex-grow={layoutGrow} style:align-items={align}
     style:--a2ui-grid-columns={gridColumns} style:--a2ui-grid-min={gridMin} style:--a2ui-grid-gap={gap || 'var(--space-5)'}>
     {@render kids()}
   </div>
 {:else if type === 'list'}
-  <div class="a2ui-list {markerClass}" class:a2ui-ranked={ranked} style:width={width} style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={layoutGrow} style:--a2ui-rank-from={rankFrom}>
+  <div data-a2ui-id={component.id} data-a2ui-scope={scope} data-a2ui-type={component.component} class="a2ui-list {markerClass}" class:a2ui-ranked={ranked} style:width={width} style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={layoutGrow} style:--a2ui-rank-from={rankFrom}>
     {@render kids()}
   </div>
 {:else if type === 'card'}
   {@const kid = child(component.child)}
-  <div class="a2ui-basic-card {markerClass}" class:a2ui-feature={component.variant === 'feature'} style:width={width} style:flex-grow={layoutGrow}>
+  <div data-a2ui-id={component.id} data-a2ui-scope={scope} data-a2ui-type={component.component} class="a2ui-basic-card {markerClass}" class:a2ui-feature={component.variant === 'feature'} style:width={width} style:flex-grow={layoutGrow}>
     {#if kid}<BasicA2UIComponent {sourceIds} {sourceControls} component={kid} {components} {data} {onDataChange} {onAction} {passive} {scope} depth={depth + 1} />{/if}
   </div>
 {:else if type === 'link'}
@@ -249,7 +249,7 @@
   {@const head = child(component.header)}
   {@const body = child(component.cell)}
   {#if tableColumns.length}
-  <div class="a2ui-tablewrap" style:width={width} style:flex-grow={layoutGrow}>
+  <div data-a2ui-id={component.id} data-a2ui-scope={scope} data-a2ui-type={component.component} class="a2ui-tablewrap" style:width={width} style:flex-grow={layoutGrow}>
     <div class="a2ui-table" class:a2ui-table-data={component.variant === 'data'} class:a2ui-table-compact={component.density === 'compact'} style:grid-template-columns={tableGrid} role="table">
       {#if head}
         <div class="a2ui-tr" role="row">

@@ -52,6 +52,7 @@ export const ProfileSettings = z.object({
   mcp_servers: z.array(McpServer),
   focuses: z.array(z.string()),
   reply_timeout_s: z.number(),
+  preview_browser: z.string(),
   fs: FsRoots,
 })
 export type ProfileSettings = z.infer<typeof ProfileSettings>
@@ -138,3 +139,6 @@ export const McpServersSnapshot = z.object({
   mcp_servers: z.array(McpServer),
 })
 export type McpServersSnapshot = z.infer<typeof McpServersSnapshot>
+
+export const PreviewBrowserSaved = z.object({ ok: z.literal(true), preview_browser: z.string() })
+export type PreviewBrowserSaved = z.infer<typeof PreviewBrowserSaved>

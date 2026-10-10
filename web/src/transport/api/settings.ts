@@ -14,6 +14,7 @@ import {
   ProfileHealth,
   ProfileSettings,
   ReplyTimeoutSaved,
+  PreviewBrowserSaved,
   Usage,
   VoiceCatalog,
   VoiceSelected,
@@ -57,6 +58,9 @@ export const settingsApi = {
     post(P('/settings/llm-override'), { config_id: configId }, LlmOverrideSaved),
   setLiveOverride: (configId = '') =>
     post(P('/settings/live-override'), { config_id: configId }, LiveOverrideSaved),
+
+  setPreviewBrowser: (browser: string) =>
+    post(P('/settings/preview-browser'), { preview_browser: browser }, PreviewBrowserSaved),
 
   setReplyTimeout: (replyTimeoutS: number) =>
     post(P('/settings/reply-timeout'), { reply_timeout_s: replyTimeoutS }, ReplyTimeoutSaved),
