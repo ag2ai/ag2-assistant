@@ -336,7 +336,12 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
     case 'EphemeralCard':
     case 'A2UISurface': {
       const d = EventData.A2UISurface.parse(data)
-      let item = items.find((i): i is ItemOf<'a2ui'> => i.kind === 'a2ui' && i.surfaceId === d.surface_id)
+      const index = items.findIndex((i) => i.kind === 'a2ui' && i.surfaceId === d.surface_id)
+      let item = index < 0 ? undefined : items[index] as ItemOf<'a2ui'>
+      if (item) {
+        item = { ...item }
+        items[index] = item
+      }
       if (!item) {
         item = { id: nid(), kind: 'a2ui', surfaceId: d.surface_id, component: {}, data: {} }
         items.push(item)
@@ -391,8 +396,9 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
     }
     case 'A2UISurfaceDataUpdated': {
       const d = EventData.A2UISurfaceDataUpdated.parse(data)
-      const item = items.find((i): i is ItemOf<'a2ui'> => i.kind === 'a2ui' && i.surfaceId === d.surface_id)
-      if (item) item.data = d.data ?? {}
+      const index = items.findIndex((i) => i.kind === 'a2ui' && i.surfaceId === d.surface_id)
+      const item = items[index]
+      if (item?.kind === 'a2ui') items[index] = { ...item, data: d.data ?? {} }
       break
     }
     case 'A2UIActionSubmitted': {

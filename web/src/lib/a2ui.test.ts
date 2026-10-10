@@ -183,8 +183,9 @@ test('a data-model update grows the bound array the layout already repeats over'
     version: 'v1.0',
     updateDataModel: { surfaceId: 's1', path: '/trip', value: { legs: [{ day: 'Mon' }, { day: 'Tue' }] } },
   })
-  assert.equal(childSlots(surface.component.children, surface.data).length, 2)
-  assert.equal(a2uiValue({ path: './day' }, surface.data, '/trip/legs/1'), 'Tue')
+  const updated = items[0] as Extract<ThreadItem, { kind: 'a2ui' }>
+  assert.equal(childSlots(updated.component.children, updated.data).length, 2)
+  assert.equal(a2uiValue({ path: './day' }, updated.data, '/trip/legs/1'), 'Tue')
 })
 
 test('a button in a repeated row submits the item it belongs to', () => {
@@ -239,8 +240,9 @@ test('a card drawn as primitives is titled by the data model that arrives after 
     version: 'v1.0',
     updateDataModel: { surfaceId: 's1', path: '/title', value: 'Ship it' },
   })
-  assert.equal(surface.title, 'Ship it')
-  assert.equal(a2uiValue({ path: '/title' }, surface.data), 'Ship it')
+  const updated = items[0] as Extract<ThreadItem, { kind: 'a2ui' }>
+  assert.equal(updated.title, 'Ship it')
+  assert.equal(a2uiValue({ path: '/title' }, updated.data), 'Ship it')
 })
 
 test('a surface the renderer has never seen is titled and filled like any other', () => {
@@ -260,7 +262,7 @@ test('a surface the renderer has never seen is titled and filled like any other'
     version: 'v1.0',
     updateDataModel: { surfaceId: 's1', path: '/title', value: 'Tea, ranked' },
   })
-  assert.equal(surface.title, 'Tea, ranked')
+  assert.equal((items[0] as Extract<ThreadItem, { kind: 'a2ui' }>).title, 'Tea, ranked')
 })
 
 test('two instances of one card read their own rows, not each other\'s', () => {

@@ -156,6 +156,58 @@ const drawn = (id: string): WireEvent => ({
 })
 const replies = (items: ThreadItem[]) => items.filter((i) => i.kind === 'agent')
 
+test('streamed surface updates publish new items while preserving the mounted card identity', () => {
+  const items: ThreadItem[] = []
+  foldEvent(items, drawn('calendar'))
+  const empty = itemOfKind(items[0], 'a2ui')
+  foldEvent(items, {
+    type: 'ag2.a2ui.A2UIMessageEvent',
+    data: { message: { updateComponents: { surfaceId: 'calendar', components: [
+      { id: 'root', component: 'Text', text: { path: '/title' } },
+    ] } } },
+  })
+  const layout = itemOfKind(items[0], 'a2ui')
+  assert.notEqual(layout, empty)
+  assert.equal(layout.id, empty.id)
+  assert.equal(layout.component.component, 'Text')
+  assert.deepEqual(empty.component, {})
+
+  foldEvent(items, {
+    type: 'ag2.a2ui.A2UIMessageEvent',
+    data: { message: { updateDataModel: { surfaceId: 'calendar', path: '/title', value: 'Lessons' } } },
+  })
+  const filled = itemOfKind(items[0], 'a2ui')
+  assert.notEqual(filled, layout)
+  assert.equal(filled.id, empty.id)
+  assert.equal(filled.data.title, 'Lessons')
+  assert.equal(layout.data.title, undefined)
+  assert.equal(empty.messages?.length, 1)
+  assert.equal(filled.messages?.length, 3)
+})
+
+test('durable surface and saved data updates replace the rendered item without duplicating it', () => {
+  const items: ThreadItem[] = []
+  foldEvent(items, drawn('calendar'))
+  const empty = itemOfKind(items[0], 'a2ui')
+  foldEvent(items, surface('calendar'))
+  const rendered = itemOfKind(items[0], 'a2ui')
+  assert.notEqual(rendered, empty)
+  assert.equal(rendered.id, empty.id)
+  assert.equal(rendered.component.component, 'Card')
+  assert.deepEqual(empty.component, {})
+
+  foldEvent(items, {
+    type: 'assistant.events.A2UISurfaceDataUpdated',
+    data: { surface_id: 'calendar', data: { title: 'Fresh lessons' } },
+  })
+  const updated = itemOfKind(items[0], 'a2ui')
+  assert.notEqual(updated, rendered)
+  assert.equal(updated.id, empty.id)
+  assert.deepEqual(updated.data, { title: 'Fresh lessons' })
+  assert.deepEqual(rendered.data, {})
+  assert.equal(items.length, 1)
+})
+
 test('a turn that answers with a surface alone says nothing, and is over', () => {
   const items: ThreadItem[] = []
   foldEvent(items, user('pack for Berlin'))
