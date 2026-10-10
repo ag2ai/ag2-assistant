@@ -34,7 +34,7 @@ from assistant.hitl.base import Question
 from assistant.hitl.desktop import HitlServer
 from assistant.hitl.gateway import GatewayAsker
 from assistant.hitl.inquiry import DurableAsker, InquiryStore, NullAsker
-from tests.support.fakes import FakeAgent
+from tests.support.fakes import fake_agent_factory, fake_title_factory
 
 
 def _response_with_calls(*call_ids: str):
@@ -270,15 +270,25 @@ async def test_channel_asker_reports_pending_prompt():
 
 
 @pytest.fixture
-def fake_gateway():
-    gw = Gateway(memory=False, persist=False)
-    gw._agent = FakeAgent()
-    return gw
+async def fake_gateway(config):
+    gw = Gateway(
+        config=config,
+        memory=False,
+        persist=False,
+        onboard=False,
+        agent_factory=fake_agent_factory(),
+        title_factory=fake_title_factory(),
+    )
+    await gw.start()
+    try:
+        yield gw
+    finally:
+        await gw.close()
 
 
 async def test_send_message_repairs_poisoned_session(fake_gateway):
     """A session whose history ends in a dangling tool call heals on the next turn."""
-    stream = await fake_gateway._get_stream("s1")
+    stream = await fake_gateway.stream_for("s1")
     await stream.history.replace([_response_with_calls("call_dangling")])
 
     reply = await fake_gateway.send_message("are you alive?", chat_id="s1")

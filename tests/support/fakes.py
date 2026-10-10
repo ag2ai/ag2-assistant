@@ -7,10 +7,13 @@ its own stand-in instead of patching a module attribute.
 
 import asyncio
 import types
+from contextlib import asynccontextmanager
+from pathlib import PurePosixPath
 
+from ag2.knowledge import SqliteKnowledgeStore
+from ag2.testing import TestClient, TestConfig
+from ag2.tools.sandbox.base import ExecResult
 from fast_depends import Provider
-
-from assistant.agent import build_skills_runtime, resolve_skills
 
 
 class FakeReply:
@@ -74,6 +77,11 @@ class FakeRunMixin:
     system_prompt: tuple[str, ...] = ()
 
     def run(self, *msg, **kwargs) -> FakeRun:
+        if "prompt" not in kwargs:
+            kwargs["prompt"] = [
+                *self.system_prompt,
+                *(part for plugin in kwargs.get("plugins", ()) for part in plugin._system_prompt),
+            ]
         return FakeRun(self, msg, kwargs)
 
 
@@ -103,12 +111,16 @@ class ModelNamingAgent(FakeRunMixin):
     """A fake agent that answers with the model its config was built from, so a turn's
     reply names the model configuration the turn actually resolved to."""
 
-    def __init__(self, config):
+    def __init__(self, config, unusable=()):
         self.config = config
+        self.unusable = unusable
         self.tools = []
 
-    async def ask(self, *msg, stream=None, **kwargs) -> FakeReply:
-        return FakeReply(self.config.llm.model)
+    async def ask(self, *msg, stream=None, config=None, **kwargs) -> FakeReply:
+        name = config.model if config is not None else self.config.llm.model
+        if name in self.unusable:
+            raise RuntimeError(f"{name} cannot run")
+        return FakeReply(name)
 
 
 def model_naming_agent_factory(unusable=()):
@@ -119,44 +131,13 @@ def model_naming_agent_factory(unusable=()):
     def factory(config, **kwargs):
         if config.llm.model in unusable:
             raise RuntimeError(f"{config.llm.model} cannot run")
-        return ModelNamingAgent(config)
-
-    return factory
-
-
-class SkillCatalogAgent(FakeAgent):
-    """A fake agent carrying the skill catalog its prompt would have been built with.
-
-    The catalog comes from the production resolution seam (``resolve_skills`` over
-    ``build_skills_runtime``) and — like a real agent's — it is a construction-time
-    snapshot. That makes it the observable effect of a runtime reload: a skill toggled
-    off is absent from every agent built afterwards, while an agent that was never
-    rebuilt keeps its old catalog.
-    """
-
-    def __init__(self, config):
-        super().__init__()
-        resolved = resolve_skills(config, build_skills_runtime(config))
-        self.catalog = frozenset(skill.name for skill in resolved.skills)
-
-
-def skill_catalog_factory(agents):
-    """A ``create_agent``-shaped factory handing out ``SkillCatalogAgent``s and filing
-    each one under its profile id in ``agents``, so a test reads the catalog the
-    profile's newest agent was built with: ``agents["work"][-1].catalog``."""
-
-    def factory(config, **kwargs):
-        agent = SkillCatalogAgent(config)
-        agents.setdefault(config.data_dir.name, []).append(agent)
-        return agent
+        return ModelNamingAgent(config, unusable)
 
     return factory
 
 
 def failing_agent_factory(fail_for):
-    """A ``create_agent``-shaped factory that raises for any profile whose id is in the
-    (mutable) ``fail_for`` collection. Building the agent is what boots a runtime, so
-    this is a genuine boot failure — no test has to replace ``ProfileManager._boot``."""
+    """Raise while building an Agent for any Profile named in ``fail_for``."""
 
     def factory(config, **kwargs):
         pid = config.data_dir.name
@@ -266,3 +247,88 @@ def fake_summary_factory(summary="Fake summary.", name="Fake Task", description=
         return FakeStructuredAgent(_canned(summary=summary, name=name, description=description))
 
     return factory
+
+
+class ScriptedModels:
+    """Real TestModel clients recording requests and executing a supplied response script."""
+
+    def __init__(self, script=None, before_call=None):
+        self.script = script or (lambda config, model: ["done"])
+        self.before_call = before_call
+        self.requests = []
+
+    def __call__(self, config, model=None):
+        return _RecordingModel(self, config.model_copy(deep=True), model)
+
+
+class _RecordingModel(TestConfig):
+    def __init__(self, models, config, model):
+        self.models, self.config, self.selected_model = models, config, model
+        super().__init__()
+
+    def create(self):
+        return _RecordingClient(self.models, self.config, self.selected_model)
+
+
+class _RecordingClient(TestClient):
+    def __init__(self, models, config, model):
+        self.models, self.config, self.selected_model = models, config, model
+        super().__init__(*models.script(config, model), raise_tool_errors=False)
+
+    async def __call__(self, messages, context, **kwargs):
+        schemas = tuple(kwargs.get("tools", ()))
+        kwargs["tools"] = schemas
+        self.models.requests.append(
+            (self.config, tuple(context.prompt), schemas, tuple(messages), self.selected_model)
+        )
+        if self.models.before_call is not None:
+            await self.models.before_call(messages, context)
+        return await super().__call__(messages, context, **kwargs)
+
+
+class SignallingSqliteStore(SqliteKnowledgeStore):
+    """A real SQLite store signalling when a designated write starts."""
+
+    def __init__(self, path):
+        super().__init__(path)
+        self.entered = asyncio.Event()
+        self.reading = asyncio.Event()
+
+    async def write(self, path, content):
+        if content == "blocked":
+            self.entered.set()
+        await super().write(path, content)
+
+    async def list_versions_under(self, path):
+        self.reading.set()
+        return await super().list_versions_under(path)
+
+
+class StatefulEnvironment:
+    """An environment factory double whose executions expose retained sandbox state."""
+
+    workdir = PurePosixPath("/workspace")
+    host_workdir = None
+    supported_languages = ("python",)
+
+    def __init__(self, **kwargs):
+        self.settings = kwargs
+        self.value = 0
+        self.closed = False
+
+    @asynccontextmanager
+    async def open(self, context=None):
+        if self.closed:
+            raise RuntimeError("Environment disposed")
+        yield self
+
+    async def exec(self, argv, **kwargs):
+        if self.closed:
+            raise RuntimeError("Environment disposed")
+        self.value += 1
+        return ExecResult(output=str(self.value), exit_code=0)
+
+    async def aclose(self):
+        if self.closed:
+            raise RuntimeError("Environment disposed twice")
+        self.closed = True

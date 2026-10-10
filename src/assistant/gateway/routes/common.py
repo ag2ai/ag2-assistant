@@ -11,18 +11,11 @@ from assistant.gateway.profile_manager import ProfileManager, ProfileRuntime
 from assistant.hitl import DurableAsker, GatewayAsker, NullAsker
 
 
-async def reload_all(manager: ProfileManager) -> None:
-    """Reference-swap reload of every running runtime, so all profiles' agents pick
-    up an install-wide change on their next turn.
-
-    Anything that alters what a turn resolves — a saved key, a new active LLM
-    config, a Google or ChatGPT sign-in — has to run this: a runtime holds its
-    agent built from the config it booted with. Failures are suppressed per
-    runtime because one wedged profile must not block the rest from reloading.
-    """
+async def refresh_all(manager: ProfileManager) -> None:
+    """Refresh configuration consumers and retire resources after an install-wide change."""
     for runtime in list(manager.runtimes()):
         with contextlib.suppress(Exception):
-            await manager.reload(runtime.pid)
+            await manager.refresh(runtime.pid)
 
 
 async def scope_task_id(runtime: ProfileRuntime, chat_id: str) -> str:

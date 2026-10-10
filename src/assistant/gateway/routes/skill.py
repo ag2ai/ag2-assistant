@@ -1,16 +1,4 @@
-"""Skills: the install-wide Enable/Disable surface (ADR 0016) and the
-registry/git/upload install flows (ADR 0017), plus their per-profile mirrors.
-
-Both surfaces live here because they are one domain seen from two scopes, and
-every helper below is shared by both — only the TARGET differs. An
-``/api/skills*`` route installs into the Global layer and fans a reload out to
-every profile; the mirrored ``/api/p/{pid}/skills*`` route installs into that
-profile's own dir and reloads it alone. The helpers are module-level rather than
-closures because the two routers are two factories.
-
-Pairs with gateway/schemas/skill.py (the response models) and
-web/src/schemas/skill.ts (their zod twins) — same file name in all three trees.
-"""
+"""Skill discovery, availability and installation at shared and Profile scopes."""
 
 import asyncio
 import os
@@ -26,7 +14,6 @@ from pydantic import BaseModel
 from assistant.a2ui_skill import a2ui_skill_descriptor
 from assistant.agent import build_skills_runtime, bundled_skills_dir
 from assistant.gateway.profile_manager import ProfileRuntime
-from assistant.gateway.routes.common import reload_all
 from assistant.gateway.routes.deps import GatewayDeps
 from assistant.gateway.schemas import (
     ProfileSkillInstalledResponse,
@@ -204,9 +191,7 @@ async def _save_upload(upload: UploadFile, tmp_dir: Path) -> Path:
 
 
 async def _install_from_req(runtime, req: SkillInstallRequest, client: SkillsClient | None) -> dict:
-    """Install into ``runtime``'s layer from a registry id (t04) or a git source
-    (t05). Raises one of ``_SKILL_INSTALL_ERRORS``. Shared by both surfaces — only
-    the target runtime and the reload differ."""
+    """Install into the runtime's layer from a registry id or a git source."""
     if req.install_id:
         return {"installed": [await registry_install(runtime, req.install_id, client=client)]}
     if req.git_url:
@@ -269,24 +254,16 @@ def build_router(d: GatewayDeps, *, skills_client: SkillsClient | None = None) -
 
     @r.post("/api/skills/{name}/state", response_model=SkillMutatedResponse)
     async def set_skill_state(name: str, req: SkillStateRequest):
-        """Enable/Disable a Bundled or Global skill install-wide. Fans out a reload
-        to every live runtime so the catalog changes everywhere at once — an
-        in-flight turn finishes on the old catalog, the next turn sees the change.
-        404 for a name that is not an install-wide skill."""
+        """Enable or disable a shared Skill for future Turns in every Profile."""
         known = {s["name"] for s in _installwide_skills(d)}
         if name not in known:
             return JSONResponse({"error": f"unknown skill: {name}"}, status_code=404)
         _skill_store(d).set_enabled(name, req.enabled)
-        await reload_all(d.manager)  # install-wide change → every profile's agent rebuilds
         return {"ok": True, **_skills_snapshot(d)}
 
     @r.delete("/api/skills/{name}", response_model=SkillMutatedResponse)
     async def delete_skill(name: str):
-        """Delete a **Global** skill from disk install-wide, then cascade-purge its
-        state (install-wide Disable + every profile's Suppression) so a later same-named
-        re-install resolves default-on everywhere — no ghost. Fans out a reload to all
-        live runtimes. A **Bundled** skill is first-party/read-only → 409 (not deletable);
-        an unknown name → 404. Mirrors DELETE /api/folders/{id}'s grant cascade."""
+        """Delete a Global Skill and purge its availability records across Profiles."""
         config = d.manager.config
         store = _skill_store(d)
         runtime = build_skills_runtime(config)
@@ -305,13 +282,12 @@ def build_router(d: GatewayDeps, *, skills_client: SkillsClient | None = None) -
             return JSONResponse({"error": str(exc)}, status_code=404)
         runtime.invalidate()
         store.purge(name)  # drop Disable + every shared Suppression of this name
-        await reload_all(d.manager)
         return {"ok": True, **_skills_snapshot(d)}
 
     # ---- Installing skills from Settings (registry / git / upload — ADR 0017) ----
     # The target is the SURFACE: the /api/skills* routes below install into the Global
-    # layer and fan out; the mirrored /api/p/{pid}/skills* routes install into the active
-    # profile and reload only it. Both delegate to skills_install over the right runtime.
+    # layer; the mirrored /api/p/{pid}/skills* routes install into the active
+    # profile. Both delegate to skills_install over the right runtime.
 
     @r.post("/api/skills/search", response_model=SkillSearchResultsResponse)
     async def search_skills(req: SkillSearchRequest):
@@ -342,16 +318,13 @@ def build_router(d: GatewayDeps, *, skills_client: SkillsClient | None = None) -
 
     @r.post("/api/skills/install", response_model=SkillInstalledResponse)
     async def install_skill(req: SkillInstallRequest):
-        """Install into the **Global** layer from a registry id or a git URL + names,
-        then fan out a reload so every profile sees it next turn. A name collision in the
-        target replaces the prior skill. 400 on a bad source (nothing half-installed)."""
+        """Install selected registry or git Skills into the Global layer."""
         try:
             result = await _install_from_req(
                 build_skills_runtime(d.manager.config), req, skills_client
             )
         except _SKILL_INSTALL_ERRORS as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
-        await reload_all(d.manager)
         return {"ok": True, **result, **_skills_snapshot(d)}
 
     @r.post("/api/skills/install-upload", response_model=SkillInstalledResponse)
@@ -362,7 +335,6 @@ def build_router(d: GatewayDeps, *, skills_client: SkillsClient | None = None) -
             result = await _install_upload_into(build_skills_runtime(d.manager.config), file, names)
         except _SKILL_INSTALL_ERRORS as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
-        await reload_all(d.manager)
         return {"ok": True, **result, **_skills_snapshot(d)}
 
     return r
@@ -371,12 +343,7 @@ def build_router(d: GatewayDeps, *, skills_client: SkillsClient | None = None) -
 def build_profile_router(
     d: GatewayDeps, get_runtime, *, skills_client: SkillsClient | None = None
 ) -> APIRouter:
-    """Skills scoped to the profile in the URL (Suppression of shared skills,
-    own-skill state, and installs that land in this profile only — ADR 0016).
-
-    A change here reloads ONLY this profile (``manager.reload(pid)``); the
-    install-wide toggles above fan out to all.
-    """
+    """Skills and installations scoped to the Profile in the URL."""
     r = APIRouter()
 
     @r.get("/skills", response_model=ProfileSkillListResponse)
@@ -387,52 +354,40 @@ def build_profile_router(
 
     async def _suppress(name: str, runtime, suppressed: bool) -> dict | JSONResponse:
         # Shared by the suppress/un-suppress routes: validate against the projection
-        # (built once), flip the per-profile off-record, reload only this profile.
+        # (built once), flip the per-profile off-record, change only this profile.
         if name not in {r["name"] for r in _profile_skill_rows(d, runtime)}:
             return JSONResponse({"error": f"unknown skill: {name}"}, status_code=404)
         # A Suppression of an inherited shared skill — tagged SHARED so a same-named
         # Global Delete's purge clears it (but never a Profile skill's own off-state).
         _skill_store(d).set_suppressed(name, runtime.pid, suppressed, kind=SUPPRESS_SHARED)
-        await d.manager.reload(runtime.pid)
         return {"ok": True, "skills": _profile_skill_rows(d, runtime)}
 
     @r.post("/skills/{name}/suppress", response_model=ProfileSkillMutatedResponse)
     async def suppress_skill(name: str, runtime: ProfileRuntime = Depends(get_runtime)):
-        """Suppress an inherited (Bundled/Global) skill for THIS profile only — off
-        here, untouched everywhere else. Reloads only this profile so its next turn
-        drops the skill; other profiles never rebuild. 404 for a name not visible here."""
+        """Suppress an inherited Skill for future Turns in this Profile."""
         return await _suppress(name, runtime, True)
 
     @r.delete("/skills/{name}/suppress", response_model=ProfileSkillMutatedResponse)
     async def unsuppress_skill(name: str, runtime: ProfileRuntime = Depends(get_runtime)):
-        """Clear this profile's Suppression of a shared skill — back to inherited "on".
-        Reloads only this profile. 404 for a name not visible here."""
+        """Clear this Profile's Suppression of a shared Skill."""
         return await _suppress(name, runtime, False)
 
     @r.post("/skills/{name}/state", response_model=ProfileSkillMutatedResponse)
     async def set_profile_skill_state(
         name: str, req: SkillStateRequest, runtime: ProfileRuntime = Depends(get_runtime)
     ):
-        """Enable/Disable a skill this profile OWNS, scoped to the profile — its own
-        Disable never leaves it (stored as the same per-profile off-record Suppression
-        uses). Reloads only this profile. 404 unless ``name`` is a Profile skill here
-        (a shared Bundled/Global skill is Suppressed, not Disabled, per profile)."""
+        """Enable or disable a Skill owned by this Profile."""
         row = next((r for r in _profile_skill_rows(d, runtime) if r["name"] == name), None)
         if row is None or row["origin"] != ORIGIN_PROFILE:
             return JSONResponse({"error": f"not a profile skill: {name}"}, status_code=404)
         # A Disable of THIS profile's own skill — tagged OWN so a same-named Global
         # purge leaves it intact; only this copy's Delete clears it.
         _skill_store(d).set_suppressed(name, runtime.pid, not req.enabled, kind=DISABLE_OWN)
-        await d.manager.reload(runtime.pid)
         return {"ok": True, "skills": _profile_skill_rows(d, runtime)}
 
     @r.delete("/skills/{name}", response_model=ProfileSkillMutatedResponse)
     async def delete_profile_skill(name: str, runtime: ProfileRuntime = Depends(get_runtime)):
-        """Delete one of THIS profile's own Profile skills from disk — removed for this
-        profile only; other profiles never rebuild. Clears this profile's off-record for
-        the name so a same-named re-install here is default-on. 404 for an unknown name;
-        409 for a shared Bundled/Global skill (delete a Global skill from Application →
-        Skills, which cascades; Bundled is never deletable)."""
+        """Delete a Profile-owned Skill and clear its own availability record."""
         row = next((r for r in _profile_skill_rows(d, runtime) if r["name"] == name), None)
         if row is None:
             return JSONResponse({"error": f"unknown skill: {name}"}, status_code=404)
@@ -452,28 +407,24 @@ def build_profile_router(
         # keeps a shadowed Global skill suppressed after the copy is gone — and this
         # never touches the Global skill's install-wide/other-profile state.
         _skill_store(d).set_suppressed(name, runtime.pid, False, kind=DISABLE_OWN)
-        await d.manager.reload(runtime.pid)
         return {"ok": True, "skills": _profile_skill_rows(d, runtime)}
 
     # ---- Install into THIS profile (registry / git / upload — ADR 0017) ----
     # Same delegation as the Global /api/skills* install routes, but the target is the
     # profile's own skills dir (build_skills_runtime over runtime.require_config()) and only this
-    # profile reloads. Registry search is target-agnostic → done via GLOBAL /api/skills/search.
+    # profile changes. Registry search is target-agnostic → done via GLOBAL /api/skills/search.
 
     @r.post("/skills/install", response_model=ProfileSkillInstalledResponse)
     async def install_profile_skill(
         req: SkillInstallRequest, runtime: ProfileRuntime = Depends(get_runtime)
     ):
-        """Install into THIS profile from a registry id or a git URL + names; reloads
-        only this profile. Collision in the profile's dir replaces the prior skill. Same
-        body as the Global route (``_install_from_req``) — only the target + reload differ."""
+        """Install selected registry or git Skills into this Profile."""
         try:
             result = await _install_from_req(
                 build_skills_runtime(runtime.require_config()), req, skills_client
             )
         except _SKILL_INSTALL_ERRORS as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
-        await d.manager.reload(runtime.pid)
         return {"ok": True, **result, "skills": _profile_skill_rows(d, runtime)}
 
     @r.post("/skills/discover", response_model=SkillDiscoveredResponse)
@@ -508,7 +459,6 @@ def build_profile_router(
             )
         except _SKILL_INSTALL_ERRORS as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
-        await d.manager.reload(runtime.pid)
         return {"ok": True, **result, "skills": _profile_skill_rows(d, runtime)}
 
     return r

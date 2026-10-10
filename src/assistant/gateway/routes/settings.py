@@ -1,14 +1,4 @@
-"""Per-profile settings: the panel behind the gear, the health roll-up behind the
-status dot, the MCP server list and the voice picker.
-
-Pairs with gateway/schemas/settings.py and web/src/schemas/settings.ts.
-
-Everything here writes ``config.yaml`` through ``assistant/settings.py`` and then
-reloads THIS profile only — a settings change is per-profile by definition, so
-none of these routes fans a reload out the way an install-wide write does.
-``/settings/live-override`` is the exception that reloads nothing: the voice
-session reads its config fresh at connect, so the change lands on the next call.
-"""
+"""Per-Profile settings, health checks, MCP servers and voice selection."""
 
 from collections.abc import Callable
 from pathlib import Path
@@ -405,7 +395,7 @@ def build_profile_router(
             server = settings.upsert_mcp_server(req.model_dump())
         except ValueError as exc:
             return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
-        await d.manager.reload(runtime.pid)
+        await d.manager.refresh(runtime.pid)
         return {"ok": True, "server": server, "mcp_servers": settings.list_mcp_servers()}
 
     @r.delete(
@@ -417,7 +407,7 @@ def build_profile_router(
         settings = runtime_settings(runtime)
         if not settings.delete_mcp_server(name):
             return Response(status_code=404)
-        await d.manager.reload(runtime.pid)
+        await d.manager.refresh(runtime.pid)
         return {"ok": True, "mcp_servers": settings.list_mcp_servers()}
 
     @r.post("/settings/mcp/{name}/health", response_model=McpHealthResponse)
@@ -439,12 +429,10 @@ def build_profile_router(
 
     @r.post("/settings/focuses", response_model=FocusesSavedResponse)
     async def set_focuses(req: FocusesRequest, runtime: ProfileRuntime = Depends(get_runtime)):
-        """Persist this profile's focus areas (a persona attribute injected into the
-        agent's context), then reload so the reference-swapped agent picks up the new
-        context line on its next turn."""
+        """Persist this Profile's focus areas for future Turns."""
         settings = runtime_settings(runtime)
         focuses = settings.set_focuses(req.focuses)
-        await d.manager.reload(runtime.pid)  # context change → next turn gets the line
+        await d.manager.refresh(runtime.pid)  # context change → next turn gets the line
         return {"ok": True, "focuses": focuses}
 
     @r.post("/settings/llm-override", response_model=LlmOverrideSavedResponse)
@@ -460,7 +448,7 @@ def build_profile_router(
         if cid and d.llm_store.get_config(cid) is None:
             return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
         settings.set_llm_override(cid)
-        await d.manager.reload(runtime.pid)  # next turn's agent is built from the new model
+        await d.manager.refresh(runtime.pid)
         return {"ok": True, "llm_override": cid or None}
 
     @r.post("/settings/live-override", response_model=LiveOverrideSavedResponse)
@@ -482,9 +470,9 @@ def build_profile_router(
     async def set_reply_timeout(
         req: ReplyTimeoutRequest, runtime: ProfileRuntime = Depends(get_runtime)
     ):
-        """Persist this profile's chat-turn timeout and reload its runtime."""
+        """Persist this Profile's chat-turn timeout and refresh configuration consumers."""
         timeout = runtime_settings(runtime).set_reply_timeout(req.reply_timeout_s)
-        await d.manager.reload(runtime.pid)
+        await d.manager.refresh(runtime.pid)
         return {"ok": True, "reply_timeout_s": timeout}
 
     @r.post("/settings/voice_provider", response_model=Ok)

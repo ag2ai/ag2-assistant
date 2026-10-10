@@ -5,6 +5,7 @@ import json
 from contextlib import AsyncExitStack
 
 import pytest
+from ag2.a2ui.middleware import A2UIExtractionMiddleware, A2UIValidationMiddleware
 from ag2.exceptions import SkillNotFoundError
 from ag2.tools.skills import SkillsToolkit
 from ag2.utils import CONTEXT_OPTION_NAME
@@ -98,7 +99,11 @@ def _profile(paths, name: str) -> Config:
 def _turn_middleware(agent) -> tuple:
     """What the agent's last turn was built to run over the model's answer — the only
     place a rich view is parsed, validated or recovered."""
-    return agent.middleware[-1]
+    return tuple(
+        m
+        for m in agent.middleware[-1]
+        if isinstance(m, (A2UIExtractionMiddleware, A2UIValidationMiddleware))
+    )
 
 
 # --- the resident line -------------------------------------------------------

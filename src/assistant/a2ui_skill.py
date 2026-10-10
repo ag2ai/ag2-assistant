@@ -13,7 +13,7 @@ from ag2.context import ConversationContext
 from ag2.tools.skills import MemoryRuntime, MemorySkill
 from ag2.tools.skills.skill_types import Resource, Script, Skill, SkillMetadata
 
-from assistant.a2ui import CATALOG_ID, CardCatalog
+from assistant.a2ui import CATALOG_ID, CardCatalog, HeldCardCatalog
 from assistant.cards import Card, expand_card_messages
 from assistant.config import Config
 from assistant.skills import SkillStateStore
@@ -173,7 +173,7 @@ class _A2UISkill(MemorySkill):
     """The A2UI Skill over one profile's ``CardCatalog``: the body, one detail Resource
     and one drawing Script per Card available right now, all listed per read."""
 
-    def __init__(self, catalog: CardCatalog) -> None:
+    def __init__(self, catalog: CardCatalog | HeldCardCatalog) -> None:
         super().__init__(
             name=A2UI_SKILL,
             description=A2UI_SKILL_DESCRIPTION,
@@ -203,7 +203,7 @@ class A2UISkillRuntime(MemoryRuntime):
     """The runtime owning the A2UI Skill: a Card's detail and its drawing script come
     from the catalog, so a Card that is Disabled or Suppressed has neither."""
 
-    def __init__(self, catalog: CardCatalog) -> None:
+    def __init__(self, catalog: CardCatalog | HeldCardCatalog) -> None:
         super().__init__(_A2UISkill(catalog))
         self._catalog = catalog
 

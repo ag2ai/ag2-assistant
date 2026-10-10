@@ -9,6 +9,9 @@ one — and the A2UI protocol at large becomes a resource, `reference/protocol.m
 Amends ADR 0038: the catalog entry no longer "never changes". Amended by ADR 0040: a Card is
 drawn by a Skill script.
 
+ADR 0041 amends the refresh boundary: capability changes reach the next Turn rather
+than waiting for a profile reload. Implementation is tracked in Issue #121.
+
 ## Context
 
 Live, with the Skill enabled and in the prompt, three models (GPT-5.4 Mini, GPT-5.6 Terra,

@@ -77,12 +77,13 @@ class RecordingAsker:
 
 
 @pytest.fixture
-def fake_gateway(paths):
+async def fake_gateway(paths):
     """A Gateway whose agent is a deterministic fake (no LLM, no persistence)."""
 
     gw = _gateway(paths, persist=False)
-    gw._agent = FakeAgent()
-    return gw
+    await gw.start()
+    yield gw
+    await gw.close()
 
 
 async def test_send_message_returns_reply(fake_gateway):
@@ -486,7 +487,7 @@ def test_mcp_settings_endpoints(profile_app):
     assert client.delete(api(pid, "/settings/mcp/local")).status_code == 404
 
 
-def test_focuses_endpoint_saves_appears_in_settings_and_reloads(paths):
+def test_focuses_endpoint_saves_appears_in_settings_without_rebuilding(paths):
     """POST settings/focuses persists the (normalised) focuses, surfaces them in GET
     settings, and reference-swap reloads the runtime so the context line takes effect."""
 
@@ -509,7 +510,6 @@ def test_focuses_endpoint_saves_appears_in_settings_and_reloads(paths):
         )
         assert resp.status_code == 200
         assert resp.json() == {"ok": True, "focuses": ["coding", "research"]}
-        assert [cfg.data_dir.name for cfg in built] == [pid]  # context change → reloaded
 
         assert client.get(api(pid, "/settings")).json()["focuses"] == ["coding", "research"]
 
@@ -520,7 +520,7 @@ def test_focuses_endpoint_saves_appears_in_settings_and_reloads(paths):
         assert client.get(api(pid, "/settings")).json()["focuses"] == []
 
 
-def test_reply_timeout_endpoint_saves_appears_in_settings_and_reloads(paths):
+def test_reply_timeout_endpoint_saves_appears_in_settings_without_rebuilding(paths):
 
     registry = ProfileRegistry(paths)
     meta = registry.create_profile("Work", "#109e91")
@@ -535,7 +535,6 @@ def test_reply_timeout_endpoint_saves_appears_in_settings_and_reloads(paths):
         built.clear()
         response = client.post(api(pid, "/settings/reply-timeout"), json={"reply_timeout_s": 480})
         assert response.json() == {"ok": True, "reply_timeout_s": 480.0}
-        assert [cfg.data_dir.name for cfg in built] == [pid]
         assert client.get(api(pid, "/settings")).json()["reply_timeout_s"] == 480.0
 
         assert (
@@ -746,6 +745,9 @@ def test_stream_cancel_stops_the_turn(paths):
 
         async def ask(self, *a, stream=None, **k):
             try:
+                await ConversationContext(stream=stream).send(
+                    ModelResponse(message=ModelMessage(content="Working"))
+                )
                 await asyncio.Event().wait()  # runs until someone stops it
             except asyncio.CancelledError:
                 self.cancelled = True
@@ -758,6 +760,8 @@ def test_stream_cancel_stops_the_turn(paths):
             while ws.receive_json().get("type") != "ready":
                 pass
             ws.send_json({"text": "something long"})
+            while not ws.receive_json().get("event", {}).get("type", "").endswith("ModelResponse"):
+                pass
             ws.send_json({"type": "cancel"})
             saw_cancelled = False
             for _ in range(8):
@@ -770,7 +774,7 @@ def test_stream_cancel_stops_the_turn(paths):
             assert agent.cancelled  # the cancel reached the turn itself, not just the socket
 
 
-async def test_feed_message_steers_the_running_turn(fake_gateway):
+async def test_feed_message_steers_the_running_turn(paths):
     """A message sent while a turn runs is enqueued onto that run (AG2 drains it before
     the turn's next model call) instead of starting a second turn."""
     started = asyncio.Event()
@@ -789,7 +793,8 @@ async def test_feed_message_steers_the_running_turn(fake_gateway):
             return FakeReply("done")
 
     agent = _SteerableAgent()
-    fake_gateway._agent = agent
+    fake_gateway = _gateway(paths, agent=agent, persist=False)
+    await fake_gateway.start()
 
     turn = asyncio.ensure_future(fake_gateway.send_message("research widgets", chat_id="s1"))
     await asyncio.wait_for(started.wait(), timeout=1)
@@ -805,7 +810,7 @@ async def test_feed_message_steers_the_running_turn(fake_gateway):
     assert agent.turns == 1  # steered the turn in flight; no second one was started
 
 
-async def test_is_running_tells_a_turn_in_flight_from_an_idle_chat(fake_gateway):
+async def test_is_running_tells_a_turn_in_flight_from_an_idle_chat(paths):
     """What a channel asks before showing a placeholder a fed message would not fill."""
     started = asyncio.Event()
 
@@ -821,7 +826,8 @@ async def test_is_running_tells_a_turn_in_flight_from_an_idle_chat(fake_gateway)
             return FakeReply("done")
 
     agent = _SlowAgent()
-    fake_gateway._agent = agent
+    fake_gateway = _gateway(paths, agent=agent, persist=False)
+    await fake_gateway.start()
     assert fake_gateway.is_running("s3") is False
 
     turn = asyncio.ensure_future(fake_gateway.send_message("go", chat_id="s3"))
@@ -840,7 +846,7 @@ async def test_feed_message_is_false_when_nothing_is_running(fake_gateway):
     assert not stream.pending_messages  # nothing left stranded in the inbox
 
 
-async def test_cancelled_turn_keeps_what_it_produced(fake_gateway):
+async def test_cancelled_turn_keeps_what_it_produced(paths):
     """Stopping a turn keeps the events it already put on the stream, and marks the stop."""
 
     started = asyncio.Event()
@@ -856,7 +862,8 @@ async def test_cancelled_turn_keeps_what_it_produced(fake_gateway):
             started.set()
             await asyncio.Event().wait()
 
-    fake_gateway._agent = _WorkingAgent()
+    fake_gateway = _gateway(paths, agent=_WorkingAgent(), persist=False)
+    await fake_gateway.start()
 
     turn = asyncio.ensure_future(fake_gateway.send_message("do it", chat_id="s2"))
     await asyncio.wait_for(started.wait(), timeout=1)
@@ -1524,39 +1531,6 @@ def test_llm_config_secret_reference_flow(profile_app):
     )
     client.delete(f"/api/llm-configs/{cid}")
     assert client.get("/api/secrets").json()["secrets"][0]["id"] == sid2
-
-
-# ---- ACP model-session teardown on reload/close ---------------------------------
-
-
-class _FakeAcpConfig:
-    def __init__(self):
-        self.closed = 0
-
-    async def aclose(self):
-        self.closed += 1
-
-
-class _FakeAgentWithConfig:
-    def __init__(self, config):
-        self.config = config
-
-
-async def test_reload_closes_acp_sessions(fake_gateway):
-    cfg = _FakeAcpConfig()
-    fake_gateway._agent = _FakeAgentWithConfig(cfg)
-    fake_gateway._model_agents["c_x"] = _FakeAgentWithConfig(cfg)
-    await fake_gateway.reload()
-    # Both cached agents shared one config; aclose is idempotent so >=1 is the
-    # contract (dedup by id() keeps it at exactly 1).
-    assert cfg.closed == 1
-
-
-async def test_close_closes_acp_sessions(fake_gateway):
-    cfg = _FakeAcpConfig()
-    fake_gateway._agent = _FakeAgentWithConfig(cfg)
-    await fake_gateway.close()
-    assert cfg.closed == 1
 
 
 def test_llm_configs_expose_provider_builtin_tools(profile_app):

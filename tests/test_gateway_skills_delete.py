@@ -10,8 +10,8 @@ from fastapi.testclient import TestClient
 
 from assistant.gateway.app import create_app
 from assistant.skills import SkillStateStore
-from tests.support.apps import api, make_manager, make_profile_app
-from tests.support.fakes import skill_catalog_factory
+from tests.support.apps import api, make_manager, make_profile_app, turn_catalog
+from tests.support.fakes import ScriptedModels
 
 
 def _client(paths):
@@ -79,31 +79,28 @@ def test_delete_global_cascade_purges_suppressions(paths):
 
 
 def test_delete_global_fans_out(paths):
-    """A Global delete rebuilds every runtime's agent, so the skill leaves every
-    profile's catalog — not just the projection on disk."""
-    agents: dict[str, list] = {}
-    manager = make_manager(paths, agent_factory=skill_catalog_factory(agents))
+    """Future Turns observe availability changes in their resolved Profile scope."""
+    models = ScriptedModels()
+    manager = make_manager(paths, model_factory=models)
     app = create_app(manager)
     with TestClient(app) as client:
         _write_skill(paths.skills_dir, "fan-skill")  # before boot, so both agents see it
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
         for pid in ("work", "personal"):
-            assert "fan-skill" in agents[pid][-1].catalog
+            assert "fan-skill" in turn_catalog(client, models, pid)
 
         r = client.delete("/api/skills/fan-skill")
         assert r.json()["ok"]
         for pid in ("work", "personal"):
-            assert "fan-skill" not in agents[pid][-1].catalog
-            assert "web-research" in agents[pid][-1].catalog  # only the deleted one goes
+            assert "fan-skill" not in turn_catalog(client, models, pid)
+            assert "web-research" in turn_catalog(client, models, pid)  # only the deleted one goes
 
 
 def test_delete_profile_skill_affects_only_active_profile(paths):
-    """A Profile skill is deleted for the active profile only; the change reloads just
-    that profile — Personal's agent is never rebuilt. A shared skill can't be deleted
-    from the profile tab (409)."""
-    agents: dict[str, list] = {}
-    manager = make_manager(paths, persist=True, agent_factory=skill_catalog_factory(agents))
+    """Future Turns observe availability changes in their resolved Profile scope."""
+    models = ScriptedModels()
+    manager = make_manager(paths, persist=True, model_factory=models)
     app = create_app(manager)
     with TestClient(app) as client:
         # Placed before boot (the profile dir is derived from the id), so Work's agent
@@ -111,14 +108,15 @@ def test_delete_profile_skill_affects_only_active_profile(paths):
         _write_skill(paths.profile_dir("work") / "skills", "work-only", "work's own skill")
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
-        assert "work-only" in agents["work"][-1].catalog
-        assert "work-only" not in agents["personal"][-1].catalog  # profile-owned, not shared
+        assert "work-only" in turn_catalog(client, models, "work")
+        assert "work-only" not in turn_catalog(
+            client, models, "personal"
+        )  # profile-owned, not shared
 
         r = client.delete(api("work", "/skills/work-only"))
         assert r.status_code == 200
         assert "work-only" not in {s["name"] for s in r.json()["skills"]}
-        assert "work-only" not in agents["work"][-1].catalog  # rebuilt without it
-        assert len(agents["personal"]) == 1  # only the active profile reloaded
+        assert "work-only" not in turn_catalog(client, models, "work")  # rebuilt without it
 
         # A shared Bundled skill isn't this profile's own → 409 from the profile tab.
         assert client.delete(api("work", "/skills/web-research")).status_code == 409
