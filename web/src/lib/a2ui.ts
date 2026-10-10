@@ -276,9 +276,9 @@ export function sparkPath(values: unknown, w: number, h: number, pad = 3): A2UIS
 
 export type A2UIMetric = { value: string; unit: string; delta: string; arrow: string }
 
-// Numbers a Metric prints: grouped, two decimals, so a column of them lines up.
+// Metric numbers are grouped with up to two decimals, without trailing zeros.
 const decimal = (n: number) =>
-  n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  n.toLocaleString('en-US', { maximumFractionDigits: 2 })
 
 const signed = (n: number) => `${n > 0 ? '+' : ''}${decimal(n)}`
 

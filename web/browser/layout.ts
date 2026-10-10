@@ -144,4 +144,18 @@ for (const frameWidth of [264, 620]) {
     }
   }
 }
-Object.assign(window, { layoutResults: [...results, ...sizing, ...calendars] })
+const metrics: Result[] = []
+for (const [value, expected] of [[17, '17'], [0, '0'], [1234, '1,234'], [17.5, '17.5']] as const) {
+  const target = document.createElement('section')
+  target.className = 'fixture'; target.style.width = '280px'; fixtures.append(target)
+  const component: A2UIComponent = {
+    id: 'metric', component: 'Metric', value: { path: '/days' }, unit: 'дней', delta: 2,
+  }
+  mount(BasicA2UIComponent, { target, props: { component, components: [component], data: { days: value } } })
+  await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+  const failures: string[] = []
+  if (target.querySelector('.a2ui-metric-value')?.textContent !== `${expected}дней`) failures.push('Metric value or unit is incorrect')
+  if (target.querySelector('.a2ui-metric-delta')?.textContent !== '▲+2') failures.push('Metric change has fractional padding')
+  metrics.push({ name: `metric/${value}`, failures, scrollWidth: target.scrollWidth, clientWidth: target.clientWidth })
+}
+Object.assign(window, { layoutResults: [...results, ...sizing, ...calendars, ...metrics] })
