@@ -28,10 +28,10 @@ for fixed ordered axes, and `minItems`/`maxItems` for their lengths. An untyped 
 allows drawing arguments to change the structure. Supply statuses as enums and map their
 symbols and tones in the layout. The example must follow the same shape as real data.
 
-`width: content` fits a Card, Column, Row, Grid, List or Table to its contents;
+`width: content` fits a Card, Column, Row, Grid, List, Table or CalendarHeatmap to its contents;
 `width: fill` fills its available container. Omit it to keep the existing sizing.
 Content sizing takes precedence over `grow`; all boxes stay bounded by their container.
-For a compact calendar use a content-sized Card and Table. To fill a Card with a table,
+For a compact activity calendar use a content-sized Card and CalendarHeatmap. To fill a Card with a table,
 set the Table's width to fill. Keep useful frame padding around the contents.
 For equal halves use `Grid` with `columns: 2`, rather than two growing Rows/Columns:
 grow distributes leftover room and does not equalize their existing content widths.
@@ -61,6 +61,7 @@ draw it twice.
 |---|---|
 | `Text` | `text`, `variant`, `emphasis`, `tone`, `format`, `map`. Text that resolves to nothing draws nothing. |
 | `Metric` | A number and the movement behind it: `value`, `unit`, `label`, `delta` (absolute), `deltaPercent`, `size`, `align`, `tone`. It signs, groups and arrows the movement itself. |
+| `CalendarHeatmap` | `startDate`, `endDate`, `days`, `cellSize`, `weekStartsOn`, `showLegend`, `locale`, `width`. Compact activity squares arranged by week and weekday; retained values render without source execution. Read `heatmap.md` for the dated entry contract. |
 | `Sparkline` | `values` — a normalised 0–100 series — plus `size` and `tone`. Fewer than two points keep the column at `sm`/`md` and draw nothing at `lg`. |
 | `Link` | Its `child`, opening one of the app's own things or an external page. Exactly one target, and the first it names wins: `task`, `chat`, `file`, `folder` — or `url`, for a page on the web (http(s) only). A `task` or `chat` the app no longer lists, and a `url` on a scheme we will not follow, are drawn as the plain text the Link wraps; a path is taken as given. A target a row may not carry needs a `when` beside it, or every row draws the link's text. |
 | `Figure` | The picture a Card leads with: `url`, `description`, `caption` and a `size`. Cropped to fill its own box with the credit stamped in the corner — at `lg` it stretches to the row it is in, at `sm` and `md` it holds a thumbnail's box. No `url` is no figure. |

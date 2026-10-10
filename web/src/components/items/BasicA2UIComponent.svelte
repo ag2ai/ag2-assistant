@@ -4,6 +4,7 @@
   import A2UILink from './A2UILink.svelte'
   import BasicA2UIComponent from './BasicA2UIComponent.svelte'
   import WeatherBanner from './WeatherBanner.svelte'
+  import CalendarHeatmap from './CalendarHeatmap.svelte'
   import { a2uiIconName, a2uiPresent, a2uiText, a2uiTone, a2uiValue, actionContext, axisScopes, bindingPath, childSlots, diffLines, markedColumn, metricParts, rows, sparkPath, str, templateStart } from '../../lib/a2ui.ts'
   import type { A2UIAction, A2UIComponent, A2UIData, A2UIOption } from '../../lib/a2ui.ts'
   import { tableColumn, tableRowVariant } from '../../lib/table.ts'
@@ -243,13 +244,17 @@
       <circle cx={spark.endX} cy={spark.endY} r={sparkBox.dot} class="end" />
     </svg>
   {/if}
+{:else if type === 'calendarheatmap'}
+  <div class="a2ui-calendar-frame" data-a2ui-id={component.id} data-a2ui-scope={scope} data-a2ui-type={component.component} style:width={width} style:flex-grow={layoutGrow}>
+    <CalendarHeatmap {component} {data} {scope} />
+  </div>
 {:else if type === 'table'}
   <!-- Nothing to compare against is no table at all; the grid scrolls inside its own
        frame rather than widening the Card it is in. -->
   {@const head = child(component.header)}
   {@const body = child(component.cell)}
   {#if tableColumns.length}
-  <div data-a2ui-id={component.id} data-a2ui-scope={scope} data-a2ui-type={component.component} class="a2ui-tablewrap" style:width={width} style:flex-grow={layoutGrow}>
+  <div data-a2ui-id={component.id} data-a2ui-scope={scope} data-a2ui-type={component.component} class="a2ui-tablewrap" data-a2ui-scroll-region={component.id} style:width={width} style:flex-grow={layoutGrow}>
     <div class="a2ui-table" class:a2ui-table-data={component.variant === 'data'} class:a2ui-table-compact={component.density === 'compact'} style:grid-template-columns={tableGrid} role="table">
       {#if head}
         <div class="a2ui-tr" role="row">

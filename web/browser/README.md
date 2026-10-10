@@ -4,6 +4,9 @@ The fixtures mount the real Svelte renderer and theme CSS. They check narrow and
 tables in 280px and 620px frames, all four cross-axis alignments, and nested Columns,
 Rows, Cards and Lists. Wide tables must scroll to their last column without overflowing
 any ancestor. Short tables must fit without scrolling and share a Row when space allows.
+Sizing fixtures check equal Grid tracks and content/fill modes. Calendar fixtures cover
+compact monthly and scrollable annual ranges, three square sizes, English/Russian labels,
+accessible tooltips and distinct unknown/analysis/activity states.
 
 Start Vite with `npm --prefix web run dev -- --host 127.0.0.1 --port 5186`, then launch
 a **dedicated** Chrome with `--remote-debugging-port=9360` and a temporary

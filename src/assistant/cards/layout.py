@@ -1,5 +1,6 @@
 """Validation schemas for the primitives and styling words drawn by the renderer."""
 
+from datetime import date
 from typing import Any
 
 from jsonschema import Draft202012Validator
@@ -30,6 +31,17 @@ CHILDREN = {
             "additionalProperties": False,
         },
     ]
+}
+CALENDAR_DAY: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "date": {"type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}$"},
+        "count": {"type": "integer", "minimum": 0, "maximum": 1_000_000},
+        "status": {"enum": ["activity", "analysis", "pause", "missed", "unknown", "upcoming"]},
+        "label": {"type": "string", "maxLength": 500},
+    },
+    "required": ["date"],
+    "additionalProperties": False,
 }
 PROPERTIES: dict[str, dict[str, Any]] = {
     "Card": {"child": REFERENCE, "variant": {"enum": ["feature"]}},
@@ -70,6 +82,15 @@ PROPERTIES: dict[str, dict[str, Any]] = {
         "deltaPercent": NUMBER,
     },
     "Sparkline": {"values": ARRAY},
+    "CalendarHeatmap": {
+        "startDate": {"anyOf": [CALENDAR_DAY["properties"]["date"], BINDING]},
+        "endDate": {"anyOf": [CALENDAR_DAY["properties"]["date"], BINDING]},
+        "days": {"anyOf": [{"type": "array", "maxItems": 3660, "items": CALENDAR_DAY}, BINDING]},
+        "cellSize": {"enum": ["sm", "md", "lg"]},
+        "weekStartsOn": {"enum": ["monday", "sunday"]},
+        "showLegend": {"type": "boolean"},
+        "locale": TEXT,
+    },
     "Link": {
         "child": REFERENCE,
         **{key: TEXT for key in ("task", "chat", "file", "folder", "url")},
@@ -152,6 +173,7 @@ REQUIRED = {
     "Grid": ["children", "columns"],
     "List": ["children"],
     "Text": ["text"],
+    "CalendarHeatmap": ["startDate", "endDate", "days"],
     "Button": ["child", "action"],
     "Icon": ["name"],
     "Image": ["url"],
@@ -172,7 +194,7 @@ def primitive_schema(kind: str) -> dict:
         "accessibility": {"type": "object"},
         **PROPERTIES[kind],
     }
-    if kind in {"Card", "Column", "Row", "Grid", "List", "Table"}:
+    if kind in {"Card", "Column", "Row", "Grid", "List", "Table", "CalendarHeatmap"}:
         properties["width"] = {"enum": ["content", "fill"]}
     if kind == "Grid":
         properties["gap"] = {"enum": ["none", "xs", "sm", "md", "lg"]}
@@ -212,5 +234,24 @@ def validate_primitive(node: dict) -> None:
         return
     try:
         Draft202012Validator(primitive_schema(kind)).validate(node)
+        if kind == "CalendarHeatmap":
+            _calendar_dates(node)
     except ValidationError as exc:
         raise ValueError(f"layout {node['id']!r}: {exc.message}") from exc
+
+
+def _calendar_dates(node: dict) -> None:
+    """Validate literal dates and bounded ranges; bound data is checked by the renderer."""
+    start = date.fromisoformat(node["startDate"]) if isinstance(node["startDate"], str) else None
+    end = date.fromisoformat(node["endDate"]) if isinstance(node["endDate"], str) else None
+    if start is not None and end is not None and not 1 <= (end - start).days + 1 <= 366:
+        raise ValueError("Calendar range must contain 1–366 days")
+    if isinstance(node["days"], list):
+        seen = set()
+        for entry in node["days"]:
+            day = date.fromisoformat(entry["date"])
+            if (start is not None and day < start) or (end is not None and day > end):
+                continue
+            if day in seen:
+                raise ValueError(f"Duplicate calendar day: {day}; aggregate sessions by date")
+            seen.add(day)

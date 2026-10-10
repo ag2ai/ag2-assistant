@@ -92,3 +92,9 @@ in Settings → General → Visual preview for each profile. Preview uses the sa
 A2UI renderer, disables interactions and animations, and renders retained values without
 running source scripts or saving files. External resources are blocked. Read the skill's
 `preview.md` for viewport options and diagnostic limits.
+
+For compact activity calendars, Card layouts can use `CalendarHeatmap` with an inclusive
+1–366-day date range and one entry per day. Activity count changes square intensity;
+analysis, pause, missed, unknown, and upcoming days remain distinct. Missing logs are
+unknown. Large calendars scroll inside their frame. The existing card-author skill's
+`heatmap.md` explains the field contract and source-backed use; the primitive adds no tools.

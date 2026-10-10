@@ -51,6 +51,7 @@ Read card-author's layout.md for sizing. Grid with columns=2 gives equal respons
 two grow=true columns only share leftover space. width="content" fits a frame to its contents;
 width="fill" fills its container. A parent's align affects the child; inner align does not
 resize the enclosing frame. These properties also work in retained instance layouts.
+For compact activity calendars use CalendarHeatmap and read card-author's heatmap.md.
 When editing table density or column widths, read card-author's current tables.md. Keep a
 Table with explicit columnWidth bindings; independent Rows do not share aligned columns.
 Paths are relative to the Profile's Files root, including references in nested directories.

@@ -97,4 +97,51 @@ for (const frameWidth of [280, 620, 1000]) {
   if (target.scrollWidth > target.clientWidth + 1) failures.push('Grid escaped its container')
   sizing.push({ name: `sizing/${frameWidth}`, failures, scrollWidth: target.scrollWidth, clientWidth: target.clientWidth })
 }
-Object.assign(window, { layoutResults: [...results, ...sizing] })
+
+
+const calendars: Result[] = []
+for (const frameWidth of [264, 620]) {
+  for (const cellSize of ['sm', 'md', 'lg']) {
+    for (const locale of ['en', 'ru']) {
+      for (const end of ['2026-10-31', '2027-10-01']) {
+        const name = `calendar/${frameWidth}/${cellSize}/${locale}/${end}`
+        const target = document.createElement('section')
+        target.className = 'fixture'; target.style.width = `${frameWidth}px`; fixtures.append(target)
+        const nodes: A2UIComponent[] = [
+          { id: 'root', component: 'Card', width: 'content', child: 'body' },
+          { id: 'body', component: 'Column', align: 'start', children: ['calendar'] },
+          { id: 'calendar', component: 'CalendarHeatmap', startDate: '2026-10-01', endDate: end, days: { path: '/days' }, cellSize, locale },
+        ]
+        mount(BasicA2UIComponent, { target, props: { component: nodes[0], components: nodes, data: { days: [
+          { date: '2026-10-04', count: 1, label: 'One session' }, { date: '2026-10-06', count: 3 },
+          { date: '2026-10-08', status: 'analysis' }, { date: '2026-10-09', status: 'pause' },
+          { date: '2026-10-10', count: 0 }, { date: '2026-10-11', status: 'upcoming' },
+        ] } } })
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+        const failures: string[] = []
+        const card = target.querySelector<HTMLElement>('.a2ui-basic-card')!
+        const scroll = target.querySelector<HTMLElement>('.calendar-scroll')!
+        const bounds = card.getBoundingClientRect(), container = target.getBoundingClientRect()
+        if (bounds.left < container.left - 1 || bounds.right > container.right + 1) failures.push('Calendar Card escapes its container')
+        if (target.scrollWidth > target.clientWidth + 1) failures.push('Calendar leaks horizontal overflow')
+        if (end === '2026-10-31' && card.clientWidth > 250) failures.push('Monthly heatmap is not compact')
+        if ((scroll.scrollWidth > scroll.clientWidth + 1) !== (end !== '2026-10-31')) failures.push('Wrong calendar scroll behavior')
+        const cell = target.querySelector<HTMLElement>('[data-date="2026-10-06"]')!
+        if (cell.clientWidth > 18 || cell.dataset.status !== 'activity') failures.push('Activity day or square sizing is wrong')
+        if (target.querySelector('[data-date="2026-10-08"]')?.getAttribute('data-status') !== 'analysis') failures.push('Analysis became activity')
+        if (target.querySelector('[data-date="2026-10-02"]')?.getAttribute('data-status') !== 'unknown') failures.push('Missing data became missed')
+        if (target.querySelector('[data-date="2026-10-04"]')?.getAttribute('aria-label') !== 'One session') failures.push('Accessible day label was lost')
+        if (target.querySelector('[role="alert"]')) failures.push('Calendar reported a render error')
+        if (end !== '2026-10-31') {
+          scroll.scrollLeft = scroll.scrollWidth
+          if (scroll.scrollLeft < 1) failures.push('Annual calendar cannot scroll')
+          const last = target.querySelector<HTMLElement>('[data-date="2027-10-01"]')!.getBoundingClientRect()
+          if (last.right > scroll.getBoundingClientRect().right + 1) failures.push('Last day is unreachable')
+          scroll.scrollLeft = 0
+        }
+        calendars.push({ name, failures, scrollWidth: target.scrollWidth, clientWidth: target.clientWidth })
+      }
+    }
+  }
+}
+Object.assign(window, { layoutResults: [...results, ...sizing, ...calendars] })

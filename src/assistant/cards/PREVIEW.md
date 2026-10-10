@@ -27,7 +27,9 @@ layout boxes by component id and repeated-template scope, horizontal scroll, esc
 parent bounds, page overflow, browser errors, and screenshot truncation. Images capture
 up to 4096px of height. A horizontally scrollable Table is intentional; page overflow
 or a frame escaping its parent calls for a layout correction. Diagnostics include up
-to 500 boxes. Hidden elements have no box.
+to 500 boxes. Hidden elements have no box. `scroll_regions` reports the measured
+inner viewport of Table and CalendarHeatmap, so their local scroll remains visible in
+diagnostics even when their enclosing frame does not overflow.
 
 External resources are blocked and listed in `blocked_resources`. Source scripts are
 never run by preview; their retained values render as-is. Animations and interactive

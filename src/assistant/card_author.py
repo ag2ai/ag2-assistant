@@ -16,12 +16,13 @@ from assistant.cards import CardError
 from assistant.cards.layout import PROPERTIES, primitive_schema
 
 CARD_AUTHOR = "card-author"
-DESCRIPTION = "Create and refine a custom interactive Card in this Chat when the user requests a custom view or no available rich view fits. Table supports compact rows and different column widths: read the current tables.md before editing tabular views, including saved Screen instances. Save its reusable definition only on explicit request."
+DESCRIPTION = "Create and refine a custom interactive Card in this Chat when the user requests a custom view or no available rich view fits. Table supports compact rows and different column widths: read the current tables.md before editing tabular views, including saved Screen instances. Compact activity calendars use CalendarHeatmap: read heatmap.md. Save its reusable definition only on explicit request."
 INSTRUCTIONS = """Prefer a suitable available Card from rich-views before authoring a custom one.
 Read vocabulary.md and examples.md before authoring. Use the existing primitives, styling
 words, bindings and repeated templates; never add CSS, JavaScript or backend handlers.
 For sizing or equal columns read layout.md. Use width="content" for a frame fitted to its
 contents, width="fill" to fill its container, and Grid for equal responsive columns.
+For GitHub-like activity calendars read heatmap.md and use CalendarHeatmap instead of Table.
 For visual inspection load screens and read its preview.md; preview is a screens script.
 For analytics or publication tables read the current tables.md before creating or editing
 a view, even when an earlier version of the references is already in Chat history.
@@ -69,7 +70,14 @@ class _CardAuthorSkill(MemorySkill):
             super().descriptor,
             resources=tuple(
                 Resource(name=name)
-                for name in ("vocabulary.md", "examples.md", "tables.md", "layout.md", "drafts.md")
+                for name in (
+                    "vocabulary.md",
+                    "examples.md",
+                    "tables.md",
+                    "layout.md",
+                    "heatmap.md",
+                    "drafts.md",
+                )
             ),
             scripts=tuple(
                 Script(name=name)
@@ -124,6 +132,8 @@ class CardAuthorRuntime(MemoryRuntime):
             return (Path(__file__).parent / "cards" / "TABLES.md").read_text()
         if resource == "layout.md":
             return (Path(__file__).parent / "cards" / "LAYOUT.md").read_text()
+        if resource == "heatmap.md":
+            return (Path(__file__).parent / "cards" / "HEATMAP.md").read_text()
         if resource == "drafts.md" and self.drafts is not None:
             return json.dumps(await self.drafts.index(context), ensure_ascii=False)
         raise FileNotFoundError(resource)
