@@ -3,6 +3,7 @@
   import BasicA2UIComponent from './BasicA2UIComponent.svelte'
   import A2UIComposing from './A2UIComposing.svelte'
   import CardDraftSave from './CardDraftSave.svelte'
+  import CardInstanceSave from './CardInstanceSave.svelte'
   import { currentDraft } from '../../lib/cardDrafts.ts'
   import { a2uiComposingSurfaceId, str, withA2UIValue, SURFACE_TITLE } from '../../lib/a2ui.ts'
   import type { A2UIAction, A2UIData } from '../../lib/a2ui.ts'
@@ -10,8 +11,8 @@
   import { thread } from '../../store.ts'
   import type { ThreadItem } from '../../schemas/events.ts'
 
-  type Props = { item: Extract<ThreadItem, { kind: 'a2ui' }> }
-  let { item }: Props = $props()
+  type Props = { item: Extract<ThreadItem, { kind: 'a2ui' }>; passive?: boolean }
+  let { item, passive = false }: Props = $props()
   const data = $derived(item.data || {})
   const components = $derived(item.components || item.component._components || [item.component])
   const rootKind = $derived(str(item.component.component).toLowerCase())
@@ -20,10 +21,10 @@
   // A feature Card draws its own frame and heading; the generic chrome is skipped.
   const isFeature = $derived(rootKind === 'card' && str(item.component.variant) === 'feature')
   const title = $derived(item.title || SURFACE_TITLE)
-  const isComposingUpdate = $derived($thread.items.some(
+  const isComposingUpdate = $derived(!passive && $thread.items.some(
     (entry) => entry.kind === 'agent' && entry.streaming && a2uiComposingSurfaceId(entry.text) === item.surfaceId
   ))
-  const actionPending = $derived($thread.items.some(
+  const actionPending = $derived(!passive && $thread.items.some(
     (entry) => entry.kind === 'note' && entry.a2uiActionPending && entry.surfaceId === item.surfaceId
   ))
   let inputData: A2UIData = $state({})
@@ -38,6 +39,7 @@
 
   // The click carries the data model this instance holds alongside the envelope.
   function submitAction(action: A2UIAction) {
+    if (passive) return
     a2uiAction(
       {
         version: item.version || 'v1.0',
@@ -51,7 +53,7 @@
 {#if isComposingUpdate}
   <A2UIComposing />
 {:else if isFeature}
-  <BasicA2UIComponent component={item.component} {components} data={inputData} onDataChange={setInputValue} onAction={submitAction} />
+  <BasicA2UIComponent component={item.component} {components} data={inputData} {passive} onDataChange={setInputValue} onAction={submitAction} />
 {:else if hasLayout}
 <div class="a2ui">
   <div class="a2ui-head">
@@ -63,10 +65,13 @@
     <span class="a2ui-catalog" title={item.catalogId}>AG2 catalog</span>
   </div>
 
-  <BasicA2UIComponent component={item.component} {components} data={inputData} onDataChange={setInputValue} onAction={submitAction} />
+  <BasicA2UIComponent component={item.component} {components} data={inputData} {passive} onDataChange={setInputValue} onAction={submitAction} />
 </div>
 {/if}
-{#if currentDraft($thread.items, item)}
+{#if !passive && !isComposingUpdate && hasLayout}
+  <CardInstanceSave {item} localData={() => inputData} />
+{/if}
+{#if !passive && currentDraft($thread.items, item)}
   <CardDraftSave {item} />
 {/if}
 {#if actionPending}

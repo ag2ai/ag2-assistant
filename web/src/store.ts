@@ -135,6 +135,10 @@ export const reveal: Writable<Reveal> = writable({ path: null, kind: 'file', epo
 // switch to the Files Tab. FilesTree reacts — pull a fresh listing, persistently expand
 // the file's ancestor Directories, and scroll its row into view. Leaves the preview
 // (aside) Active file and the upload-target selection untouched. A blank path is a no-op.
+export function refreshFiles(path: string): void {
+  reveal.update((r) => ({ path, kind: 'file', epoch: r.epoch + 1 }))
+}
+
 export function revealFile(path: string | null | undefined): void {
   if (!path) return
   reveal.update((r) => ({ path, kind: 'file', epoch: r.epoch + 1 }))

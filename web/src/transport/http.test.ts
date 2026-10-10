@@ -1,6 +1,7 @@
 import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { z } from 'zod'
+import { get as readStore } from 'svelte/store'
 import { setValidationMode } from './validate.ts'
 import type { ApiError as ApiErrorShape } from './http.ts'
 
@@ -11,6 +12,7 @@ import { installBrowserGlobals } from '../testing/browserGlobals.ts'
 // dynamic import.
 installBrowserGlobals()
 const { ApiError, get, patch, post } = await import('./http.ts')
+const { notice } = await import('../store.ts')
 
 const Row = z.object({ id: z.string() })
 const realFetch = globalThis.fetch
@@ -77,4 +79,11 @@ test('post sends a JSON body and patch uses the PATCH verb', async () => {
 
   await patch('/api/rows/a', { n: 2 }, Row)
   assert.equal(seen?.init?.method, 'PATCH')
+})
+
+test('a missing instance stays a resource error and keeps the current Profile open', async () => {
+  notice.set(null)
+  stubFetch(404, { error: 'File not found' })
+  await assert.rejects(() => get('/api/p/work/card-instances?path=missing.card-instance.yaml', Row), (error: unknown) => error instanceof ApiError && error.message === 'File not found')
+  assert.equal(readStore(notice), null)
 })

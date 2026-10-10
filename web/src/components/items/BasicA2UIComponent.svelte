@@ -12,6 +12,7 @@
     data?: A2UIData
     onDataChange?: (path: string, value: unknown) => void
     onAction?: (action: A2UIAction) => void
+    passive?: boolean
     scope?: string
     depth?: number
   }
@@ -21,6 +22,7 @@
     data = {},
     onDataChange = () => {},
     onAction = () => {},
+    passive = false,
     scope = '',
     depth = 0,
   }: Props = $props()
@@ -43,7 +45,7 @@
   const checkboxPath = $derived(bindingPath(component.value, scope))
 
   function toggleCheckbox(event: Event & { currentTarget: HTMLInputElement }) {
-    if (checkboxPath) onDataChange(checkboxPath, event.currentTarget.checked)
+    if (!passive && checkboxPath) onDataChange(checkboxPath, event.currentTarget.checked)
   }
 
   const valuePath = $derived(bindingPath(component.value, scope))
@@ -66,21 +68,21 @@
   const youtubeEmbed = $derived(youtubeUrl(videoUrl))
 
   function setValue(event: Event & { currentTarget: HTMLInputElement | HTMLTextAreaElement }) {
-    if (valuePath) onDataChange(valuePath, event.currentTarget.value)
+    if (!passive && valuePath) onDataChange(valuePath, event.currentTarget.value)
   }
 
   function setNumber(event: Event & { currentTarget: HTMLInputElement }) {
-    if (valuePath) onDataChange(valuePath, Number(event.currentTarget.value))
+    if (!passive && valuePath) onDataChange(valuePath, Number(event.currentTarget.value))
   }
 
   function setDateTime(event: Event & { currentTarget: HTMLInputElement }) {
-    if (!valuePath) return
+    if (passive || !valuePath) return
     const value = event.currentTarget.value
     onDataChange(valuePath, component.enableDate && component.enableTime && value ? new Date(value).toISOString() : value)
   }
 
   function toggleChoice(option: unknown, selected: boolean) {
-    if (!valuePath) return
+    if (passive || !valuePath) return
     const current: unknown[] = Array.isArray(inputValue) ? inputValue : []
     const next = component.variant === 'multipleSelection'
       ? (selected ? [...new Set([...current, option])] : current.filter((value) => value !== option))
@@ -155,7 +157,7 @@
 
   function clickButton() {
     const event = component.action?.event
-    if (!event?.name) return
+    if (passive || !event?.name) return
     onAction({ name: event.name, sourceComponentId: component.id, context: actionContext(event.context || {}, data, scope) })
   }
 </script>
@@ -163,7 +165,7 @@
 {#snippet kids()}
   {#each childSlots(component.children, data, scope) as slot}
     {@const kid = child(slot.id)}
-    {#if kid}<BasicA2UIComponent component={kid} {components} {data} {onDataChange} {onAction} scope={slot.scope} depth={depth + 1} />{/if}
+    {#if kid}<BasicA2UIComponent component={kid} {components} {data} {onDataChange} {onAction} {passive} scope={slot.scope} depth={depth + 1} />{/if}
   {/each}
 {/snippet}
 
@@ -186,12 +188,12 @@
 {:else if type === 'card'}
   {@const kid = child(component.child)}
   <div class="a2ui-basic-card {markerClass}" class:a2ui-feature={component.variant === 'feature'} style:flex-grow={grow}>
-    {#if kid}<BasicA2UIComponent component={kid} {components} {data} {onDataChange} {onAction} {scope} depth={depth + 1} />{/if}
+    {#if kid}<BasicA2UIComponent component={kid} {components} {data} {onDataChange} {onAction} {passive} {scope} depth={depth + 1} />{/if}
   </div>
 {:else if type === 'link'}
   {@const kid = child(component.child)}
-  <A2UILink {component} {data} {scope} {grow}>
-    {#if kid}<BasicA2UIComponent component={kid} {components} {data} {onDataChange} {onAction} {scope} depth={depth + 1} />{/if}
+  <A2UILink {passive} {component} {data} {scope} {grow}>
+    {#if kid}<BasicA2UIComponent component={kid} {components} {data} {onDataChange} {onAction} {passive} {scope} depth={depth + 1} />{/if}
   </A2UILink>
 {:else if type === 'text'}
   <!-- Text that resolves to nothing draws nothing, so an optional field a Card
@@ -234,7 +236,7 @@
         {#if tableLead}<div class="a2ui-th"></div>{/if}
         {#each tableColumns as column, index}
           <div class="a2ui-th" class:pick={index === tablePick}>
-            <BasicA2UIComponent component={head} {components} {data} {onDataChange} {onAction} scope={column} depth={depth + 1} />
+            <BasicA2UIComponent component={head} {components} {data} {onDataChange} {onAction} {passive} scope={column} depth={depth + 1} />
           </div>
         {/each}
       {/if}
@@ -243,7 +245,7 @@
         {@const won = markedColumn(component.key, component.win, data, tableColumns, row)}
         {#if tableLead}
           <div class="a2ui-td a2ui-th-row">
-            <BasicA2UIComponent component={tableLead} {components} {data} {onDataChange} {onAction} scope={row} depth={depth + 1} />
+            <BasicA2UIComponent component={tableLead} {components} {data} {onDataChange} {onAction} {passive} scope={row} depth={depth + 1} />
           </div>
         {/if}
         {#each tableColumns as _, index}
@@ -251,7 +253,7 @@
                does not fill, so every row still lines up under its option. -->
           <div class="a2ui-td" class:pick={index === tablePick} class:win={index === won}>
             {#if body && cells[index] !== undefined}
-              <BasicA2UIComponent component={body} {components} {data} {onDataChange} {onAction} scope={cells[index]} depth={depth + 1} />
+              <BasicA2UIComponent component={body} {components} {data} {onDataChange} {onAction} {passive} scope={cells[index]} depth={depth + 1} />
             {:else}
               <span class="a2ui-td-none">—</span>
             {/if}
@@ -266,11 +268,11 @@
   <div class="a2ui-divider" class:strong={component.emphasis === 'strong'} aria-hidden="true"></div>
 {:else if type === 'checkbox'}
   <label class="a2ui-checkbox">
-    <input type="checkbox" checked={checkboxValue} onchange={toggleCheckbox} />
+    <input disabled={passive} type="checkbox" checked={checkboxValue} onchange={toggleCheckbox} />
     <span>{a2uiValue(component.label, data, scope) || ''}</span>
   </label>
 {:else if type === 'button'}
-  <button class:primary={component.variant === 'primary'} class="a2ui-button" onclick={clickButton}>
+  <button disabled={passive} class:primary={component.variant === 'primary'} class="a2ui-button" onclick={clickButton}>
     {a2uiValue(child(component.child)?.text, data, scope) || 'Continue'}
   </button>
 {:else if type === 'image'}
@@ -327,19 +329,19 @@
   <label class="a2ui-field">
     <span>{a2uiValue(component.label, data, scope) || ''}</span>
     {#if component.variant === 'longText'}
-      <textarea value={inputText} placeholder={String(a2uiValue(component.placeholder, data, scope) ?? '')} oninput={setValue}></textarea>
+      <textarea disabled={passive} value={inputText} placeholder={String(a2uiValue(component.placeholder, data, scope) ?? '')} oninput={setValue}></textarea>
     {:else}
-      <input type={component.variant === 'number' ? 'number' : component.variant === 'obscured' ? 'password' : 'text'} value={inputText} placeholder={String(a2uiValue(component.placeholder, data, scope) ?? '')} oninput={setValue} />
+      <input disabled={passive} type={component.variant === 'number' ? 'number' : component.variant === 'obscured' ? 'password' : 'text'} value={inputText} placeholder={String(a2uiValue(component.placeholder, data, scope) ?? '')} oninput={setValue} />
     {/if}
   </label>
 {:else if type === 'choicepicker'}
-  <fieldset class="a2ui-choice">
+  <fieldset disabled={passive} class="a2ui-choice">
     {#if component.label}<legend>{a2uiValue(component.label, data, scope)}</legend>{/if}
     <div class:chips={component.displayStyle === 'chips'}>
       {#each list<A2UIOption>(component.options) as option}
         {@const selected = Array.isArray(inputValue) && inputValue.includes(option.value)}
         <label>
-          <input type={component.variant === 'multipleSelection' ? 'checkbox' : 'radio'} name={(component.id || '') + scope} checked={selected} onchange={(event) => toggleChoice(option.value, event.currentTarget.checked)} />
+          <input disabled={passive} type={component.variant === 'multipleSelection' ? 'checkbox' : 'radio'} name={(component.id || '') + scope} checked={selected} onchange={(event) => toggleChoice(option.value, event.currentTarget.checked)} />
           <span>{a2uiValue(option.label, data, scope) || option.value}</span>
         </label>
       {/each}
@@ -348,13 +350,13 @@
 {:else if type === 'slider'}
   <label class="a2ui-field a2ui-slider">
     {#if component.label}<span>{a2uiValue(component.label, data, scope)}</span>{/if}
-    <input type="range" min={numOr(component.min) ?? 0} max={numOr(component.max)} step={sliderStep} value={inputText} oninput={setNumber} />
+    <input disabled={passive} type="range" min={numOr(component.min) ?? 0} max={numOr(component.max)} step={sliderStep} value={inputText} oninput={setNumber} />
     <output>{inputText}</output>
   </label>
 {:else if type === 'datetimeinput'}
   <label class="a2ui-field">
     {#if component.label}<span>{a2uiValue(component.label, data, scope)}</span>{/if}
-    <input type={component.enableDate && component.enableTime ? 'datetime-local' : component.enableDate ? 'date' : 'time'} value={component.enableDate && component.enableTime && inputText ? inputText.slice(0, 16) : inputText} min={String(a2uiValue(component.min, data, scope) ?? '') || undefined} max={String(a2uiValue(component.max, data, scope) ?? '') || undefined} onchange={setDateTime} />
+    <input disabled={passive} type={component.enableDate && component.enableTime ? 'datetime-local' : component.enableDate ? 'date' : 'time'} value={component.enableDate && component.enableTime && inputText ? inputText.slice(0, 16) : inputText} min={String(a2uiValue(component.min, data, scope) ?? '') || undefined} max={String(a2uiValue(component.max, data, scope) ?? '') || undefined} onchange={setDateTime} />
   </label>
 {:else}
   <!-- Every surface arrives as these primitives, so a name that is none of them is a

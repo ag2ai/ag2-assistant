@@ -98,13 +98,31 @@ all chat channels), keyed by chat id.
 **Custom Cards.** Ask for a custom visual answer or template, then refine it in Chat.
 The `card-author` Skill creates independent drafts with version history; experiments
 stay in that Chat across restarts. Only the current version of each draft offers
-**Save**. Choose its name and filename to save a reusable definition into the Profile's
+**Save definition**. Choose its name and filename to save a reusable definition into the Profile's
 `cards/` directory in Files. A name or filename collision requires **Replace** or
 **Save as copy**; current instance values stay in Chat, separate from the saved worked
 example. You can also explicitly ask the assistant to save or restore an earlier
 version. Saved definitions become available on the next Turn, including in other
 existing Chats. `card-author` and `rich-views` have independent switches in Settings;
 turning authoring off preserves historical previews and their Save buttons.
+
+**Saved Card instances.** Every completed rendered Card offers **Save instance**,
+including older draft versions. Save as lets you choose a filename and existing
+Directory in this Profile's Files space. Each confirmed Save creates a new
+`.card-instance.yaml` file; an occupied destination requires a different name.
+Saving an instance and saving its reusable definition are independent choices.
+
+Open the file from Files for a passive Card preview: buttons and inputs are inactive.
+Use **Edit** to change its UTF-8 YAML source, then **Save** and **Preview** to see the
+saved values. Concurrent edits keep the existing **Reload** / **Overwrite** flow.
+Malformed or unsupported files show a preview error with source editing and download
+still available. Copies survive deletion of their Chat or Card definition, and use
+ordinary Files rename, move, download and upload controls.
+
+The Profile API exposes `POST /api/p/{pid}/chats/{chat_id}/card-instances/save`
+with `surface_id`, captured `message`, relative `path` and stable `request_id`, and
+`GET /api/p/{pid}/card-instances?path=…` for validated instance previews. Retry the same
+Save payload after a lost response; start a new Save to create another copy.
 
 Endpoints:
 

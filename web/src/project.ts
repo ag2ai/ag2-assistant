@@ -365,6 +365,14 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
       items.push({ id: nid(), kind: 'note', icon: 'check', text: `Saved ${d.name} to ${d.path}` })
       break
     }
+    case 'CardInstanceSaved': {
+      const d = EventData.CardInstanceSaved.parse(data)
+      if (!items.some(item => item.kind === 'note' && item.saveRequestId === d.request_id)) {
+        items.push({ id: nid(), kind: 'note', icon: 'check', text: `Saved to ${d.path}`,
+          savedPath: d.path, saveRequestId: d.request_id })
+      }
+      break
+    }
     case 'A2UISurfaceDataUpdated': {
       const d = EventData.A2UISurfaceDataUpdated.parse(data)
       const item = items.find((i): i is ItemOf<'a2ui'> => i.kind === 'a2ui' && i.surfaceId === d.surface_id)

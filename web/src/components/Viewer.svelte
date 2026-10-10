@@ -8,6 +8,7 @@
   import { threadScope } from '../lib/threadScope.ts'
   import { api } from '../transport/api/index.ts'
   import Markdown from './Markdown.svelte'
+  import CardInstancePreview from './CardInstancePreview.svelte'
   import RailResizer from './RailResizer.svelte'
   import Icon from './Icon.svelte'
   import { viewerKind, mentionsLabel, mentionRowTitle, mentionRowIcon } from '../lib/preview.ts'
@@ -34,7 +35,7 @@
   const native = $derived(kind === 'html' || kind === 'pdf' || kind === 'image')
   // Offer a copy button for text-backed kinds and html (copy the source), and for
   // images (copy the pixels). markdown additionally gets a Preview/Edit switcher.
-  const copyable = $derived(kind === 'markdown' || kind === 'code' || kind === 'text' || kind === 'html' || kind === 'image')
+  const copyable = $derived(kind === 'card-instance' || kind === 'markdown' || kind === 'code' || kind === 'text' || kind === 'html' || kind === 'image')
   // The served file's resolved Grant mode (`X-File-Mode`), captured from the markdown
   // load: null until it arrives, then read | read_write. A Files-space file reads back
   // read_write; a Folder file carries its Thread-scoped Grant mode (ticket 04).
@@ -42,7 +43,7 @@
   // Markdown and Card files use the in-place editor. Absolute paths need the
   // server's read_write mode; Bundled Cards and read-only Folders stay preview-only.
   const editable = $derived(
-    (kind === 'markdown' || !!name?.endsWith('.card.yaml')) && !!path &&
+    (kind === 'card-instance' || kind === 'markdown' || !!name?.endsWith('.card.yaml')) && !!path &&
       (isFolderPath(path) ? folderAffordances(fileMode).edit : true)
   )
 
@@ -131,7 +132,7 @@
     dlView = 'preview'; rawText = ''; rawErr = ''; rawLoaded = false  // unknown-kind raw view resets per file
     fileMode = null              // re-resolve the Grant mode for the newly-opened file
     if (tr) { text = tr.text; draft = tr.text }
-    else if (p && (k === 'markdown' || p.endsWith('.card.yaml'))) {
+    else if (p && (k === 'card-instance' || k === 'markdown' || p.endsWith('.card.yaml'))) {
       api.fileTextWithEtag(p, cid)
         .then(({ text: t, etag: e, mode: m }) => { if (!stale) { text = t; draft = t; etag = e; fileMode = m } })
         .catch((e) => { if (!stale) err = errText(e) })
@@ -417,6 +418,8 @@
     {:else if editable && mode === 'edit'}
       <textarea class="vedit" bind:value={draft} spellcheck="false"
                 aria-label={`Edit ${name}`}></textarea>
+    {:else if kind === 'card-instance' && path}
+      <CardInstancePreview {path} revision={text} />
     {:else if kind === 'code'}
       <pre class="vcode">{draft}</pre>
     {:else if kind === 'text'}

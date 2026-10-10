@@ -12,9 +12,10 @@
     data?: A2UIData
     scope?: string
     grow?: number
+    passive?: boolean
     children: Snippet
   }
-  let { component, data = {}, scope = '', grow, children }: Props = $props()
+  let { component, data = {}, scope = '', grow, passive = false, children }: Props = $props()
 
   const link = $derived(a2uiLink(component, data, scope, $knownThings))
 
@@ -27,7 +28,9 @@
   }
 </script>
 
-{#if !link}
+{#if passive}
+  <span class="a2ui-link" aria-disabled="true" style:flex-grow={grow}>{@render children()}</span>
+{:else if !link}
   {@render children()}
 {:else if link.kind === 'url'}
   <a class="a2ui-link" href={link.value} target="_blank" rel="noopener noreferrer" style:flex-grow={grow}>{@render children()}</a>

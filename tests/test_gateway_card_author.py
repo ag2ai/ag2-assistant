@@ -8,37 +8,8 @@ from fastapi.testclient import TestClient
 from assistant.gateway.app import create_app
 from assistant.profiles import ProfileRegistry
 from tests.support.apps import api, make_manager
-from tests.support.cards import card_definition
+from tests.support.cards import author, card_definition, replay, send
 from tests.support.fakes import ScriptedModels
-
-
-def author(script, args):
-    return ToolCallEvent(
-        name="run_skill_script",
-        arguments=json.dumps(
-            {
-                "name": "card-author",
-                "script": script,
-                "args": args,
-            }
-        ),
-    )
-
-
-def replay(client, pid, chat="drafts"):
-    events = []
-    with client.websocket_connect(api(pid, f"/stream?chat={chat}")) as ws:
-        while True:
-            frame = ws.receive_json()
-            if frame.get("type") == "ready":
-                return events
-            if "event" in frame:
-                events.append(frame["event"])
-
-
-def send(client, pid, text="Draw", chat="drafts"):
-    result = client.post(api(pid, "/message"), json={"text": text, "chat_id": chat})
-    assert result.status_code == 200, result.text
 
 
 def test_shell_save_survives_restart_and_skill_suppression_without_cross_profile_access(paths):

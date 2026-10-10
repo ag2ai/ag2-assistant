@@ -8,6 +8,7 @@ import type { z } from 'zod'
 import { AcpListener, AcpListenerCreated, AcpListenerList, AcpListenerTokenRotated } from './acp.ts'
 import { ChatList, MessageReply, Transcript } from './chat.ts'
 import { CardSave } from './card.ts'
+import { CardInstance, CardInstanceSave } from './card_instance.ts'
 import {
   CardList, CardMutated, ProfileCardList, ProfileCardMutated,
 } from './card.ts'
@@ -218,6 +219,8 @@ export const ROUTES: Record<string, z.ZodTypeAny> = {
   'GET /api/cards': CardList,
   'POST /api/cards/state': CardMutated,
   'DELETE /api/cards': CardMutated,
+  'GET /api/p/{pid}/card-instances': CardInstance,
+  'POST /api/p/{pid}/chats/{chat_id}/card-instances/save': CardInstanceSave,
   'GET /api/p/{pid}/cards': ProfileCardList,
   'POST /api/p/{pid}/cards/state': ProfileCardMutated,
   'POST /api/p/{pid}/cards/suppress': ProfileCardMutated,
