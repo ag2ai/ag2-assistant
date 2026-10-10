@@ -21,7 +21,7 @@
   <p class="calendar-error" role="alert">{model.error}</p>
 {:else}
   <div class="calendar-root" style:--calendar-cell={`${size}px`} style:--calendar-weeks={model.weeks} role="group" aria-label={`${'Activity calendar'}: ${a2uiValue(component.startDate, data, scope)} – ${a2uiValue(component.endDate, data, scope)}`}>
-    <div class="calendar-scroll">
+    <div class="calendar-scroll" data-a2ui-scroll-region={component.id} data-a2ui-scope={scope}>
       <div class="calendar-grid">
         {#each model.months as month, index}
           <span class="calendar-month" style:grid-column={`${month.column + 2} / span ${Math.max(1, Math.min(3, (model.months[index + 1]?.column ?? model.weeks) - month.column))}`} style:grid-row={1} aria-hidden="true">{labelDate(month.date, { month: 'short' })}</span>

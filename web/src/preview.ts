@@ -40,4 +40,13 @@ Object.assign(window, { __a2uiPreview: {
   width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight,
   page_overflow: document.documentElement.scrollWidth > payload.width + 1,
   boxes,
+  scroll_regions: [...target.querySelectorAll<HTMLElement>('[data-a2ui-scroll-region]')].slice(0, 500).map(element => {
+    const rect = element.getBoundingClientRect()
+    return {
+      id: element.dataset.a2uiScrollRegion, scope: element.dataset.a2uiScope || '',
+      x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height),
+      scroll_width: element.scrollWidth, client_width: element.clientWidth,
+      horizontal_scroll: element.scrollWidth > element.clientWidth + 1,
+    }
+  }),
 } })

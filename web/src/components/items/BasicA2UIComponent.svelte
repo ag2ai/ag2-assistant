@@ -254,7 +254,7 @@
   {@const head = child(component.header)}
   {@const body = child(component.cell)}
   {#if tableColumns.length}
-  <div data-a2ui-id={component.id} data-a2ui-scope={scope} data-a2ui-type={component.component} class="a2ui-tablewrap" style:width={width} style:flex-grow={layoutGrow}>
+  <div data-a2ui-id={component.id} data-a2ui-scope={scope} data-a2ui-type={component.component} class="a2ui-tablewrap" data-a2ui-scroll-region={component.id} style:width={width} style:flex-grow={layoutGrow}>
     <div class="a2ui-table" class:a2ui-table-data={component.variant === 'data'} class:a2ui-table-compact={component.density === 'compact'} style:grid-template-columns={tableGrid} role="table">
       {#if head}
         <div class="a2ui-tr" role="row">
