@@ -64,6 +64,7 @@ from assistant.agent import (
 )
 from assistant.card_drafts import CardDrafts
 from assistant.card_instances import CardInstances
+from assistant.card_sources.service import CardSources
 from assistant.codex_auth import CodexAuth, CodexAuthError
 from assistant.coding.detect import parse_bridge
 from assistant.config import Config, load_config
@@ -232,6 +233,7 @@ class Gateway:
         self._knowledge_store: OwnedSqliteStore | None = None
         self._acp_generation: _AgentGeneration | None = None
         self._preparation_lock = asyncio.Lock()
+        self._event_commit_lock = asyncio.Lock()
         self._permissions: PermissionStore | None = None
         self._folders: FolderStore | None = None
         self._event_store: SerialStore | None = None
@@ -248,6 +250,7 @@ class Gateway:
         self.card_instances = CardInstances(
             self._config_factory, self._draft_history, self._commit_draft
         )
+        self.card_sources = CardSources(self._config_factory, self)
         # chat_id -> the turn currently running on it (feed_message / cancel_turn)
         self._active: dict[str, _ActiveTurn] = {}
         self._invocations: set[asyncio.Task] = set()
@@ -589,10 +592,19 @@ class Gateway:
         active.task.cancel()
         return True
 
+    @contextlib.asynccontextmanager
+    async def event_transaction(self):
+        """Serialize external event preparation and publication with Chat deletion."""
+        async with self._event_commit_lock:
+            yield self._emit_event
+
     async def emit_event(self, chat_id: str, event) -> None:
-        """Emit an event onto a chat's stream from outside an agent turn (the
-        pattern AG2's own SoundDeviceRecorder uses). It reaches any live bridge
-        subscriber and is persisted so it survives reload. Best-effort."""
+        """Publish and persist an external event on the Chat's typed stream."""
+        async with self.event_transaction() as emit:
+            await emit(chat_id, event)
+
+    async def _emit_event(self, chat_id: str, event) -> None:
+        """Publish one event while the caller holds the event transaction."""
         stream = await self.stream_for(chat_id)
         try:
             await ConversationContext(stream=stream).send(event)
@@ -1493,7 +1505,7 @@ class Gateway:
 
         if self._event_store is None:
             return False
-        async with self._chat_lock(chat_id):
+        async with self._chat_lock(chat_id), self.event_transaction():
             removed = await purge_history_for_chat(self._event_store, chat_id)
             paths = [self._transcript_path(chat_id), f"{LOG_PREFIX}{chat_id}.jsonl"]
             # dropped-turn segments are "<sid>.dropped-N.jsonl" under LOG_PREFIX
@@ -1647,6 +1659,7 @@ class Gateway:
     async def close(self) -> None:
         """Resolve active and queued invocations, then close this Profile's resources."""
         self._closing = True
+        await self.card_sources.close()
         tasks = [task for task in self._invocations if task is not asyncio.current_task()]
         for task in tasks:
             task.cancel()

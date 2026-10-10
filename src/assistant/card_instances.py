@@ -16,6 +16,7 @@ import yaml
 from pydantic import ValidationError
 
 from assistant.a2ui import CARD_VOCABULARY
+from assistant.card_sources.schema import sources_from
 from assistant.cards import CardError, validate_layout
 from assistant.events import A2UISurface, CardInstanceSaved
 from assistant.gateway.schemas.card_instance import CardInstanceMessage, CardInstanceResponse
@@ -64,6 +65,10 @@ def check_json(value) -> None:
 def validate_message(raw: dict, instance_id: str) -> CardInstanceMessage:
     """Normalize one expanded primitive tree, without a Card catalog lookup."""
     check_json(raw)
+    try:
+        sources_from(raw.get("data", {}))
+    except (ValueError, AttributeError) as exc:
+        raise InstanceError(f"Invalid source metadata: {exc}") from exc
     allowed = {
         "surface_id",
         "version",

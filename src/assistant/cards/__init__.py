@@ -20,6 +20,7 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
 from referencing.exceptions import Unresolvable
 
+from assistant.card_sources.schema import SOURCE_KEY, CardSource, SourceDefinition
 from assistant.cards.layout import validate_primitive
 from assistant.state_store import ORIGIN_GLOBAL, StateStore
 
@@ -91,6 +92,27 @@ class Card:
     topic: str = ""
     path: Path | None = field(default=None, compare=False)
     origin: str = field(default=ORIGIN_GLOBAL, compare=False)
+    source: dict | None = None
+    parameters: dict = field(default_factory=dict)
+
+
+def generation_contract(card: Card) -> tuple[dict[str, Any], list[str]]:
+    """Drawing arguments retain source parameters chosen explicitly or from required fields."""
+    fields = dict(card.fields)
+    required = list(card.required)
+    if card.source:
+        fields["_parameters"] = {
+            "type": "object",
+            "properties": card.parameters,
+            "required": list(card.parameters),
+            "additionalProperties": False,
+        }
+        if any(
+            name not in card.required and "default" not in schema
+            for name, schema in card.parameters.items()
+        ):
+            required.append("_parameters")
+    return fields, required
 
 
 def bundled_cards_dir() -> Path:
@@ -234,13 +256,41 @@ def validate_card(
         raise CardError("no example")
     if not all(isinstance(key, str) for key in example):
         raise CardError("example field names must be strings")
-    if stray := [key for key in example if key not in fields]:
+    if stray := [
+        key
+        for key in example
+        if key not in fields and not (key == "_parameters" and raw.get("source") is not None)
+    ]:
         raise CardError(f"example sets fields the Card does not declare: {', '.join(stray)}")
     if missing := [key for key in required if key not in example]:
         raise CardError(f"example omits required fields: {', '.join(missing)}")
     if (size := len(json.dumps(example, separators=(",", ":")))) > EXAMPLE_BUDGET:
         raise CardError(f"example is {size} characters, over {EXAMPLE_BUDGET}")
-    validate_card_data(fields, required, example, label="example")
+    validate_card_data(
+        fields,
+        required,
+        {key: value for key, value in example.items() if key != "_parameters"},
+        label="example",
+    )
+    source = raw.get("source")
+    parameters = raw.get("parameters", {})
+    if not isinstance(parameters, dict):
+        raise CardError("parameters must declare named JSON schemas")
+    if any(not isinstance(schema, dict) for schema in parameters.values()):
+        raise CardError("Each parameter must declare a JSON schema")
+    try:
+        Draft202012Validator.check_schema({"type": "object", "properties": parameters})
+    except SchemaError as exc:
+        raise CardError(f"Invalid parameter schema: {exc.message}") from exc
+    if "_parameters" in example:
+        validate_card_data(
+            parameters, tuple(parameters), example["_parameters"], label="example parameters"
+        )
+    if source is not None:
+        try:
+            source = SourceDefinition.model_validate(source).model_dump(exclude_defaults=True)
+        except ValueError as exc:
+            raise CardError(f"invalid source: {exc}") from exc
     return Card(
         name=name,
         description=description,
@@ -251,6 +301,8 @@ def validate_card(
         topic=topic,
         path=path,
         origin=origin,
+        source=source,
+        parameters=parameters,
     )
 
 
@@ -393,7 +445,7 @@ def expand_card_messages(messages: list[Any], cards: dict[str, Card]) -> list[An
         if not isinstance(components, list):
             drawn.append(message)
             continue
-        expanded, writes = expand_components(components, cards)
+        expanded, writes = expand_components(components, cards, capture_sources=True)
         if not writes and expanded == components:
             drawn.append(message)
             continue
@@ -411,7 +463,7 @@ def expand_card_messages(messages: list[Any], cards: dict[str, Card]) -> list[An
 
 
 def expand_components(
-    components: list[Any], cards: dict[str, Card]
+    components: list[Any], cards: dict[str, Card], *, capture_sources: bool = False
 ) -> tuple[list[Any], list[tuple[str, Any]]]:
     """The component list with every Card instance replaced by the primitives its
     layout declares, plus the ``(pointer, value)`` writes the instances' fields make."""
@@ -428,6 +480,29 @@ def expand_components(
         nodes, fields = _draw(component, card, root=component.get("id") == root)
         expanded.extend(nodes)
         writes.extend(fields)
+        if capture_sources and card.source is not None:
+            chosen = component.get("_parameters")
+            if chosen is None:
+                chosen = {
+                    key: component.get(key, schema.get("default"))
+                    for key, schema in card.parameters.items()
+                }
+                if any(value is None for value in chosen.values()):
+                    raise CardError("Choose _parameters before drawing this source-backed Card")
+            validate_card_data(card.parameters, tuple(card.parameters), chosen, label="parameters")
+            instance = str(component.get("id") or "")
+            source = CardSource.model_validate(
+                {
+                    **card.source,
+                    "parameters": chosen,
+                    "fields": card.fields,
+                    "required": list(card.required),
+                    "path": "" if instance == root else f"/{CARD_DATA_ROOT}/{_escaped(instance)}",
+                }
+            )
+            writes.append(
+                (f"/{SOURCE_KEY}/{_escaped(instance)}", source.model_dump(exclude_defaults=True))
+            )
     return expanded, writes
 
 

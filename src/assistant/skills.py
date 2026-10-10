@@ -39,6 +39,7 @@ def skill_origin(location: str | None, bundled_root: Path, profile_root: Path | 
 
 
 SKILLS_DOCUMENT = "skills.json"
+SKILL_BLOCKED = ["rm -rf /", "sudo", "shutdown", "reboot", "mkfs", ":(){"]
 
 
 class SkillStateStore(StateStore):

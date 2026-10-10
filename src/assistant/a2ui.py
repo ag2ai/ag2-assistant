@@ -18,6 +18,7 @@ from assistant.cards import (
     cards_fingerprint,
     expand_card_messages,
     expand_components,
+    generation_contract,
     load_cards,
     resolve_cards,
     root_component,
@@ -338,7 +339,9 @@ def assistant_catalog(cards: dict[str, Card] | None = None) -> dict:
         "components": {
             **{
                 card.name: _component_schema(
-                    card.name, card.description, card.fields, list(card.required)
+                    card.name,
+                    card.description,
+                    *generation_contract(card),
                 )
                 for card in (bundled_cards() if cards is None else cards).values()
             },

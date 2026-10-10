@@ -7,6 +7,7 @@
 import { acpApi } from './acp.ts'
 import { chatsApi } from './chats.ts'
 import { cardsApi } from './cards.ts'
+import { cardSourceApi } from './card_source.ts'
 import { cardInstancesApi } from './card_instances.ts'
 import { codingApi } from './coding.ts'
 import { connectionsApi } from './connections.ts'
@@ -36,6 +37,7 @@ export const api = {
   ...chatsApi,
   ...cardsApi,
   ...cardInstancesApi,
+  ...cardSourceApi,
   ...tasksApi,
   ...filesApi,
   ...settingsApi,

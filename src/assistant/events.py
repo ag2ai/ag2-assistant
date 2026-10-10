@@ -120,6 +120,18 @@ class A2UISurfaceDataUpdated(AssistantEvent):
     data: dict = Field(default_factory=dict)
 
 
+class CardSourceUpdated(AssistantEvent):
+    """A source result or error for one authorized Chat or Files target."""
+
+    surface_id: str = Field(kw_only=False)
+    source_id: str = ""
+    path: str = ""
+    status: str = "updated"
+    error: str = ""
+    data: dict = Field(default_factory=dict)
+    code_version: str = ""
+
+
 class A2UIActionSubmitted(AssistantEvent):
     """A user action was accepted by the backend and is being handled."""
 

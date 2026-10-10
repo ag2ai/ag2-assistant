@@ -74,3 +74,13 @@ example:
     - {label: Wind, value: 12 km/h NW}
     - {label: Humidity, value: 45%}
     - {label: Today, value: High 26°C · Low 14°C}
+
+parameters:
+  location: {type: string}
+  units: {type: string, enum: [celsius, fahrenheit], default: celsius}
+source:
+  tool: get_weather
+  args:
+    location: {parameter: location}
+    units: {parameter: units}
+  interval_seconds: 600

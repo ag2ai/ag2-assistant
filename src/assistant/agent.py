@@ -45,6 +45,7 @@ from assistant.secrets import DEFAULT_OLLAMA_BASE, KEY_ENV, OLLAMA_BASE_ENV
 from assistant.self_tools import build_self_tools
 from assistant.settings import profile_settings
 from assistant.skills import (
+    SKILL_BLOCKED,
     DiscoveredSkill,
     FilteredSkillRuntime,
     SkillStateStore,
@@ -53,9 +54,6 @@ from assistant.skills import (
 from assistant.tools import build_agent_tools, docker_environment
 from assistant.tools.docker_sandbox import build_docker_skill_runtime, docker_available
 from assistant.tools.mcp import build_mcp_tools
-
-# Commands skill scripts must never run (defense-in-depth; skills can ship code).
-_SKILL_BLOCKED = ["rm -rf /", "sudo", "shutdown", "reboot", "mkfs", ":(){"]
 
 # Default (cheaper) model for the passive memory-aggregation pass, per provider.
 # Used only when llm.aggregate_model isn't set. Override via AG2ASSISTANT_AGGREGATE_MODEL.
@@ -259,13 +257,13 @@ def build_skills_runtime(config: Config):
         if docker_available(config.search_path):
             return build_docker_skill_runtime(
                 install_dir=config.skills_dir,
-                blocked=_SKILL_BLOCKED,
+                blocked=SKILL_BLOCKED,
                 image=config.tools.docker_image,
                 network=config.tools.docker_network,
                 extra_paths=extra,
             )
 
-    return LocalRuntime(dir=str(config.skills_dir), blocked=_SKILL_BLOCKED, extra_paths=extra)
+    return LocalRuntime(dir=str(config.skills_dir), blocked=SKILL_BLOCKED, extra_paths=extra)
 
 
 def _availability(config: Config) -> Callable[[DiscoveredSkill], bool]:

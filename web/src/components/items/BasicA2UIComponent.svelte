@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte'
   import Icon from '../Icon.svelte'
   import A2UILink from './A2UILink.svelte'
   import BasicA2UIComponent from './BasicA2UIComponent.svelte'
@@ -7,6 +8,9 @@
   import type { A2UIAction, A2UIComponent, A2UIData, A2UIOption } from '../../lib/a2ui.ts'
 
   type Props = {
+    sourceIds?: string[]
+    sourceControls?: Snippet<[string]>
+    sourceWrapped?: boolean
     component: A2UIComponent
     components?: A2UIComponent[]
     data?: A2UIData
@@ -17,6 +21,7 @@
     depth?: number
   }
   let {
+    sourceIds = [], sourceControls, sourceWrapped = false,
     component,
     components = [],
     data = {},
@@ -165,14 +170,17 @@
 {#snippet kids()}
   {#each childSlots(component.children, data, scope) as slot}
     {@const kid = child(slot.id)}
-    {#if kid}<BasicA2UIComponent component={kid} {components} {data} {onDataChange} {onAction} {passive} scope={slot.scope} depth={depth + 1} />{/if}
+    {#if kid}<BasicA2UIComponent {sourceIds} {sourceControls} component={kid} {components} {data} {onDataChange} {onAction} {passive} scope={slot.scope} depth={depth + 1} />{/if}
   {/each}
 {/snippet}
 
-{#if depth >= MAX_DEPTH}
-  <!-- cyclic or pathologically deep component graph — stop recursing -->
-{:else if !present}
-  <!-- the data this component is conditional on is not there -->
+{#if depth >= MAX_DEPTH || !present}
+  <!-- Hidden or unrenderable components do not start source refresh. -->
+{:else if !sourceWrapped && component.id && sourceIds.includes(component.id) && sourceControls}
+  <div class="card-source-frame" style:flex-grow={grow}>
+    <BasicA2UIComponent {sourceIds} {sourceControls} {component} {components} {data} {onDataChange} {onAction} {passive} {scope} {depth} sourceWrapped />
+    {@render sourceControls(component.id)}
+  </div>
 {:else if type === 'column'}
   <div class="a2ui-basic-col {markerClass}" style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={grow}>
     {@render kids()}
@@ -188,12 +196,12 @@
 {:else if type === 'card'}
   {@const kid = child(component.child)}
   <div class="a2ui-basic-card {markerClass}" class:a2ui-feature={component.variant === 'feature'} style:flex-grow={grow}>
-    {#if kid}<BasicA2UIComponent component={kid} {components} {data} {onDataChange} {onAction} {passive} {scope} depth={depth + 1} />{/if}
+    {#if kid}<BasicA2UIComponent {sourceIds} {sourceControls} component={kid} {components} {data} {onDataChange} {onAction} {passive} {scope} depth={depth + 1} />{/if}
   </div>
 {:else if type === 'link'}
   {@const kid = child(component.child)}
   <A2UILink {passive} {component} {data} {scope} {grow}>
-    {#if kid}<BasicA2UIComponent component={kid} {components} {data} {onDataChange} {onAction} {passive} {scope} depth={depth + 1} />{/if}
+    {#if kid}<BasicA2UIComponent {sourceIds} {sourceControls} component={kid} {components} {data} {onDataChange} {onAction} {passive} {scope} depth={depth + 1} />{/if}
   </A2UILink>
 {:else if type === 'text'}
   <!-- Text that resolves to nothing draws nothing, so an optional field a Card
@@ -236,7 +244,7 @@
         {#if tableLead}<div class="a2ui-th"></div>{/if}
         {#each tableColumns as column, index}
           <div class="a2ui-th" class:pick={index === tablePick}>
-            <BasicA2UIComponent component={head} {components} {data} {onDataChange} {onAction} {passive} scope={column} depth={depth + 1} />
+            <BasicA2UIComponent {sourceIds} {sourceControls} component={head} {components} {data} {onDataChange} {onAction} {passive} scope={column} depth={depth + 1} />
           </div>
         {/each}
       {/if}
@@ -245,7 +253,7 @@
         {@const won = markedColumn(component.key, component.win, data, tableColumns, row)}
         {#if tableLead}
           <div class="a2ui-td a2ui-th-row">
-            <BasicA2UIComponent component={tableLead} {components} {data} {onDataChange} {onAction} {passive} scope={row} depth={depth + 1} />
+            <BasicA2UIComponent {sourceIds} {sourceControls} component={tableLead} {components} {data} {onDataChange} {onAction} {passive} scope={row} depth={depth + 1} />
           </div>
         {/if}
         {#each tableColumns as _, index}
@@ -253,7 +261,7 @@
                does not fill, so every row still lines up under its option. -->
           <div class="a2ui-td" class:pick={index === tablePick} class:win={index === won}>
             {#if body && cells[index] !== undefined}
-              <BasicA2UIComponent component={body} {components} {data} {onDataChange} {onAction} {passive} scope={cells[index]} depth={depth + 1} />
+              <BasicA2UIComponent {sourceIds} {sourceControls} component={body} {components} {data} {onDataChange} {onAction} {passive} scope={cells[index]} depth={depth + 1} />
             {:else}
               <span class="a2ui-td-none">—</span>
             {/if}
