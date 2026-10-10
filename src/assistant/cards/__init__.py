@@ -98,34 +98,55 @@ def bundled_cards_dir() -> Path:
     return Path(__file__).parent / "bundled"
 
 
+@dataclass(frozen=True)
+class CardProblem:
+    """One file rejected by the Card loader."""
+
+    path: Path
+    origin: str
+    error: str
+
+
+@dataclass(frozen=True)
+class CardScan:
+    """Loaded Cards, rejected files, and every Card-suffixed path in one layer."""
+
+    cards: dict[str, Card]
+    problems: tuple[CardProblem, ...]
+    files: tuple[Path, ...]
+
+
+def scan_cards(
+    directory: str | os.PathLike[str],
+    components: Iterable[str] = (),
+    origin: str = ORIGIN_GLOBAL,
+) -> CardScan:
+    """Discover a layer's Cards with the errors for every skipped file."""
+    allowed = frozenset(components)
+    cards: dict[str, Card] = {}
+    problems = []
+    files = tuple(sorted(Path(directory).glob(f"*{CARD_SUFFIX}")))
+    for path in files:
+        try:
+            card = _read_card(path, allowed, origin)
+            taken = cards.get(card.name)
+            if taken is not None:
+                raise CardError(f"{taken.path} already names {card.name}")
+        except CardError as exc:
+            logger.warning("Skipping card file %s: %s", path, exc)
+            problems.append(CardProblem(path, origin, str(exc)))
+            continue
+        cards[card.name] = card
+    return CardScan(cards, tuple(problems), files)
+
+
 def load_cards(
     directory: str | os.PathLike[str],
     components: Iterable[str] = (),
     origin: str = ORIGIN_GLOBAL,
 ) -> dict[str, Card]:
-    """The Cards in ``directory``, keyed by the name inside each file and stamped
-    with the layer ``origin`` they were read from.
-
-    ``components`` is the primitive vocabulary a layout may draw from; empty accepts
-    any. A missing directory means no Cards; a file that fails to load, or names a Card
-    an earlier file already does, is skipped with a warning.
-    """
-    allowed = frozenset(components)
-    cards: dict[str, Card] = {}
-    for path in sorted(Path(directory).glob(f"*{CARD_SUFFIX}")):
-        try:
-            card = _read_card(path, allowed, origin)
-        except CardError as exc:
-            logger.warning("Skipping card file %s: %s", path, exc)
-            continue
-        taken = cards.get(card.name)
-        if taken is not None:
-            logger.warning(
-                "Skipping card file %s: %s already names %s", path, taken.path, card.name
-            )
-            continue
-        cards[card.name] = card
-    return cards
+    """Cards in one layer, keyed by their declared name; rejected files are skipped."""
+    return scan_cards(directory, components, origin).cards
 
 
 def resolve_cards(layers: "CardLayers", components: Iterable[str] = ()) -> dict[str, Card]:
@@ -155,10 +176,12 @@ def _layer_fingerprint(directory: Path) -> tuple:
 
 def _read_card(path: Path, components: frozenset[str], origin: str) -> Card:
     try:
+        if path.resolve().parent != path.parent.resolve():
+            raise CardError("file points outside its Card directory")
         if (size := path.stat().st_size) > FILE_BUDGET:
             raise CardError(f"file is {size} bytes, over {FILE_BUDGET}")
         raw = yaml.safe_load(path.read_text())
-    except (OSError, yaml.YAMLError) as exc:
+    except (OSError, UnicodeError, RuntimeError, yaml.YAMLError) as exc:
         raise CardError(f"unreadable: {exc}") from exc
     return validate_card(raw, components, path=path, origin=origin)
 
@@ -172,8 +195,8 @@ def validate_card(
 ) -> Card:
     """Validate a file or in-memory definition using the same Card rules."""
     try:
-        size = len(json.dumps(raw, ensure_ascii=False).encode())
-    except (TypeError, ValueError) as exc:
+        size = len(json.dumps(raw, ensure_ascii=False, allow_nan=False).encode())
+    except (TypeError, ValueError, RecursionError) as exc:
         raise CardError(f"definition must be JSON-compatible: {exc}") from exc
     if size > FILE_BUDGET:
         raise CardError(f"definition is {size} bytes, over {FILE_BUDGET}")
@@ -196,6 +219,8 @@ def validate_card(
     fields = raw.get("fields")
     if not isinstance(fields, dict) or not fields:
         raise CardError("no fields")
+    if not all(isinstance(key, str) for key in fields):
+        raise CardError("fields names must be strings")
     if reserved := set(fields) & {"id", "component", "accessibility", "type"}:
         raise CardError(f"fields use reserved component metadata: {', '.join(sorted(reserved))}")
     required_raw = raw.get("required", [])
@@ -207,6 +232,8 @@ def validate_card(
     example = raw.get("example")
     if not isinstance(example, dict) or not example:
         raise CardError("no example")
+    if not all(isinstance(key, str) for key in example):
+        raise CardError("example field names must be strings")
     if stray := [key for key in example if key not in fields]:
         raise CardError(f"example sets fields the Card does not declare: {', '.join(stray)}")
     if missing := [key for key in required if key not in example]:

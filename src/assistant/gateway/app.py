@@ -477,6 +477,7 @@ def create_app(
     # registry/git/upload installs (ADR 0017) — live in gateway/routes/skill.py,
     # together with their per-profile mirrors, included on `p` below.
     app.include_router(skill.build_router(deps, skills_client=skills_client))
+    app.include_router(card.build_router(deps))
 
     # Profiles (the registry every client boots from) and Connections (an instance
     # of a messaging platform with its exposure, pairing and group tables) are both

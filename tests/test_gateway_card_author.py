@@ -75,9 +75,27 @@ def test_shell_save_survives_restart_and_skill_suppression_without_cross_profile
         saved = client.post(api(pid, "/chats/drafts/cards/save"), json=request)
         assert saved.status_code == 200, saved.text
         assert saved.json()["status"] == "saved"
-        assert (
-            client.get(api(pid, "/files/raw?path=cards/saved-shelf.card.yaml")).status_code == 200
+        row = next(
+            c for c in client.get(api(pid, "/cards")).json()["cards"] if c["name"] == "Saved shelf"
         )
+        assert row["origin"] == "profile" and row["available"]
+        raw = api(pid, "/files/raw")
+        opened = client.get(raw, params={"path": row["path"]})
+        assert opened.status_code == 200
+        edited = client.put(
+            raw,
+            params={"path": row["path"]},
+            content=opened.text.replace("Saved shelf", "Edited shelf"),
+            headers={"If-Match": opened.headers["ETag"]},
+        )
+        assert edited.status_code == 200
+        disabled = client.post(
+            api(pid, "/cards/state"), params={"name": "Edited shelf"}, json={"enabled": False}
+        )
+        assert disabled.status_code == 200
+        assert not next(c for c in disabled.json()["cards"] if c["name"] == "Edited shelf")[
+            "available"
+        ]
         assert client.post(api(other, "/chats/drafts/cards/save"), json=request).status_code == 409
         assert client.post(api(pid, "/chats/other/cards/save"), json=request).status_code == 409
         assert (

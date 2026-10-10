@@ -8,7 +8,7 @@ way to rewrite the contents of a file in place**: the preview rail (ADR 0009) se
 markdown, code, and text read-only.
 
 We now let the user **edit a file's contents in place** from the preview rail
-(markdown first; the mechanism is type-agnostic). In-place editing is a genuinely new
+(Markdown and `.card.yaml` files; the mechanism is type-agnostic). In-place editing is a new
 shape: it targets an existing path and *does* overwrite it — that is the whole point,
 and is orthogonal to ADR 0007's never-overwrite rule, which governs *move/upload
 collisions between two different files*, not a file rewriting itself.

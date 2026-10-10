@@ -56,6 +56,7 @@ export const SETTINGS_PAGE = Object.freeze({
   MODELS: 'models',
   SECRETS: 'secrets',
   SKILLS: 'skills',
+  CARDS: 'cards',
   TOOLS: 'tools',
   INTEGRATIONS: 'integrations',
   ADVANCED: 'advanced',

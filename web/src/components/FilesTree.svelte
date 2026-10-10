@@ -13,6 +13,7 @@
   // survives the remount on tab (re)activation — otherwise a lingering reveal request
   // would re-fire every time the Files tab is opened normally.
   let handledRevealEpoch = 0
+  let sessionCardExpanded = new Set<string>()
 </script>
 
 <script lang="ts">
@@ -32,7 +33,7 @@
   import { modeLabel, isFolderPath, folderAncestorDirs, folderAffordances } from '../lib/folderFiles.ts'
   import { clearsTreeTarget } from '../lib/filesTree.ts'
   import { errText } from '../lib/errors.ts'
-  import type { FileRow, FolderListing, FolderRoot } from '../schemas/index.ts'
+  import type { CardFile, FileRow, FolderListing, FolderRoot } from '../schemas/index.ts'
   import Icon from './Icon.svelte'
 
   // One assembled tree node: the Directory's own children, built from the flat lists.
@@ -45,6 +46,21 @@
   let root = $state('')
   let loading = $state(true)
   let err = $state('')
+  let cardFiles = $state<CardFile[]>([])
+  let cardErr = $state('')
+  let cardExpanded = $state(sessionCardExpanded)
+
+  async function loadCardFiles() {
+    cardErr = ''
+    try { cardFiles = (await api.cards()).files }
+    catch (e) { cardErr = errText(e) }
+  }
+  function toggleCardLayer(origin: string) {
+    const next = new Set(cardExpanded)
+    if (next.has(origin)) next.delete(origin)
+    else next.add(origin)
+    cardExpanded = next; sessionCardExpanded = next
+  }
 
   // Expanded Directories (a Directory is collapsed unless present here); selected
   // upload-target Directory ('' = Files-space root). Seeded from session state so
@@ -66,6 +82,7 @@
     loading = true
     err = ''
     const p = (async () => {
+      const cardsLoad = loadCardFiles()
       try {
         const r = await api.files()
         files = r.files
@@ -75,6 +92,7 @@
       } catch (e) {
         err = errText(e)
       }
+      await cardsLoad
       loading = false
     })()
     inflight = p
@@ -262,6 +280,16 @@
     revealInTree(path, kind)
   })
   async function revealInTree(path: string, kind: 'file' | 'directory') {
+    if (isFolderPath(path)) {
+      await load()
+      const card = cardFiles.find((f) => f.path === path)
+      if (card) {
+        cardExpanded = new Set([...cardExpanded, card.origin])
+        sessionCardExpanded = cardExpanded
+        await tick(); scrollRevealed(path, kind)
+        return
+      }
+    }
     // A Folder (absolute) file/directory lives in the Thread-scoped Folder section,
     // not the Files-space tree; expand it there instead.
     if (isFolderPath(path)) return revealInFolder(path, kind)
@@ -386,7 +414,8 @@
     busy = path
     try {
       await api.deleteFile(path, chatId)
-      if (isFolderPath(path)) await reloadFolders()
+      if (cardFiles.some((f) => f.path === path)) await load()
+      else if (isFolderPath(path)) await reloadFolders()
       else await load()
     } catch (e) { err = errText(e) }
     busy = ''
@@ -423,7 +452,8 @@
       // A moved Directory carries its active descendant along by prefix.
       if (activePath === from) openAsideFile(to)
       else if (activePath && activePath.startsWith(from + '/')) openAsideFile(to + activePath.slice(from.length))
-      if (isFolderPath(from)) await reloadFolders()
+      if (cardFiles.some((f) => f.path === from)) await load()
+      else if (isFolderPath(from)) await reloadFolders()
       else await load()
     } catch (e) { err = errText(e) }   // 409 clash surfaces its message
     busy = ''
@@ -582,6 +612,36 @@
     {:else}
       {@render level(tree, 0)}
     {/if}
+
+    {#if cardErr}<p class="fterr">{cardErr}</p>{/if}
+    <div class="ftsection">Shared Cards</div>
+    {#each ['global', 'bundled'] as origin}
+      <button class="ftrow ftdir ftcardbutton" aria-expanded={cardExpanded.has(origin)}
+        onclick={() => toggleCardLayer(origin)}>
+        <Icon name={cardExpanded.has(origin) ? 'chevron-down' : 'chevron-right'} size={13} />
+        <Icon name="folder" size={14} />
+        <span class="ftname">{origin === 'global' ? 'Global Cards' : 'Bundled Cards'}</span>
+        <span class="ftbadge" class:rw={origin === 'global'}>{origin === 'global' ? 'read+write' : 'read-only'}</span>
+      </button>
+      {#if cardExpanded.has(origin)}
+        {#each cardFiles.filter((f) => f.origin === origin) as f (f.path)}
+          <div class="ftrow ftfile" class:active={activePath === f.path} data-path={f.path} style="padding-left:24px">
+            <Icon name="file-code" size={14} />
+            {#if renaming === f.path}
+              <input class="ftinput" bind:value={renameText} use:focusSelect
+                onkeydown={(e) => { if (e.key === 'Enter') commitRename(f.path); else if (e.key === 'Escape') cancelRename() }}
+                onblur={() => commitRename(f.path)} />
+            {:else}
+              <span class="ftname" title={f.path}>{f.name}</span>
+              <button class="fttool" title="Open {f.name}" aria-label="Open {f.name}" onclick={() => openFile(f)}><Icon name="eye" size={14} /></button>
+            {/if}
+            {#if origin === 'global'}{@render rowActions(f.path, f.name, false)}{/if}
+          </div>
+        {:else}
+          <p class="ftmuted">No {origin} Cards.</p>
+        {/each}
+      {/if}
+    {/each}
 
     <!-- Granted Folders (Thread-scoped, ADR 0013): a distinct section beneath the
          Files-space tree, each root badged with its mode + missing state, lazy-expanded. -->
@@ -789,6 +849,8 @@
 {/snippet}
 
 <style>
+  .ftcardbutton { width: 100%; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; padding-left: 4px; }
+  .ftcardbutton:focus-visible { outline: none; box-shadow: var(--focus-ring); }
   .ftwrap { display: flex; flex-direction: column; flex: 1; min-height: 0; }
   .fttoolbar { display: flex; align-items: center; gap: 2px; padding: 6px 8px; border-bottom: 1px solid var(--line); }
   .fttool { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: none; background: none; color: var(--muted); border-radius: 7px; cursor: pointer; }

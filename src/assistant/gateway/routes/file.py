@@ -25,10 +25,12 @@ from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
+from assistant.a2ui import CARD_VOCABULARY, card_layers
+from assistant.cards import Card, load_cards
 from assistant.filesearch import list_folder_dir, search_corpus
 from assistant.folders import READ_WRITE
 from assistant.gateway.profile_manager import ProfileRuntime
-from assistant.gateway.routes.common import scope_task_id
+from assistant.gateway.routes.common import purge_card_state, scope_task_id, shared_card_file
 from assistant.gateway.routes.deps import GatewayDeps
 from assistant.gateway.schemas import (
     ErrorBody,
@@ -41,6 +43,7 @@ from assistant.gateway.schemas import (
     UploadResultResponse,
     WriteResultResponse,
 )
+from assistant.state_store import ORIGIN_BUNDLED
 from assistant.workspace import (
     _MAX_WRITE_BYTES,
     delete,
@@ -148,9 +151,14 @@ def _mutation_base(
     miss_status: int,
     miss_msg: str,
 ) -> tuple[Path | None, JSONResponse | None]:
-    """The sandbox base for a ``/files/*`` mutation, branching on ``os.path.isabs``: the
-    workspace for a relative path, else the ``read_write`` Folder root (or a deny response)."""
+    """The writable Files space, mounted Card layer, or granted Folder
+    containing a mutation target."""
     if os.path.isabs(path):
+        root, mode = shared_card_file(runtime.require_config(), path)
+        if root is not None:
+            if mode != READ_WRITE:
+                return None, JSONResponse({"error": "read-only cards"}, status_code=403)
+            return root, None
         return _folder_write_base(
             runtime, path, chat_id, task_id=task_id, miss_status=miss_status, miss_msg=miss_msg
         )
@@ -172,6 +180,10 @@ def _resolve_file_path(
     if not os.path.isabs(path):
         rp = resolve(runtime.require_config().workspace_dir, path)
         return (rp, READ_WRITE) if rp is not None else (None, None)
+    root, mode = shared_card_file(runtime.require_config(), path)
+    if root is not None:
+        rp = Path(path).resolve()
+        return (rp, mode) if rp.is_file() else (None, None)
     root, mode = _resolve_folder(runtime, path, chat_id, task_id)
     if root is None:
         return None, None
@@ -489,8 +501,24 @@ def build_profile_router(d: GatewayDeps, get_runtime) -> APIRouter:
         if deny is not None:
             return deny
 
+        config = runtime.require_config()
+        target = (config.workspace_dir / path).resolve()
+        removed: list[Card] = []
+        for origin, directory in card_layers(config):
+            if origin == ORIGIN_BUNDLED:
+                continue
+            root = directory.resolve()
+            if target != root and target.parent != root:
+                continue
+            removed.extend(
+                card
+                for card in load_cards(directory, CARD_VOCABULARY, origin).values()
+                if card.path is not None and (target == root or card.path.resolve() == target)
+            )
         if not delete(base, path):
             return JSONResponse({"error": "file not found"}, status_code=404)
+        for card in removed:
+            purge_card_state(config, card.name, card.origin)
         return {"ok": True}
 
     return r
