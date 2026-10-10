@@ -474,7 +474,12 @@ function ensureSurface(
   catalogId: string | undefined,
   version: string,
 ): A2UIItem {
-  let item = items.find((i): i is A2UIItem => i.kind === 'a2ui' && i.surfaceId === surfaceId)
+  const index = items.findIndex((i) => i.kind === 'a2ui' && i.surfaceId === surfaceId)
+  let item = index < 0 ? undefined : items[index] as A2UIItem
+  if (item) {
+    item = { ...item, messages: [...(item.messages || [])] }
+    items[index] = item
+  }
   if (!item) {
     item = {
       id: nextItemId(),

@@ -87,6 +87,11 @@ class ScreenSkillRuntime(MemoryRuntime):
         self.root = config.workspace_dir
         self.catalog = catalog
 
+    async def read(self, name: str, context: ConversationContext) -> str:
+        if name != "screens":
+            return await super().read(name, context)
+        return f'<skill_content name="screens">\n{INSTRUCTIONS.strip()}\n</skill_content>'
+
     async def execute(
         self,
         name: str,
