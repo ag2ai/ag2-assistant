@@ -10,7 +10,7 @@ import { ChatList, MessageReply, Transcript } from './chat.ts'
 import { CardSave } from './card.ts'
 import { CardSourceResponse } from './card_source.ts'
 import { CardInstance, CardInstanceSave } from './card_instance.ts'
-import { Screen, ScreenList } from './screen.ts'
+import { Screen, ScreenList, ScreenRow } from './screen.ts'
 import {
   CardList, CardMutated, ProfileCardList, ProfileCardMutated,
 } from './card.ts'
@@ -96,6 +96,7 @@ import {
 export const ROUTES: Record<string, z.ZodTypeAny> = {
   'GET /api/p/{pid}/screens': ScreenList,
   'GET /api/p/{pid}/screens/view': Screen,
+  'PATCH /api/p/{pid}/screens/title': ScreenRow,
   'GET /api/health': Health,
   'GET /api/usage': UsageRollup,
   'GET /api/status': StatusList,

@@ -869,13 +869,7 @@
   .fttree.droproot { outline: 2px dashed var(--accent); outline-offset: -3px; border-radius: 6px; }
 
   .ftrow { position: relative; display: flex; align-items: center; gap: 6px; padding: 4px 8px 4px 4px; cursor: pointer; color: var(--text); user-select: none; }
-  .ftrow:hover { background: var(--surface-hover, var(--code)); }
-  .ftdir.selected { background: color-mix(in srgb, var(--accent) 16%, transparent); }
-  /* The active row — the Active file's own row, or the folder standing in for it
-     when that file is collapsed out of view — is a full-width green row: the same
-     --accent-soft fill + left accent bar as the active chat/task row (.drow.on),
-     edge to edge. After :hover, so the fill holds on hover. */
-  .ftrow.active { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+  .ftrow:hover:not(.active):not(.selected) { background: var(--surface-hover, var(--code)); }
   .ftrow.drop { outline: 2px dashed var(--accent); outline-offset: -2px; border-radius: 6px; }
   .ftcaret { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; margin-left: -2px; border: none; background: none; color: var(--muted); cursor: pointer; border-radius: 4px; }
   .ftcaret:hover { color: var(--text); }

@@ -436,10 +436,31 @@
    edge — matching the Files tree. */
 .drow { padding: 9px 17px; margin: 0 -6px; cursor: pointer; font-size: 14px; }
 .drow:hover { background: var(--code); }
-/* Active/selected row: accent tint + a left accent bar so the current chat/task
-   reads as selected, not just hovered. */
-.drow.on { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+/* Selected sidebar rows share the accent tint and left bar across every tab. */
+.drow.on, .ftrow.active, .ftdir.selected { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
 .drow.on .ttitle, .drow.on .runwhen { color: var(--text); font-weight: 600; }
+/* Sidebar row actions and inline rename inputs. */
+.rowkebab { flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 2px; border: none; background: none; color: var(--muted); cursor: pointer; border-radius: 6px; opacity: 0; width: 0; overflow: hidden; transition: opacity var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
+.chatrow:hover .rowkebab, .chatrow:focus-within .rowkebab,
+.ttask:hover .rowkebab, .ttask:focus-within .rowkebab,
+.screen-row:hover .rowkebab, .screen-row:focus-within .rowkebab { opacity: .55; width: auto; }
+/* An open menu keeps its kebab visible even once the pointer leaves the row. */
+.rowkebab[aria-expanded='true'] { opacity: 1 !important; width: auto; color: var(--text); }
+.rowkebab:hover { opacity: 1; color: var(--text); }
+
+/* Row action menu: fixed-position (escapes the scrolling list), right edge
+   anchored to the kebab via translateX(-100%). */
+.chatmenu { position: fixed; z-index: var(--z-modal); transform: translateX(-100%); min-width: 150px; display: flex; flex-direction: column; padding: 4px; background: var(--surface-elevated); border: 1px solid var(--line); border-radius: var(--radius-sm); box-shadow: var(--shadow-lg); }
+.cmitem { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: none; background: none; font: inherit; font-size: var(--text-xs); color: var(--text); border-radius: var(--radius-xs, 6px); cursor: pointer; text-align: left; }
+.cmitem:hover { background: var(--surface-hover); }
+.cmitem.danger { color: var(--danger, var(--danger)); }
+.cmitem.danger:hover { background: color-mix(in srgb, var(--danger, var(--danger)) 12%, transparent); }
+.cmitem svg { flex: none; opacity: .7; }
+.cmdiv { height: 1px; margin: 4px 6px; background: var(--line); }
+
+/* Inline rename input, replacing the label at the row's own size. */
+.renamein { flex: 1; min-width: 0; font: inherit; font-size: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--accent); border-radius: 6px; padding: 1px 6px; outline: none; }
+
 .drow .sub { font-size: 11px; color: var(--muted); margin-top: 2px; display: flex; gap: 6px; }
 .tag { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; padding: 1px 7px; border-radius: var(--radius-pill); border: 1px solid var(--line); }
 .tag.sched { color: color-mix(in srgb, var(--success) 78%, var(--text)); border: none; padding: 0; font-size: 11px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -462,7 +483,7 @@
 .drow .runwhen { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 13px; }
 .drow.child { margin-left: 14px; padding-left: 11px; border-left: 2px solid var(--line); }
 .drow .unreadcount { flex: none; min-width: 17px; height: 17px; padding: 0 4px; border-radius: 999px; background: var(--accent); color: var(--text-on-accent); font-size: 11px; line-height: 17px; text-align: center; }
-.drow.unseen { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.drow.unseen:not(.on) { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .drow.unseen .runwhen, .drow.unseen .ttitle { color: var(--ink); font-weight: 600; }
 .drow .dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 .none { color: var(--muted); font-size: 13px; padding: 16px; }

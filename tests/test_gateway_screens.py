@@ -74,6 +74,99 @@ def view(client, pid, path="morning.screen.yaml"):
     return response.json()
 
 
+def test_screen_rename_preserves_references_and_survives_restart(paths):
+    pid = ProfileRegistry(paths).create_profile("Screens", "#109e91").id
+    root = paths.profile_dir(pid) / "workspace"
+    document = screen(title="Morning")
+    with TestClient(create_app(make_manager(paths, persist=True))) as client:
+        upload(client, pid, "reading.card-instance.yaml", instance())
+        upload(client, pid, "morning.screen.yaml", document)
+        original_instance = (root / "reading.card-instance.yaml").read_bytes()
+        before = view(client, pid)
+        response = client.patch(
+            api(pid, "/screens/title"),
+            json={"path": "morning.screen.yaml", "title": "  Утро ☀️  "},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json() == {"path": "morning.screen.yaml", "title": "Утро ☀️", "error": ""}
+        assert yaml.safe_load((root / "morning.screen.yaml").read_bytes()) == {
+            **document,
+            "title": "Утро ☀️",
+        }
+        assert (root / "reading.card-instance.yaml").read_bytes() == original_instance
+        after = view(client, pid)
+        assert after["title"] == after["message"]["title"] == "Утро ☀️"
+        assert after["message"]["component"] == before["message"]["component"]
+        assert after["message"]["data"] == before["message"]["data"]
+        assert after["sources"] == before["sources"]
+        assert client.get(api(pid, "/chats")).json()["chats"] == []
+    with TestClient(create_app(make_manager(paths, persist=True))) as client:
+        assert client.get(api(pid, "/screens")).json()["screens"] == [response.json()]
+        assert view(client, pid)["title"] == "Утро ☀️"
+
+
+def test_screen_rename_does_not_require_loading_instances(paths):
+    pid = ProfileRegistry(paths).create_profile("Screens", "#109e91").id
+    with TestClient(create_app(make_manager(paths))) as client:
+        upload(client, pid, "morning.screen.yaml", screen("missing.card-instance.yaml"))
+        response = client.patch(
+            api(pid, "/screens/title"),
+            json={"path": "morning.screen.yaml", "title": "New name"},
+        )
+        assert response.status_code == 200, response.text
+        assert client.get(api(pid, "/screens")).json()["screens"][0]["title"] == "New name"
+        assert (
+            client.get(
+                api(pid, "/screens/view"), params={"path": "morning.screen.yaml"}
+            ).status_code
+            == 404
+        )
+
+
+@pytest.mark.parametrize(
+    ("path", "title", "status"),
+    [
+        ("morning.screen.yaml", " ", 400),
+        ("morning.screen.yaml", "x" * 201, 400),
+        ("missing.screen.yaml", "New", 404),
+        ("../morning.screen.yaml", "New", 400),
+        ("/morning.screen.yaml", "New", 400),
+        ("morning.card-instance.yaml", "New", 400),
+        ("linked.screen.yaml", "New", 400),
+        ("linked-dir/morning.screen.yaml", "New", 400),
+        ("invalid.screen.yaml", "New", 400),
+    ],
+)
+def test_screen_rename_rejects_invalid_targets_without_writing(
+    paths, tmp_path, path, title, status
+):
+    registry = ProfileRegistry(paths)
+    pid = registry.create_profile("Screens", "#109e91").id
+    other = registry.create_profile("Other", "#109e91").id
+    root = paths.profile_dir(pid) / "workspace"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    external = outside / "morning.screen.yaml"
+    original = yaml.safe_dump(screen()).encode()
+    external.write_bytes(original)
+    with TestClient(create_app(make_manager(paths))) as client:
+        upload(client, pid, "morning.screen.yaml", screen())
+        upload(client, pid, "invalid.screen.yaml", {"title": "Bad"})
+        upload(client, other, "other.screen.yaml", screen(title="Other"))
+        (root / "linked.screen.yaml").symlink_to(external)
+        (root / "linked-dir").symlink_to(outside, target_is_directory=True)
+        response = client.patch(api(pid, "/screens/title"), json={"path": path, "title": title})
+        assert response.status_code == status, response.text
+        assert (root / "morning.screen.yaml").read_bytes() == original
+        assert external.read_bytes() == original
+        assert yaml.safe_load((root / "invalid.screen.yaml").read_bytes()) == {"title": "Bad"}
+        response = client.patch(
+            api(other, "/screens/title"), json={"path": "morning.screen.yaml", "title": "Other"}
+        )
+        assert response.status_code == 404
+        assert (root / "morning.screen.yaml").read_bytes() == original
+
+
 @pytest.mark.parametrize("binding", ["/summary", "summary"])
 def test_shared_references_refresh_once_and_publish_to_other_views_without_chat(paths, binding):
     pid = ProfileRegistry(paths).create_profile("Screens", "#109e91").id

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { api } from '../transport/api/index.ts'
   import { route } from '../router.ts'
-  import { profileEpoch } from '../store.ts'
+  import { profileEpoch, screenRows } from '../store.ts'
   import { errText } from '../lib/errors.ts'
   import { asComponent, asComponents } from '../lib/a2ui.ts'
   import { projectScreenEvent } from '../lib/screens.ts'
@@ -37,7 +37,7 @@
   })
 </script>
 
-<AppBar title={screen?.title || 'Screens'} />
+<AppBar title={$screenRows.find(row => row.path === screen?.path)?.title || screen?.title || 'Screens'} />
 <div class="thread">
   {#if error}
     <div class="empty" role="alert"><h1>Screen could not be opened</h1><p>{error}</p><p>Repair its layout or referenced instance in Files.</p></div>
