@@ -15,7 +15,7 @@ OFFERED = [(ctype, param) for ctype in TYPES for param in params_for(ctype)]
 
 
 def test_every_type_states_what_it_offers():
-    """A type registered empty is an answer; a type missing from the catalogue is not."""
+    """Every type appears in the catalogue, the ones that offer nothing included."""
     assert set(_REGISTRY) == set(TYPES)
 
 
@@ -27,7 +27,7 @@ def test_reasoning_choices_are_the_pinned_ag2_s_own():
 
 @pytest.mark.parametrize(("ctype", "param"), OFFERED, ids=lambda v: getattr(v, "id", v))
 def test_every_offered_parameter_is_one_the_provider_configuration_takes(ctype, param, paths):
-    """AG2 raises on a constructor name it does not have, so an id that drifted fails here."""
+    """Each offered parameter is a constructor name of the real provider configuration."""
     if ctype in PROVIDER_EXTRA:
         pytest.importorskip(PROVIDER_EXTRA[ctype][0])  # the provider's optional library
     value = param.choices[0] if param.kind == "choice" else 1

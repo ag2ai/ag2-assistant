@@ -116,7 +116,7 @@
     else next[id] = value
     params = next
   }
-  // A parameter the Advanced box also names is decided there, not by its control.
+  // The parameters the open Advanced box names; their controls are marked overridden.
   const overridden = $derived(advOpen ? advancedKeys(advText) : new Set<string>())
 
   onMount(loadSecrets)
@@ -194,7 +194,7 @@
           return [id, Object.fromEntries(Object.entries(set).filter(([o]) => taken.includes(o)))]
         }),
     )
-    // Parameters are per type too: the server drops the same ones on save.
+    // Keep only the parameters the new type offers.
     const nextParams = ($llmConfigs.paramsByType?.[next] || []).map((p) => p.id)
     params = Object.fromEntries(Object.entries(params).filter(([id]) => nextParams.includes(id)))
     type = next

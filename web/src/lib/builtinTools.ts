@@ -81,8 +81,7 @@ export function builtinChip(id: string): string {
   return CHIP[id] || id
 }
 
-// The words for one tool option. The same name means the same on every tool that
-// takes it, so these are keyed by the option id alone.
+// The words for one tool option, keyed by the option id alone.
 const OPTION_TEXT: Record<string, BuiltinToolText> = {
   max_uses: { label: 'Use limit', description: 'The most times one turn may use this tool.' },
   allowed_domains: { label: 'Only these domains', description: 'Comma-separated.' },

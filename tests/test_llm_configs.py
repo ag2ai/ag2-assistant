@@ -798,7 +798,7 @@ def test_a_value_outside_a_parameter_s_bounds_is_refused(store, params, named):
 
 
 def test_an_output_limit_overrides_the_app_s_own_budget_and_advanced_overrides_both(store, paths):
-    """Gemini is built with a generous default budget; a Parameter replaces it."""
+    """A set limit replaces the output budget Gemini is built with."""
     entry = store.save_config(
         {"name": "G", "type": "gemini", "model": "g", "params": {"max_output_tokens": 2048}}
     )
