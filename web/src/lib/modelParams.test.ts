@@ -1,16 +1,16 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { MODEL_PARAM_TEXT, choiceLabel, modelParamText } from './modelParams.ts'
+import { MODEL_PARAM_TEXT, advancedKeys, choiceLabel, modelParamText, parseParam } from './modelParams.ts'
 
 // Mirrors assistant/model_params.py's registry. The Python side is the authority
 // on which parameters exist; this table only supplies the words.
 const OFFERED: Record<string, string[]> = {
-  openai: ['reasoning_effort'],
-  gemini: ['thinking_level'],
-  openai_responses: [],
+  openai: ['reasoning_effort', 'temperature', 'max_tokens'],
+  openai_responses: ['temperature', 'max_output_tokens'],
+  gemini: ['thinking_level', 'temperature', 'max_output_tokens'],
+  anthropic: ['temperature', 'max_tokens'],
+  ollama: ['temperature', 'max_tokens'],
   openai_subscription: [],
-  anthropic: [],
-  ollama: [],
   claude_code: [],
   codex: [],
 }
@@ -45,4 +45,31 @@ test('a level reads as a word, and an unknown one as itself capitalised', () => 
   assert.equal(choiceLabel('xhigh'), 'Extra high')
   assert.equal(choiceLabel('medium'), 'Medium')
   assert.equal(choiceLabel('brand_new'), 'Brand_new')
+})
+
+test('the output limit says what it counts on the provider that counts thinking', () => {
+  assert.match(modelParamText('gemini', 'max_output_tokens').description, /thinking/)
+  assert.doesNotMatch(modelParamText('anthropic', 'max_tokens').description, /thinking/)
+})
+
+test('a typed number becomes a value, and an emptied field becomes no value', () => {
+  assert.equal(parseParam('float', '0.7'), 0.7)
+  assert.equal(parseParam('int', '8000'), 8000)
+  assert.equal(parseParam('int', '  '), undefined)
+  assert.equal(parseParam('choice', 'high'), 'high')
+  assert.equal(parseParam('choice', ''), undefined)
+})
+
+test('text that is not a number is kept, so the server can name the mistake', () => {
+  assert.equal(parseParam('int', 'many'), 'many')
+})
+
+test('the Advanced box names the parameters it overrides', () => {
+  assert.deepEqual([...advancedKeys('{"temperature": 0.1, "seed": 7}')], ['temperature', 'seed'])
+})
+
+test('an Advanced box that is empty or not an object overrides nothing', () => {
+  assert.equal(advancedKeys('').size, 0)
+  assert.equal(advancedKeys('{"temperature":').size, 0)
+  assert.equal(advancedKeys('[1, 2]').size, 0)
 })

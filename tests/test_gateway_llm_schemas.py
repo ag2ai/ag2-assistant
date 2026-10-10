@@ -195,10 +195,18 @@ def test_the_list_describes_the_parameters_of_every_type(client):
     any Text model uses it."""
     by_type = client.get("/api/llm-configs").json()["params_by_type"]
     assert set(by_type) == set(llm_configs.TYPES)
-    assert by_type["gemini"] == [
-        {"id": "thinking_level", "kind": "choice", "choices": ["low", "medium", "high"]}
+    assert by_type["gemini"][0] == {
+        "id": "thinking_level",
+        "kind": "choice",
+        "choices": ["low", "medium", "high"],
+        "minimum": None,
+        "maximum": None,
+    }
+    assert by_type["anthropic"] == [
+        {"id": "temperature", "kind": "float", "choices": [], "minimum": 0, "maximum": 1},
+        {"id": "max_tokens", "kind": "int", "choices": [], "minimum": 1, "maximum": None},
     ]
-    assert by_type["anthropic"] == []
+    assert by_type["codex"] == []
 
 
 def test_a_config_pointing_at_a_secret_embeds_that_secret_s_trimmed_view(client):

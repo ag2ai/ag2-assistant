@@ -19,8 +19,10 @@ export type KeySource = z.infer<typeof KeySource>
 // One parameter a config type offers (assistant.model_params).
 export const ModelParam = z.object({
   id: z.string(),
-  kind: z.enum(['choice']),
+  kind: z.enum(['choice', 'int', 'float']),
   choices: z.array(z.string()),
+  minimum: z.number().nullable(),
+  maximum: z.number().nullable(),
 })
 export type ModelParam = z.infer<typeof ModelParam>
 

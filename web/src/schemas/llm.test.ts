@@ -56,9 +56,15 @@ test('LlmConfigList describes the parameters each type offers', () => {
   const parsed = LlmConfigList.parse({
     configs: [{ ...base, params: { reasoning_effort: 'high' } }], active: null, env_override: null,
     provider_deps: {}, builtin_tools_by_type: {},
-    params_by_type: { openai: [{ id: 'reasoning_effort', kind: 'choice', choices: ['low', 'high'] }] },
+    params_by_type: {
+      openai: [
+        { id: 'reasoning_effort', kind: 'choice', choices: ['low', 'high'], minimum: null, maximum: null },
+        { id: 'temperature', kind: 'float', choices: [], minimum: 0, maximum: 2 },
+      ],
+    },
   })
   assert.deepEqual(parsed.params_by_type.openai[0].choices, ['low', 'high'])
+  assert.equal(parsed.params_by_type.openai[1].maximum, 2)
   assert.equal(parsed.configs[0].params.reasoning_effort, 'high')
 })
 

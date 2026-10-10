@@ -19,7 +19,7 @@
   import { TYPE_LABEL } from '../../lib/providerLabels.ts'
   import { llmConfigs } from '../../lib/llm.ts'
   import { builtinToolText } from '../../lib/builtinTools.ts'
-  import { choiceLabel, modelParamText } from '../../lib/modelParams.ts'
+  import { advancedKeys, choiceLabel, modelParamText, parseParam } from '../../lib/modelParams.ts'
   import { API_INTERFACES, usesBaseUrl, offersApiInterface, settleWithoutBaseUrl } from '../../lib/apiInterface.ts'
   import { splitModelId, joinModelId, effortLabel, groupModels } from '../../lib/codexModels.ts'
   import { familyOf } from '../../lib/knownModels.ts'
@@ -99,12 +99,15 @@
   // is the provider's default.
   let params = $state<Record<string, unknown>>(init.params)
   const paramsOffered = $derived($llmConfigs.paramsByType?.[type] || [])
-  function setParam(id: string, value: string) {
+  function setParam(id: string, kind: string, text: string) {
     const next = { ...params }
-    if (value) next[id] = value
-    else delete next[id]
+    const value = parseParam(kind, text)
+    if (value === undefined) delete next[id]
+    else next[id] = value
     params = next
   }
+  // A parameter the Advanced box also names is decided there, not by its control.
+  const overridden = $derived(advOpen ? advancedKeys(advText) : new Set<string>())
 
   onMount(loadSecrets)
 
@@ -573,13 +576,24 @@
     {@const t = modelParamText(type, p.id)}
     <div class="llmfield">
       <label for="lf-param-{p.id}">{t.label} <span class="llmhint">{t.description}</span></label>
-      <select
-        id="lf-param-{p.id}" value={String(params[p.id] ?? '')}
-        onchange={(e) => setParam(p.id, e.currentTarget.value)}
-      >
-        <option value="">Provider default</option>
-        {#each p.choices as c (c)}<option value={c}>{choiceLabel(c)}</option>{/each}
-      </select>
+      {#if p.kind === 'choice'}
+        <select
+          id="lf-param-{p.id}" value={String(params[p.id] ?? '')}
+          onchange={(e) => setParam(p.id, p.kind, e.currentTarget.value)}
+        >
+          <option value="">Provider default</option>
+          {#each p.choices as c (c)}<option value={c}>{choiceLabel(c)}</option>{/each}
+        </select>
+      {:else}
+        <input
+          id="lf-param-{p.id}" type="number" placeholder="Provider default"
+          min={p.minimum ?? undefined} max={p.maximum ?? undefined}
+          step={p.kind === 'int' ? 1 : 0.1}
+          value={String(params[p.id] ?? '')}
+          onchange={(e) => setParam(p.id, p.kind, e.currentTarget.value)}
+        />
+      {/if}
+      {#if overridden.has(p.id)}<span class="llmhint">Overridden by Advanced (JSON) below.</span>{/if}
     </div>
   {/each}
 

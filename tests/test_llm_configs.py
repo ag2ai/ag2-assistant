@@ -766,3 +766,54 @@ def test_advanced_options_override_a_parameter_of_the_same_name(store, paths):
     cfg = Config.for_paths(paths)
     store.derive_onto(cfg, entry)
     assert model_config(cfg).thinking_level == "low"
+
+
+def test_generation_parameters_are_saved_under_the_provider_s_own_names(store):
+    entry = store.save_config(
+        {
+            "name": "A",
+            "type": "anthropic",
+            "model": "claude",
+            "params": {"temperature": 0.2, "max_tokens": 8000},
+        }
+    )
+    assert entry["params"] == {"temperature": 0.2, "max_tokens": 8000}
+
+
+@pytest.mark.parametrize(
+    ("params", "named"),
+    [
+        ({"temperature": 1.5}, "temperature"),  # Anthropic's scale stops at 1
+        ({"temperature": -0.1}, "temperature"),
+        ({"temperature": "warm"}, "temperature"),
+        ({"temperature": True}, "temperature"),
+        ({"max_tokens": 0}, "max_tokens"),
+        ({"max_tokens": 1.5}, "max_tokens"),
+        ({"max_tokens": "many"}, "max_tokens"),
+    ],
+)
+def test_a_value_outside_a_parameter_s_bounds_is_refused(store, params, named):
+    with pytest.raises(ValueError, match=named):
+        store.save_config({"name": "A", "type": "anthropic", "model": "claude", "params": params})
+
+
+def test_an_output_limit_overrides_the_app_s_own_budget_and_advanced_overrides_both(store, paths):
+    """Gemini is built with a generous default budget; a Parameter replaces it."""
+    entry = store.save_config(
+        {"name": "G", "type": "gemini", "model": "g", "params": {"max_output_tokens": 2048}}
+    )
+    cfg = Config.for_paths(paths)
+    store.derive_onto(cfg, entry)
+    assert model_config(cfg).max_output_tokens == 2048
+
+    tuned = store.save_config({**entry, "options": {"max_output_tokens": 512}})
+    store.derive_onto(cfg, tuned)
+    assert model_config(cfg).max_output_tokens == 512
+
+
+def test_a_subscription_text_model_offers_no_parameters(store):
+    """The ChatGPT backend rejects every tunable, so none is stored for it."""
+    entry = store.save_config(
+        {"name": "S", "type": "openai_subscription", "model": "gpt-5", "params": {"temperature": 1}}
+    )
+    assert entry["params"] == {}

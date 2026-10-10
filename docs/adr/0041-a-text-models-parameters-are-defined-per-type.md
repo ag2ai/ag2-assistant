@@ -23,7 +23,10 @@ and Gemini's thinking has three, and "high" on one is not "high" on the other. A
 normalised `reasoning: high` would promise an equivalence that does not exist.
 
 A Parameter's id is therefore the constructor name AG2's provider configuration takes,
-and its choices are that provider's. Types that offer none are registered empty.
+and its choices or bounds are that provider's: the output limit is `max_output_tokens`
+on Gemini and OpenAI · Responses and `max_tokens` elsewhere, and temperature stops at 1
+on Anthropic and at 2 on the rest. Types that offer none are registered empty — the
+ChatGPT subscription, whose backend refuses every tunable, and the CLI-login types.
 
 ### 2. A Parameter is an attribute of the Text model, not of a Chat
 
@@ -40,19 +43,21 @@ that already has five, and a second place to look for why a turn behaved as it d
 
 A Parameter that is not set is not stored and not sent. An entry with no `params` key
 is one that sets none, so there is nothing to migrate and nothing to seed — unlike
-`builtin_tools`, no behaviour was ever automatic here.
+`builtin_tools`, no behaviour was ever automatic here. A set Parameter does replace a
+default the app itself supplies, such as Gemini's output budget.
 
 ### 4. "Advanced (JSON)" keeps the last word
 
 Parameters merge onto the provider configuration before `options`. A Text model tuned
 by hand before this change keeps behaving as it did, and the escape hatch stays one.
+The editor marks a control whose Parameter the Advanced box also names.
 
 ### 5. The server validates; the web names
 
-A value outside a Parameter's choices is refused on save, and a Parameter the type does
-not offer is dropped, as an unoffered provider tool is. The gateway ships
-`params_by_type` — id, kind and choices — and `web/src/lib/modelParams.ts` supplies the
-words, the same split as `lib/builtinTools.ts`.
+A value outside a Parameter's choices or bounds is refused on save, and a Parameter the
+type does not offer is dropped, as an unoffered provider tool is. The gateway ships
+`params_by_type` — id, kind, choices and bounds — and `web/src/lib/modelParams.ts`
+supplies the words, the same split as `lib/builtinTools.ts`.
 
 ## Consequences
 
@@ -62,5 +67,9 @@ words, the same split as `lib/builtinTools.ts`.
 - **OpenAI · Responses and Anthropic offer no reasoning Parameter.** AG2's
   `OpenAIResponsesConfig` and `AnthropicConfig` have no reasoning field, and the former
   has no request-body passthrough either. Each becomes one row once AG2 exposes it.
+- **The Chat Completions output limit is `max_tokens`.** That type exists for
+  OpenAI-compatible endpoints, which take it universally; OpenAI's own reasoning models
+  want `max_completion_tokens` and refuse this one, loudly, where an endpoint that
+  ignored the newer name would do so silently.
 - The catalogue is per type, not per model name. A level or a value one particular
   model rejects is not predicted; the editor's Test button is how the person finds out.

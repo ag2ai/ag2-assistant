@@ -30,8 +30,10 @@ class ModelParamOut(BaseModel):
     """One parameter a config type offers (assistant.model_params)."""
 
     id: str
-    kind: Literal["choice"]
+    kind: Literal["choice", "int", "float"]
     choices: list[str]
+    minimum: float | None
+    maximum: float | None
 
 
 class LlmConfigOut(BaseModel):
