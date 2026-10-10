@@ -26,6 +26,13 @@ export const ModelParam = z.object({
 })
 export type ModelParam = z.infer<typeof ModelParam>
 
+// One option a provider tool takes on a config type (assistant.builtin_tools).
+export const BuiltinOption = z.object({
+  id: z.string(),
+  kind: z.enum(['int', 'domains']),
+})
+export type BuiltinOption = z.infer<typeof BuiltinOption>
+
 export const LlmConfig = z.object({
   id: z.string(),
   name: z.string(),
@@ -34,9 +41,7 @@ export const LlmConfig = z.object({
   base_url: z.string(),
   host: z.string(),
   options: z.record(z.string(), z.unknown()),
-  // Provider-native tools switched on, as {tool id: options}. Options are always
-  // empty today — every field on the registered tools is optional — but the shape
-  // is a map so an option panel can land without changing the contract.
+  // Provider-native tools switched on, as {tool id: options}.
   builtin_tools: z.record(z.string(), z.record(z.string(), z.unknown())),
   // {parameter id: value}; unset means the provider's default.
   params: z.record(z.string(), z.unknown()),
@@ -69,6 +74,8 @@ export const LlmConfigList = z.object({
   // are lib/builtinTools.ts's. Every type, not just the configured ones, so the
   // form can render a type no config uses yet.
   builtin_tools_by_type: z.record(z.string(), z.array(z.string())),
+  // type -> tool id -> the options that tool takes there.
+  builtin_options_by_type: z.record(z.string(), z.record(z.string(), z.array(BuiltinOption))),
   // type -> the parameters that type offers; the words are lib/modelParams.ts's.
   params_by_type: z.record(z.string(), z.array(ModelParam)),
 })

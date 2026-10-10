@@ -24,7 +24,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from assistant import live_configs, llm_configs, provider_catalog, voice_providers
-from assistant.builtin_tools import builtin_ids_for
+from assistant.builtin_tools import OPTION_KINDS, builtin_ids_for, builtin_tools_for
 from assistant.coding.model_catalog import CatalogModel, as_view
 from assistant.config import Config
 from assistant.gateway.routes.common import reload_all
@@ -211,6 +211,14 @@ def build_router(
             # type -> the provider-native tool ids it offers. Ids only: the labels
             # are the web's (lib/builtinTools.ts), like every other type label.
             "builtin_tools_by_type": {t: list(builtin_ids_for(t)) for t in llm_configs.TYPES},
+            # type -> tool id -> the options that tool takes there, each with its kind.
+            "builtin_options_by_type": {
+                t: {
+                    tool.id: [{"id": f, "kind": OPTION_KINDS[f]} for f in tool.fields]
+                    for tool in builtin_tools_for(t)
+                }
+                for t in llm_configs.TYPES
+            },
             # type -> the parameters it offers; the words are lib/modelParams.ts's.
             "params_by_type": {t: [asdict(p) for p in params_for(t)] for t in llm_configs.TYPES},
         }

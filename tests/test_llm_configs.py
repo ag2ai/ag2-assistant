@@ -817,3 +817,72 @@ def test_a_subscription_text_model_offers_no_parameters(store):
         {"name": "S", "type": "openai_subscription", "model": "gpt-5", "params": {"temperature": 1}}
     )
     assert entry["params"] == {}
+
+
+# ---- Provider-tool options ---------------------------------------------------------
+
+
+def _anthropic(store, builtin_tools):
+    return store.save_config(
+        {"name": "A", "type": "anthropic", "model": "claude", "builtin_tools": builtin_tools}
+    )
+
+
+def test_a_provider_tool_s_options_are_saved_with_it(store):
+    options = {"max_uses": 3, "allowed_domains": ["docs.python.org", "example.com"]}
+    entry = _anthropic(store, {"web_search": options})
+    assert store.get_config(entry["id"])["builtin_tools"] == {"web_search": options}
+
+
+def test_an_option_the_type_does_not_honour_is_dropped(store):
+    """The Responses mapper reads allowed_domains and discards blocked_domains."""
+    entry = store.save_config(
+        {
+            "name": "R",
+            "type": "openai_responses",
+            "model": "gpt-5",
+            "builtin_tools": {
+                "web_search": {
+                    "allowed_domains": ["example.com"],
+                    "blocked_domains": ["spam.example"],
+                    "invented": 1,
+                }
+            },
+        }
+    )
+    assert entry["builtin_tools"] == {"web_search": {"allowed_domains": ["example.com"]}}
+
+
+def test_an_emptied_option_is_not_stored(store):
+    entry = _anthropic(store, {"web_search": {"max_uses": None, "blocked_domains": []}})
+    assert entry["builtin_tools"] == {"web_search": {}}
+
+
+@pytest.mark.parametrize(
+    ("options", "named"),
+    [
+        ({"max_uses": 0}, "max_uses"),
+        ({"max_uses": "few"}, "max_uses"),
+        ({"max_uses": True}, "max_uses"),
+        ({"allowed_domains": "example.com"}, "allowed_domains"),
+        ({"blocked_domains": ["ok.example", ""]}, "blocked_domains"),
+        ({"blocked_domains": [7]}, "blocked_domains"),
+    ],
+)
+def test_a_malformed_option_is_refused(store, options, named):
+    with pytest.raises(ValueError, match=named):
+        _anthropic(store, {"web_search": options})
+
+
+def test_allowed_and_blocked_domains_cannot_be_combined(store):
+    """Anthropic refuses a tool that carries both lists."""
+    both = {"allowed_domains": ["a.example"], "blocked_domains": ["b.example"]}
+    with pytest.raises(ValueError, match="allowed_domains"):
+        _anthropic(store, {"web_fetch": both})
+
+
+def test_switching_a_provider_tool_off_forgets_its_options(store):
+    on = _anthropic(store, {"web_search": {"max_uses": 3}})
+    off = store.save_config({**on, "builtin_tools": {}})
+    again = store.save_config({**off, "builtin_tools": {"web_search": {}}})
+    assert again["builtin_tools"] == {"web_search": {}}

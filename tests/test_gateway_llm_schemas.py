@@ -209,6 +209,27 @@ def test_the_list_describes_the_parameters_of_every_type(client):
     assert by_type["codex"] == []
 
 
+def test_the_list_names_the_options_each_provider_tool_takes(client):
+    by_type = client.get("/api/llm-configs").json()["builtin_options_by_type"]
+    assert set(by_type) == set(llm_configs.TYPES)
+    assert by_type["openai_responses"] == {
+        "web_search": [{"id": "allowed_domains", "kind": "domains"}],
+        "code_execution": [],
+    }
+    assert by_type["anthropic"]["web_fetch"][0] == {"id": "max_uses", "kind": "int"}
+    assert by_type["ollama"] == {}
+
+
+def test_a_provider_tool_option_round_trips_through_a_save(client):
+    saved = _save_llm(
+        client,
+        type="openai_responses",
+        model="gpt-5",
+        builtin_tools={"web_search": {"allowed_domains": ["example.com"]}},
+    )
+    assert saved["builtin_tools"] == {"web_search": {"allowed_domains": ["example.com"]}}
+
+
 def test_a_config_pointing_at_a_secret_embeds_that_secret_s_trimmed_view(client):
     sid = client.post("/api/secrets", json={"name": "K", "value": "sk-6"}).json()["secret"]["id"]
     saved = _save_llm(client, secret_id=sid)

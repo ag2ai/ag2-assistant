@@ -49,9 +49,7 @@ class BuiltinTool:
     # Local tool names this replaces when enabled — ours and the builtin do the
     # same job, and offering both only invites the model to pick badly.
     suppresses: tuple[str, ...] = ()
-    # Option names this type actually honours. Empty everywhere today: every
-    # field on the three registered tools is optional, so nothing needs
-    # configuring. Declared because the option set is per-type when it arrives.
+    # Option names this type actually honours — the ones its AG2 mapper reads.
     fields: tuple[str, ...] = field(default=())
 
 
@@ -77,22 +75,29 @@ _FETCH: _KindFields = {"capability": "web", "suppresses": ("web_fetch",)}
 # real files (approval-gated), the provider's runs on their servers and cannot.
 _CODE: _KindFields = {"capability": "code"}
 
+# Option name -> its kind: "int" is a whole number of at least 1, "domains" a list
+# of host names. One table, because a name means the same on every tool that takes it.
+OPTION_KINDS = {"max_uses": "int", "allowed_domains": "domains", "blocked_domains": "domains"}
+
+_ANTHROPIC_WEB = ("max_uses", "allowed_domains", "blocked_domains")
+
 register(
     "anthropic",
-    BuiltinTool("web_search", WebSearchTool, **_SEARCH),
-    BuiltinTool("web_fetch", WebFetchTool, **_FETCH),
+    BuiltinTool("web_search", WebSearchTool, fields=_ANTHROPIC_WEB, **_SEARCH),
+    BuiltinTool("web_fetch", WebFetchTool, fields=_ANTHROPIC_WEB, **_FETCH),
     BuiltinTool("code_execution", CodeExecutionTool, **_CODE),
 )
 
+# The Responses mapper sends max_uses too, but OpenAI documents no such field.
 register(
     "openai_responses",
-    BuiltinTool("web_search", WebSearchTool, **_SEARCH),
+    BuiltinTool("web_search", WebSearchTool, fields=("allowed_domains",), **_SEARCH),
     BuiltinTool("code_execution", CodeExecutionTool, **_CODE),
 )
 
 register(
     "gemini",
-    BuiltinTool("web_search", WebSearchTool, **_SEARCH),
+    BuiltinTool("web_search", WebSearchTool, fields=("blocked_domains",), **_SEARCH),
     BuiltinTool("web_fetch", WebFetchTool, **_FETCH),
     BuiltinTool("code_execution", CodeExecutionTool, **_CODE),
 )
@@ -127,6 +132,29 @@ def builtin_ids_for(ctype: str) -> tuple[str, ...]:
 def find_builtin(ctype: str, tool_id: str) -> BuiltinTool | None:
     """One registered tool by type + id, or None when this type doesn't offer it."""
     return next((t for t in builtin_tools_for(ctype) if t.id == tool_id), None)
+
+
+def _checked_option(name: str, value: object) -> object:
+    """``value`` if this option accepts it, else a ValueError naming the option."""
+    if OPTION_KINDS[name] == "int":
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(f"{name} must be a whole number of at least 1, not {value!r}")
+        return value
+    if not isinstance(value, list) or not all(isinstance(d, str) and d.strip() for d in value):
+        raise ValueError(f"{name} must be a list of domain names, not {value!r}")
+    return [d.strip() for d in value]
+
+
+def clean_options(spec: BuiltinTool, raw: Mapping) -> dict:
+    """One tool's stored options, filtered to the ones this type honours."""
+    cleaned = {}
+    for name in spec.fields:
+        value = raw.get(name)
+        if value is not None and value != []:
+            cleaned[name] = _checked_option(name, value)
+    if "allowed_domains" in cleaned and "blocked_domains" in cleaned:
+        raise ValueError("set allowed_domains or blocked_domains, not both")
+    return cleaned
 
 
 def active_builtins(

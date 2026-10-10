@@ -42,7 +42,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from secrets import token_hex
 
-from assistant.builtin_tools import builtin_ids_for
+from assistant.builtin_tools import clean_options, find_builtin
 from assistant.config import apply_provider_defaults, read_global_config, update_global_section
 from assistant.model_params import clean_params
 from assistant.paths import Paths
@@ -200,14 +200,14 @@ def _clean_builtin_tools(raw: dict, ctype: str) -> dict:
         return dict(_LEGACY_BUILTINS.get(ctype, {}))
     if not isinstance(stored, dict):
         raise ValueError("builtin_tools must be a JSON object")
-    offered = builtin_ids_for(ctype)
     cleaned = {}
     for tool_id, options in stored.items():
-        if tool_id not in offered:
+        spec = find_builtin(ctype, tool_id)
+        if spec is None:
             continue  # a type change, or a hand-edited config.yaml
         if options is not None and not isinstance(options, dict):
             raise ValueError(f"builtin_tools[{tool_id!r}] options must be a JSON object")
-        cleaned[str(tool_id)] = dict(options or {})
+        cleaned[str(tool_id)] = clean_options(spec, options or {})
     return cleaned
 
 

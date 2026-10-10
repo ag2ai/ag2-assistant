@@ -155,3 +155,35 @@ def test_no_builtins_leaves_the_local_toolset_exactly_as_before():
             "get_weather",
             "get_quotes",
         ]
+
+
+# --- options ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "ctype,tool_id,expected",
+    [
+        ("anthropic", "web_search", ("max_uses", "allowed_domains", "blocked_domains")),
+        ("anthropic", "web_fetch", ("max_uses", "allowed_domains", "blocked_domains")),
+        ("anthropic", "code_execution", ()),
+        ("openai_responses", "web_search", ("allowed_domains",)),
+        ("gemini", "web_search", ("blocked_domains",)),
+        ("gemini", "web_fetch", ()),
+    ],
+)
+def test_each_tool_offers_only_the_options_its_provider_s_mapper_reads(ctype, tool_id, expected):
+    assert find_builtin(ctype, tool_id).fields == expected
+
+
+async def test_a_saved_option_is_on_the_provider_tool_the_agent_is_built_with():
+    tools = build_agent_tools(
+        "anthropic",
+        capabilities=["web"],
+        builtin={"web_search": {"max_uses": 3, "blocked_domains": ["spam.example"]}},
+    )
+    search = next(t for t in tools if getattr(t, "name", "") == "web_search")
+    # Options are plain values, so the schema resolves without a conversation context.
+    (schema,) = await search.schemas(None)
+    assert schema.max_uses == 3
+    assert schema.blocked_domains == ["spam.example"]
+    assert schema.allowed_domains is None

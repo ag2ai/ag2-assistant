@@ -36,6 +36,13 @@ class ModelParamOut(BaseModel):
     maximum: float | None
 
 
+class BuiltinOptionOut(BaseModel):
+    """One option a provider tool takes on a config type (assistant.builtin_tools)."""
+
+    id: str
+    kind: Literal["int", "domains"]
+
+
 class LlmConfigOut(BaseModel):
     """One named LLM configuration as the API exposes it.
 
@@ -88,6 +95,8 @@ class LlmConfigListResponse(BaseModel):
     # type -> the provider-native tool ids it offers, for every type (same reason
     # as provider_deps). Ids only — the labels are the web's.
     builtin_tools_by_type: dict[str, list[str]]
+    # type -> tool id -> the options that tool takes there.
+    builtin_options_by_type: dict[str, dict[str, list[BuiltinOptionOut]]]
     # type -> the parameters it offers, for every type. Ids only, as above.
     params_by_type: dict[str, list[ModelParamOut]]
 

@@ -96,6 +96,8 @@ the `provider` parameter of `build_agent_tools` are both deleted.
 
 ### 5. No option UI
 
+*(Amended — see "Amendment: a switched-on tool has options" below.)*
+
 Every field on the three registered tools is optional (`None` = the provider's
 default), so across the eight (type × tool) pairs shipped, none requires
 configuration. Storage is still a map of id → options so a panel can land later
@@ -119,3 +121,31 @@ without a data migration; the values are empty today.
   there is no entry, so Anthropic gets our local fetcher where it previously got
   the native one. That path has no Settings UI to express a choice through, and
   re-adding a provider-keyed default would resurrect the constant being deleted.
+
+## Amendment: a switched-on tool has options
+
+Decision 5 held while nothing needed configuring. A search with no cap on how often a
+turn may run it, and no way to keep it to trusted sources, turned out to need both.
+
+Each registration now declares, in `fields`, the options that type honours for that
+tool — exactly the ones its AG2 mapper reads, which is the per-type argument of
+decision 1 applied one level down:
+
+| type · tool | `max_uses` | `allowed_domains` | `blocked_domains` |
+|---|---|---|---|
+| anthropic · web_search | yes | yes | yes |
+| anthropic · web_fetch | yes | yes | yes |
+| openai_responses · web_search | — | yes | — |
+| gemini · web_search | — | — | yes |
+| gemini · web_fetch | — | — | — |
+
+The Responses mapper does send `max_uses`, but OpenAI documents no such field, so it is
+not offered. The other options the AG2 classes take stay reachable only in code.
+
+Options are stored where decision 5 left room for them, in the `{id: options}` map, so
+there is no migration. On save an option the type does not declare is dropped, a
+malformed one is refused, and an allowed list together with a blocked list is refused —
+Anthropic accepts one or the other. Switching a tool off removes its entry and its
+options with it. The gateway ships `builtin_options_by_type`; the option's words are
+`lib/builtinTools.ts`'s, keyed by the option id alone because a name means the same on
+every tool that takes it.

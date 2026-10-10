@@ -18,7 +18,9 @@
   import { autoSecretName, sortForProvider } from '../../lib/secretsUtil.ts'
   import { TYPE_LABEL } from '../../lib/providerLabels.ts'
   import { llmConfigs } from '../../lib/llm.ts'
-  import { builtinToolText } from '../../lib/builtinTools.ts'
+  import {
+    builtinOptionText, builtinToolText, formatOption, parseOption,
+  } from '../../lib/builtinTools.ts'
   import { advancedKeys, choiceLabel, modelParamText, parseParam } from '../../lib/modelParams.ts'
   import { API_INTERFACES, usesBaseUrl, offersApiInterface, settleWithoutBaseUrl } from '../../lib/apiInterface.ts'
   import { splitModelId, joinModelId, effortLabel, groupModels } from '../../lib/codexModels.ts'
@@ -81,8 +83,7 @@
   let pastedKey = $state('')            // non-empty → create-or-snap a Secret on save
   let advOpen = $state(init.hasOptions) // Advanced JSON escape hatch (extra provider kwargs)
   let advText = $state(init.advText)
-  // Provider-native tools switched on, as {tool id: options}. Options stay empty —
-  // every field on the offered tools is optional, so there is nothing to edit yet.
+  // Provider-native tools switched on, as {tool id: options}.
   let builtinTools = $state<Record<string, Record<string, unknown>>>(init.builtinTools)
 
   // Which provider tools THIS type offers. The server is the authority (it ships
@@ -93,6 +94,15 @@
     if (on) next[id] = next[id] || {}
     else delete next[id]
     builtinTools = next
+  }
+  // The options each offered tool takes on THIS type; an unset one is absent.
+  const builtinOptions = $derived($llmConfigs.builtinOptionsByType?.[type] || {})
+  function setBuiltinOption(toolId: string, optionId: string, kind: string, text: string) {
+    const options = { ...builtinTools[toolId] }
+    const value = parseOption(kind, text)
+    if (value === undefined) delete options[optionId]
+    else options[optionId] = value
+    builtinTools = { ...builtinTools, [toolId]: options }
   }
 
   // Parameters THIS type offers, and the ones set; an unset one is absent, which
@@ -175,8 +185,14 @@
     // answer for, mirroring the server's own filter, so the form never shows a
     // switch a save would silently strip.
     const offered = $llmConfigs.builtinByType?.[next] || []
+    const options = $llmConfigs.builtinOptionsByType?.[next] || {}
     builtinTools = Object.fromEntries(
-      Object.entries(builtinTools).filter(([id]) => offered.includes(id)),
+      Object.entries(builtinTools)
+        .filter(([id]) => offered.includes(id))
+        .map(([id, set]) => {
+          const taken = (options[id] || []).map((o) => o.id)
+          return [id, Object.fromEntries(Object.entries(set).filter(([o]) => taken.includes(o)))]
+        }),
     )
     // Parameters are per type too: the server drops the same ones on save.
     const nextParams = ($llmConfigs.paramsByType?.[next] || []).map((p) => p.id)
@@ -619,6 +635,22 @@
             {#if builtinTools[id] && t.note}<span class="llmhint">{t.note}</span>{/if}
           </span>
         </label>
+        <!-- A switched-on tool shows the options this type honours for it. -->
+        {#if builtinTools[id] && builtinOptions[id]?.length}
+          <div class="llmtoolopts">
+            {#each builtinOptions[id] as o (o.id)}
+              {@const words = builtinOptionText(o.id)}
+              <label for="lf-tool-{id}-{o.id}">{words.label} <span class="llmhint">{words.description}</span></label>
+              <input
+                id="lf-tool-{id}-{o.id}" type={o.kind === 'int' ? 'number' : 'text'}
+                min={o.kind === 'int' ? 1 : undefined}
+                placeholder={o.kind === 'int' ? 'No limit' : 'example.com, docs.python.org'}
+                value={formatOption(builtinTools[id][o.id])}
+                onchange={(e) => setBuiltinOption(id, o.id, o.kind, e.currentTarget.value)}
+              />
+            {/each}
+          </div>
+        {/if}
       {/each}
     </div>
   {/if}
