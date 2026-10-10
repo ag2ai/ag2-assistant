@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from assistant.a2ui_skill import a2ui_skill_descriptor
 from assistant.agent import build_skills_runtime, bundled_skills_dir
+from assistant.card_author import card_author_descriptor
 from assistant.gateway.profile_manager import ProfileRuntime
 from assistant.gateway.routes.deps import GatewayDeps
 from assistant.gateway.schemas import (
@@ -84,7 +85,14 @@ def _skill_store(d: GatewayDeps) -> SkillStateStore:
 def _shared_skills(config) -> list:
     """Every skill the shared layers offer: the A2UI Skill's descriptor first, then
     the ones on disk, so a same-named skill on disk shadows it."""
-    merged = {s.name: s for s in [a2ui_skill_descriptor(), *build_skills_runtime(config).skills]}
+    merged = {
+        s.name: s
+        for s in [
+            a2ui_skill_descriptor(),
+            card_author_descriptor(),
+            *build_skills_runtime(config).skills,
+        ]
+    }
     return list(merged.values())
 
 

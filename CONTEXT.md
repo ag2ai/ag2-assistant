@@ -144,6 +144,19 @@ data, the Card carries only the shape.
 _Avoid_: surface (the protocol's word, and `surfaceId` in the code; in this
 glossary the rendered thing is a Card instance)
 
+**Ephemeral Card**:
+A Card generated within a **Chat**, kept in its history across restarts and available
+for experimentation with the same capabilities as a catalogued Card. Its definition
+enters the **Card catalog** only after the user explicitly saves it as a **Profile card**.
+_Avoid_: unsaved Card (ambiguous with a failed file write), temporary Card (does not
+say whether it is rendered or catalogued)
+
+**Card draft**:
+One **Ephemeral Card** being iterated in a **Chat**, with its own identity and current
+version. A Chat may contain several independent drafts; earlier versions remain in
+history, and only the current version of each draft can be saved.
+_Avoid_: active draft (there may be several), selected Card (no separate selection state)
+
 **Card catalog**:
 The set of Cards the agent is offered — what it may render into. Resolved for one
 profile from the three card layers, minus whatever is **Disabled** or
@@ -189,16 +202,18 @@ _Avoid_: **File reference** (the `@`-pointer into a message), **Mentioned in** (
 backlink from a file to the conversations touching it)
 
 **Rich view** (the `rich-views` **Skill**):
-The Bundled Skill the **Card catalog** is disclosed through. Its description is the only
-A2UI text a turn carries at all, and names each Card's **topic** — the case it is ready
-for; its body is the index of this profile's Cards and how to draw one; each Card is a
-script of the Skill that draws it (ADR 0040); one Card's schema and worked call, and the
-A2UI protocol at large, are resources read on demand. "Rich view" is what it is called where a user meets it, because the
-switch is theirs: turned off, the profile is offered no Card and its turns carry no A2UI
-runtime — while a Card instance already in a **Thread**, and a Card the server fills for
-itself, go on drawing.
+The Bundled **Skill** that discloses the **Card catalog** and lets the agent draw
+instances of its available Cards. Turning it off stops new drawings through this
+Skill; the independent **Card author**, historical instances and server-filled views
+keep their own availability.
 _Avoid_: A2UI skill (the protocol's name, not the user's), Card skill (that is the Skill
 that *writes* Cards)
+
+**Card author** (the `card-author` **Skill**):
+The Bundled **Skill** for generating and revising **Ephemeral Cards** from the
+**Card vocabulary**. It is enabled independently of **Rich view**; turning it off
+prevents new authoring but leaves historical drafts available for explicit saving.
+_Avoid_: Card skill, rich views (the rendered capability, not the authoring capability)
 
 **Permissions**:
 The security policy of allowed commands (command-prefix and whole-tool grants).

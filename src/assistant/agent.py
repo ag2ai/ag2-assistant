@@ -21,6 +21,7 @@ from pydantic import Field
 
 from assistant.a2ui import CardCatalog
 from assistant.a2ui_skill import A2UISkillRuntime
+from assistant.card_author import CardAuthorRuntime
 from assistant.codex_auth import BACKEND_BASE, CodexAuth, default_headers
 from assistant.coding import acp_provider
 from assistant.config import Config, load_config
@@ -299,11 +300,19 @@ def resolve_a2ui_skill(config: Config):
     return FilteredSkillRuntime(A2UISkillRuntime(CardCatalog(config)), _availability(config))
 
 
-def build_skills_plugin(config: Config, runtime, *, catalog=None, snapshot: bool = False):
+def build_skills_plugin(
+    config: Config, runtime, *, catalog=None, snapshot: bool = False, drafts=None
+):
     """Build progressive disclosure and activation tools over resolved Skill availability."""
+    author = FilteredSkillRuntime(
+        CardAuthorRuntime(drafts, catalog or CardCatalog(config)),
+        _availability(config),
+        snapshot=snapshot,
+    )
     if snapshot:
         runtime.invalidate()
         return SkillPlugin(
+            author,
             FilteredSkillRuntime(
                 A2UISkillRuntime(catalog or CardCatalog(config)),
                 _availability(config),
@@ -311,7 +320,7 @@ def build_skills_plugin(config: Config, runtime, *, catalog=None, snapshot: bool
             ),
             FilteredSkillRuntime(runtime, _availability(config), snapshot=True),
         )
-    return SkillPlugin(resolve_a2ui_skill(config), resolve_skills(config, runtime))
+    return SkillPlugin(author, resolve_a2ui_skill(config), resolve_skills(config, runtime))
 
 
 def build_skills_install_tools(config: Config, runtime) -> list:

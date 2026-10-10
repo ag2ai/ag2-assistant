@@ -16,7 +16,11 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError, ValidationError
+from referencing.exceptions import Unresolvable
 
+from assistant.cards.layout import validate_primitive
 from assistant.state_store import ORIGIN_GLOBAL, StateStore
 
 logger = logging.getLogger(__name__)
@@ -156,8 +160,28 @@ def _read_card(path: Path, components: frozenset[str], origin: str) -> Card:
         raw = yaml.safe_load(path.read_text())
     except (OSError, yaml.YAMLError) as exc:
         raise CardError(f"unreadable: {exc}") from exc
+    return validate_card(raw, components, path=path, origin=origin)
+
+
+def validate_card(
+    raw: Any,
+    components: Iterable[str] = (),
+    *,
+    path: Path | None = None,
+    origin: str = ORIGIN_GLOBAL,
+) -> Card:
+    """Validate a file or in-memory definition using the same Card rules."""
+    try:
+        size = len(json.dumps(raw, ensure_ascii=False).encode())
+    except (TypeError, ValueError) as exc:
+        raise CardError(f"definition must be JSON-compatible: {exc}") from exc
+    if size > FILE_BUDGET:
+        raise CardError(f"definition is {size} bytes, over {FILE_BUDGET}")
     if not isinstance(raw, dict):
         raise CardError("not a YAML mapping")
+    for key in ("name", "description", "topic"):
+        if key in raw and not isinstance(raw[key], str):
+            raise CardError(f"{key} must be text")
     name = str(raw.get("name") or "").strip()
     description = str(raw.get("description") or "").strip()
     if not name:
@@ -172,7 +196,12 @@ def _read_card(path: Path, components: frozenset[str], origin: str) -> Card:
     fields = raw.get("fields")
     if not isinstance(fields, dict) or not fields:
         raise CardError("no fields")
-    required = tuple(str(key) for key in raw.get("required") or ())
+    if reserved := set(fields) & {"id", "component", "accessibility", "type"}:
+        raise CardError(f"fields use reserved component metadata: {', '.join(sorted(reserved))}")
+    required_raw = raw.get("required", [])
+    if not isinstance(required_raw, list) or any(not isinstance(key, str) for key in required_raw):
+        raise CardError("required must be a list of field names")
+    required = tuple(required_raw)
     if unknown := [key for key in required if key not in fields]:
         raise CardError(f"required names fields the Card does not declare: {', '.join(unknown)}")
     example = raw.get("example")
@@ -184,17 +213,40 @@ def _read_card(path: Path, components: frozenset[str], origin: str) -> Card:
         raise CardError(f"example omits required fields: {', '.join(missing)}")
     if (size := len(json.dumps(example, separators=(",", ":")))) > EXAMPLE_BUDGET:
         raise CardError(f"example is {size} characters, over {EXAMPLE_BUDGET}")
+    validate_card_data(fields, required, example, label="example")
     return Card(
         name=name,
         description=description,
         fields=dict(fields),
         required=required,
-        layout=_layout(raw.get("layout"), components),
+        layout=_layout(raw.get("layout"), frozenset(components)),
         example=dict(example),
         topic=topic,
         path=path,
         origin=origin,
     )
+
+
+def validate_card_data(fields: dict, required: tuple[str, ...], data: Any, *, label="data") -> None:
+    """Validate instance values or a worked example against the declared fields."""
+    schema = {
+        "type": "object",
+        "properties": fields,
+        "required": list(required),
+        "additionalProperties": False,
+    }
+    for keyword in ("$ref", "$dynamicRef"):
+        for ref in _values_for(fields, keyword):
+            if not isinstance(ref, str) or not ref.startswith("#"):
+                raise CardError("fields may reference only local schemas")
+    try:
+        Draft202012Validator.check_schema(schema)
+        Draft202012Validator(schema).validate(data)
+    except (SchemaError, ValidationError) as exc:
+        at = "/".join(str(part) for part in exc.absolute_path)
+        raise CardError(f"{label} {at}: {exc.message}") from exc
+    except Unresolvable as exc:
+        raise CardError(f"invalid fields reference: {exc}") from exc
 
 
 def _layout(raw: Any, components: frozenset[str]) -> tuple[dict[str, Any], ...]:
@@ -219,10 +271,62 @@ def _layout(raw: Any, components: frozenset[str]) -> tuple[dict[str, Any], ...]:
         raise CardError(f"layout has no {LAYOUT_ROOT!r} component to be rooted at")
     known = set(ids)
     for node in nodes:
+        try:
+            validate_primitive(node)
+        except ValueError as exc:
+            raise CardError(str(exc)) from exc
         for reference in _references(node):
             if reference not in known:
                 raise CardError(f"layout references unknown id {reference!r}")
+    _binding_scopes({node["id"]: node for node in nodes})
     return tuple(nodes)
+
+
+def _values_for(value: Any, key: str):
+    """Yield values of a named property throughout a JSON tree."""
+    if isinstance(value, dict):
+        for name, item in value.items():
+            if name == key:
+                yield item
+            yield from _values_for(item, key)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _values_for(item, key)
+
+
+def _binding_scopes(nodes: dict[str, dict]) -> None:
+    """Check bindings in their inherited repeated-item or Table-template scope."""
+    visited: set[tuple[str, bool]] = set()
+
+    def visit(node_id: str, scoped: bool, ancestors: frozenset[str]) -> None:
+        if len(ancestors) >= 24:
+            raise CardError("layout exceeds the renderer's maximum depth of 24")
+        if node_id in ancestors:
+            raise CardError(f"cyclic layout reference at {node_id!r}")
+        if (node_id, scoped) in visited:
+            return
+        visited.add((node_id, scoped))
+        node = nodes[node_id]
+        unscoped_properties = {
+            key: value
+            for key, value in node.items()
+            if not (node["component"] == "Table" and key in {"cells", "key", "win"})
+        }
+        if not scoped and any(
+            isinstance(path, str) and path.startswith(".")
+            for path in _values_for(unscoped_properties, "path")
+        ):
+            raise CardError(f"relative binding outside a template scope in {node_id!r}")
+        children = node.get("children")
+        repeated = children.get("componentId") if isinstance(children, dict) else None
+        templates = {node.get(key) for key in TEMPLATE_IDS.get(node["component"], ())}
+        for ref in _references(node):
+            visit(ref, scoped or ref == repeated or ref in templates, ancestors | {node_id})
+
+    visit(LAYOUT_ROOT, False, frozenset())
+    for node_id in nodes:
+        if not any(key[0] == node_id for key in visited):
+            visit(node_id, False, frozenset())
 
 
 def _references(node: dict[str, Any]) -> list[str]:

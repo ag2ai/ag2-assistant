@@ -64,6 +64,12 @@ export const EventData = {
     components: z.array(z.unknown()).optional(),
     data: z.record(z.string(), z.unknown()).optional(),
   }),
+  EphemeralCard: z.object({
+    draft_id: z.string(),
+    draft_version: z.number().int().positive(),
+    definition: z.object({ name: z.string() }),
+  }),
+  CardDefinitionSaved: z.object({ name: z.string(), path: z.string() }),
   A2UISurfaceDataUpdated: z.object({
     surface_id: z.string(),
     data: z.record(z.string(), z.unknown()).optional(),
@@ -113,7 +119,7 @@ export const HANDLED_EVENTS = [
   'ModelRequest', 'DrainedModelRequest', 'ModelMessageChunk', 'ModelResponse',
   'ToolCallsEvent', 'TaskCreated', 'TaskScheduled', 'TaskStarted', 'TaskCompleted',
   'TaskFailed', 'TaskCancelled', 'SubagentTrace', 'ObserverAlert', 'DeliverableProduced',
-  'ImageGenerated', 'A2UISurface', 'A2UISurfaceDataUpdated', 'A2UIActionSubmitted',
+  'ImageGenerated', 'A2UISurface', 'EphemeralCard', 'CardDefinitionSaved', 'A2UISurfaceDataUpdated', 'A2UIActionSubmitted',
   'A2UIMessageEvent', 'Attachment', 'InquiryRaised', 'InquiryAnswered', 'TurnCancelled',
   'TurnFailed', 'FeedbackGiven', 'FeedbackCleared',
 ] as const
@@ -219,4 +225,4 @@ export type ThreadItem =
   | (ItemBase & { kind: 'genimage'; path: string; prompt?: string; feedback?: Feedback })
   | (ItemBase & { kind: 'attachment'; path: string; name?: string })
   | (ItemBase & { kind: 'inquiry'; inquiryId: string; question: string; detail: string; options: string[]; qkind?: string; resolved: boolean; answer?: string; resolution?: string })
-  | (ItemBase & { kind: 'a2ui'; surfaceId: string; version?: string; catalogId?: string; title?: string; intent?: string; component: A2UIComponent; components?: A2UIComponent[]; data: Record<string, unknown>; messages?: unknown[] })
+  | (ItemBase & { kind: 'a2ui'; surfaceId: string; version?: string; catalogId?: string; title?: string; intent?: string; component: A2UIComponent; components?: A2UIComponent[]; data: Record<string, unknown>; messages?: unknown[]; draft?: { id: string; version: number; name: string } })

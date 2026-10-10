@@ -84,6 +84,24 @@ class A2UISurface(AssistantEvent):
     intent: str = ""
 
 
+class EphemeralCard(A2UISurface):
+    """One durable definition revision and its expanded interactive surface."""
+
+    draft_id: str = ""
+    draft_version: int = 1
+    definition: dict = Field(default_factory=dict)
+
+
+class CardDefinitionSaved(AssistantEvent):
+    """A draft definition was saved as a reusable Profile Card."""
+
+    draft_id: str = Field(kw_only=False)
+    draft_version: int = 1
+    name: str = ""
+    path: str = ""
+    request_id: str = ""
+
+
 class A2UISurfaceDataUpdated(AssistantEvent):
     """Durable data-model snapshot emitted after an A2UI server action."""
 

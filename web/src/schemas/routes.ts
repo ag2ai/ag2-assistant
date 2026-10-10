@@ -7,6 +7,7 @@
 import type { z } from 'zod'
 import { AcpListener, AcpListenerCreated, AcpListenerList, AcpListenerTokenRotated } from './acp.ts'
 import { ChatList, MessageReply, Transcript } from './chat.ts'
+import { CardSave } from './card.ts'
 import {
   Connection,
   ConnectionExposure,
@@ -110,6 +111,7 @@ export const ROUTES: Record<string, z.ZodTypeAny> = {
   // the Chat. 404/409 (not an ACP chat / not live) never reach the zod gate.
   'POST /api/p/{pid}/chats/{chat_id}/acp/close': Ok,
   'POST /api/p/{pid}/message': MessageReply,
+  'POST /api/p/{pid}/chats/{chat_id}/cards/save': CardSave,
   'GET /api/p/{pid}/tasks': TaskList,
   'POST /api/p/{pid}/tasks': NewTaskEnvelope,
   'GET /api/p/{pid}/tasks/{task_id}': TaskEnvelope,
