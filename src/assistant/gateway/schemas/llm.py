@@ -26,6 +26,14 @@ class DepsStatusOut(BaseModel):
 KeySourceOut = Literal["secret", "shared", "not_needed", "none", "subscription", "cli_login"]
 
 
+class ModelParamOut(BaseModel):
+    """One parameter a config type offers (assistant.model_params)."""
+
+    id: str
+    kind: Literal["choice"]
+    choices: list[str]
+
+
 class LlmConfigOut(BaseModel):
     """One named LLM configuration as the API exposes it.
 
@@ -44,6 +52,8 @@ class LlmConfigOut(BaseModel):
     # {tool id: options} — the provider-native tools switched on for this config.
     # Availability is per type; see assistant.builtin_tools.
     builtin_tools: dict[str, dict[str, Any]]
+    # {parameter id: value} — unset means the provider's default.
+    params: dict[str, Any]
     secret_id: str
     secret: SecretRefOut | None
     secret_missing: bool
@@ -76,6 +86,8 @@ class LlmConfigListResponse(BaseModel):
     # type -> the provider-native tool ids it offers, for every type (same reason
     # as provider_deps). Ids only — the labels are the web's.
     builtin_tools_by_type: dict[str, list[str]]
+    # type -> the parameters it offers, for every type. Ids only, as above.
+    params_by_type: dict[str, list[ModelParamOut]]
 
 
 class LlmConfigSavedResponse(BaseModel):

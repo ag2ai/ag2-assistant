@@ -19,6 +19,7 @@
   import { TYPE_LABEL } from '../../lib/providerLabels.ts'
   import { llmConfigs } from '../../lib/llm.ts'
   import { builtinToolText } from '../../lib/builtinTools.ts'
+  import { choiceLabel, modelParamText } from '../../lib/modelParams.ts'
   import { API_INTERFACES, usesBaseUrl, offersApiInterface, settleWithoutBaseUrl } from '../../lib/apiInterface.ts'
   import { splitModelId, joinModelId, effortLabel, groupModels } from '../../lib/codexModels.ts'
   import { familyOf } from '../../lib/knownModels.ts'
@@ -67,6 +68,7 @@
       hasOptions,
       advText: hasOptions ? JSON.stringify(config.options, null, 2) : '',
       builtinTools: { ...(config.builtin_tools || {}) },
+      params: { ...(config.params || {}) },
     }
   })
 
@@ -91,6 +93,17 @@
     if (on) next[id] = next[id] || {}
     else delete next[id]
     builtinTools = next
+  }
+
+  // Parameters THIS type offers, and the ones set; an unset one is absent, which
+  // is the provider's default.
+  let params = $state<Record<string, unknown>>(init.params)
+  const paramsOffered = $derived($llmConfigs.paramsByType?.[type] || [])
+  function setParam(id: string, value: string) {
+    const next = { ...params }
+    if (value) next[id] = value
+    else delete next[id]
+    params = next
   }
 
   onMount(loadSecrets)
@@ -162,6 +175,9 @@
     builtinTools = Object.fromEntries(
       Object.entries(builtinTools).filter(([id]) => offered.includes(id)),
     )
+    // Parameters are per type too: the server drops the same ones on save.
+    const nextParams = ($llmConfigs.paramsByType?.[next] || []).map((p) => p.id)
+    params = Object.fromEntries(Object.entries(params).filter(([id]) => nextParams.includes(id)))
     type = next
   }
 
@@ -346,6 +362,7 @@
       // feature" and seeds the type's old automatic behaviour, so omitting it here
       // would resurrect a switch the user just turned off.
       builtin_tools: builtinTools,
+      params,
     }
   }
 
@@ -549,6 +566,22 @@
       <span class="llmhint">{keyUsage}</span>
     </div>
   {/if}
+
+  <!-- One control per parameter the type offers, drawn from the server's
+       descriptors; a type that offers none renders nothing. -->
+  {#each paramsOffered as p (p.id)}
+    {@const t = modelParamText(type, p.id)}
+    <div class="llmfield">
+      <label for="lf-param-{p.id}">{t.label} <span class="llmhint">{t.description}</span></label>
+      <select
+        id="lf-param-{p.id}" value={String(params[p.id] ?? '')}
+        onchange={(e) => setParam(p.id, e.currentTarget.value)}
+      >
+        <option value="">Provider default</option>
+        {#each p.choices as c (c)}<option value={c}>{choiceLabel(c)}</option>{/each}
+      </select>
+    </div>
+  {/each}
 
   {#if builtinOffered.length}
     <!-- Only for types that offer any: OpenAI Chat Completions, Ollama and the CLI

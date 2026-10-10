@@ -17,6 +17,7 @@ import ag2.testing
 import pytest
 from fastapi.testclient import TestClient
 
+from assistant import llm_configs
 from assistant.secrets import SecretStore
 from tests.support.apps import make_manager, make_paths, make_profile_app, write_codex_session
 
@@ -31,6 +32,7 @@ LLM_CONFIG_KEYS = {
     "host",
     "options",
     "builtin_tools",
+    "params",
     "secret_id",
     "secret",
     "secret_missing",
@@ -165,6 +167,38 @@ def test_a_saved_llm_config_declares_every_field_the_row_renders(client):
     assert saved["secret"] is None
     assert set(saved["shared_key"]) == {"env", "set", "hint"}
     assert saved["key_source"] in {"secret", "shared", "not_needed", "none", "subscription"}
+
+
+def test_a_saved_parameter_comes_back_on_the_config(client):
+    saved = _save_llm(client, params={"reasoning_effort": "high"})
+    assert saved["params"] == {"reasoning_effort": "high"}
+    listed = client.get("/api/llm-configs").json()["configs"][0]
+    assert listed["params"] == {"reasoning_effort": "high"}
+
+
+def test_a_parameter_the_provider_does_not_have_is_a_client_error(client):
+    body = {"name": "Main", "type": "openai", "model": "gpt-4o"}
+    r = client.post("/api/llm-configs", json={**body, "params": {"reasoning_effort": "max"}})
+    assert r.status_code == 400
+    assert "reasoning_effort" in r.json()["error"]
+
+
+def test_a_draft_test_refuses_a_parameter_a_save_would_refuse(client):
+    body = {"name": "Main", "type": "openai", "model": "gpt-4o"}
+    r = client.post("/api/llm-configs/test", json={**body, "params": {"reasoning_effort": "max"}})
+    assert r.status_code == 400
+    assert "reasoning_effort" in r.json()["error"]
+
+
+def test_the_list_describes_the_parameters_of_every_type(client):
+    """Every type, not just the configured ones: the editor renders a type before
+    any Text model uses it."""
+    by_type = client.get("/api/llm-configs").json()["params_by_type"]
+    assert set(by_type) == set(llm_configs.TYPES)
+    assert by_type["gemini"] == [
+        {"id": "thinking_level", "kind": "choice", "choices": ["low", "medium", "high"]}
+    ]
+    assert by_type["anthropic"] == []
 
 
 def test_a_config_pointing_at_a_secret_embeds_that_secret_s_trimmed_view(client):

@@ -15,7 +15,7 @@ import json
 import pytest
 import yaml
 
-from assistant.agent import cheap_model
+from assistant.agent import cheap_model, model_config
 from assistant.config import Config, resolve_config
 from assistant.llm_configs import (
     CLI_LOGIN_TYPES,
@@ -686,3 +686,83 @@ def test_a_config_type_with_no_builtins_derives_an_empty_selection(store, paths)
     cfg = Config.for_paths(paths)
     store.derive_onto(cfg, entry)
     assert cfg.llm.builtin_tools == {}
+
+
+# ---- Parameters: per-type settings stored on the Text model ----------------------
+
+
+def test_a_reasoning_level_is_saved_on_the_text_model(store):
+    entry = store.save_config(
+        {"name": "G", "type": "gemini", "model": "g", "params": {"thinking_level": "high"}}
+    )
+    assert store.get_config(entry["id"])["params"] == {"thinking_level": "high"}
+
+
+def test_a_text_model_without_parameters_stores_none(store):
+    """Absent means provider default, so an entry predating the feature is unchanged."""
+    entry = store.save_config({"name": "G", "type": "gemini", "model": "g"})
+    assert entry["params"] == {}
+
+
+def test_parameters_are_filtered_to_what_the_type_offers(store):
+    entry = store.save_config(
+        {
+            "name": "G",
+            "type": "gemini",
+            "model": "g",
+            # reasoning_effort is OpenAI's spelling; Gemini's is thinking_level.
+            "params": {"thinking_level": "low", "reasoning_effort": "high", "invented": 1},
+        }
+    )
+    assert entry["params"] == {"thinking_level": "low"}
+
+
+def test_changing_type_drops_parameters_the_new_type_does_not_offer(store):
+    entry = store.save_config(
+        {"name": "G", "type": "gemini", "model": "g", "params": {"thinking_level": "low"}}
+    )
+    moved = store.save_config({**entry, "type": "ollama", "model": "llama3"})
+    assert moved["params"] == {}
+
+
+def test_a_level_the_provider_does_not_have_is_refused(store):
+    with pytest.raises(ValueError, match="thinking_level"):
+        store.save_config(
+            {"name": "G", "type": "gemini", "model": "g", "params": {"thinking_level": "xhigh"}}
+        )
+
+
+def test_parameters_must_be_an_object(store):
+    with pytest.raises(ValueError, match="params"):
+        store.save_config({"name": "G", "type": "gemini", "model": "g", "params": ["high"]})
+
+
+def test_a_parameter_set_back_to_provider_default_is_not_stored(store):
+    entry = store.save_config(
+        {"name": "G", "type": "gemini", "model": "g", "params": {"thinking_level": None}}
+    )
+    assert entry["params"] == {}
+
+
+def test_a_parameter_reaches_the_provider_configuration(store, paths):
+    entry = store.save_config(
+        {"name": "G", "type": "gemini", "model": "g", "params": {"thinking_level": "high"}}
+    )
+    cfg = Config.for_paths(paths)
+    store.derive_onto(cfg, entry)
+    assert model_config(cfg).thinking_level == "high"
+
+
+def test_advanced_options_override_a_parameter_of_the_same_name(store, paths):
+    entry = store.save_config(
+        {
+            "name": "G",
+            "type": "gemini",
+            "model": "g",
+            "params": {"thinking_level": "high"},
+            "options": {"thinking_level": "low"},
+        }
+    )
+    cfg = Config.for_paths(paths)
+    store.derive_onto(cfg, entry)
+    assert model_config(cfg).thinking_level == "low"

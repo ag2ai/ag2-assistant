@@ -5,7 +5,7 @@
 // lib/brandMarks.js.
 import { writable } from 'svelte/store'
 import { api } from '../transport/api/index.ts'
-import type { DepsStatus, LlmConfig, LlmEnvOverride } from '../schemas/index.ts'
+import type { DepsStatus, LlmConfig, LlmEnvOverride, ModelParam } from '../schemas/index.ts'
 
 // Shared install-wide LLM config state — the single source of truth for BOTH the
 // composer's ModelSwitcher and Settings → Models. Two live views of the same list
@@ -20,11 +20,13 @@ export type LlmConfigsSnapshot = {
   envOverride: LlmEnvOverride | null
   providerDeps: Record<string, DepsStatus>
   builtinByType: Record<string, string[]>
+  paramsByType: Record<string, ModelParam[]>
   loaded: boolean
 }
 
 export const llmConfigs = writable<LlmConfigsSnapshot>({
-  configs: [], active: null, envOverride: null, providerDeps: {}, builtinByType: {}, loaded: false,
+  configs: [], active: null, envOverride: null, providerDeps: {}, builtinByType: {}, paramsByType: {},
+  loaded: false,
 })
 
 export async function loadLlmConfigs(): Promise<void> {
@@ -39,6 +41,7 @@ export async function loadLlmConfigs(): Promise<void> {
     // type -> the provider-native tool ids it offers, for every type (same reason
     // as providerDeps: the form renders a type before any config uses it).
     builtinByType: d.builtin_tools_by_type || {},
+    paramsByType: d.params_by_type || {},
     loaded: true,
   })
 }
