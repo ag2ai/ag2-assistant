@@ -7,7 +7,9 @@ patched and nothing reaches a network.
 
 import pytest
 
-from assistant.provider_catalog import CatalogTarget, CatalogUnavailable
+from assistant.provider_catalog import CatalogTarget, CatalogUnavailable, probe_provider_models
+from tests.support.apps import write_codex_session
+from tests.support.http import async_client, failing_responder, recording_responder
 
 
 def _probe(models=(), raises=None, seen=None):
@@ -154,9 +156,7 @@ def test_a_dangling_secret_reference_falls_back_like_the_request_would(profile_a
 def test_the_install_wide_key_is_what_a_config_without_a_secret_is_probed_with(
     profile_app_factory, paths
 ):
-    # It is the key the turn itself would send, so the list must describe it —
-    # otherwise the probe comes back keyless and the field says the type has no
-    # model list at all, which is only ever true of the ChatGPT subscription.
+    # Resolve the same install-wide key a model request would send.
     _with_secret(paths, provider="gemini", value="sk-default", default=True)
     seen = []
     client, _pid = profile_app_factory(llm_catalog_probe=_probe(seen=seen))
@@ -191,13 +191,14 @@ def test_a_custom_endpoint_is_passed_through_to_the_probe(profile_app_factory):
     assert [t.base_url for t in seen] == ["https://api.minimax.io/anthropic"]
 
 
-def test_the_chatgpt_subscription_is_answered_without_probing_anything(profile_app_factory):
+def test_signed_out_subscription_catalog_requires_authorization(profile_app_factory):
     seen = []
     client, _pid = profile_app_factory(llm_catalog_probe=_probe(seen=seen))
     r = client.get("/api/llm-configs/models", params={"type": "openai_subscription"})
     assert r.status_code == 200
-    assert r.json() == {"models": [], "current": "", "reason": "not_probeable"}
-    assert seen == [], "a type with no key to probe with was probed anyway"
+    assert r.json() == {"models": [], "current": "", "reason": "unauthorized"}
+    assert seen == []
+    assert r.headers["cache-control"] == "no-store"
 
 
 def test_every_keyed_type_is_served_rather_than_404ed(profile_app_factory):
@@ -205,3 +206,52 @@ def test_every_keyed_type_is_served_rather_than_404ed(profile_app_factory):
     for ctype in ("gemini", "openai", "openai_responses", "anthropic"):
         body = client.get("/api/llm-configs/models", params={"type": ctype}).json()
         assert body["models"] == [{"id": "a-model", "name": "a-model", "description": ""}], ctype
+
+
+def test_signed_in_subscription_catalog_uses_server_credentials(profile_app_factory, paths):
+    write_codex_session(paths, access_token="oauth-token", account_id="account-id")
+    secret = _with_secret(paths, provider="openai", value="sk-wrong", default=True)
+    handler, sent = recording_responder({"models": [{"slug": "gpt-6.1-sol", "visibility": "list"}]})
+
+    async def probe(target):
+        async with async_client(handler) as http:
+            return await probe_provider_models(target, client=http)
+
+    client, _pid = profile_app_factory(llm_catalog_probe=probe)
+    response = client.get(
+        "/api/llm-configs/models",
+        params={
+            "type": "openai_subscription",
+            "secret_id": secret["id"],
+            "base_url": "https://untrusted.example/v1",
+            "host": "http://untrusted",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json() == {
+        "models": [{"id": "gpt-6.1-sol", "name": "gpt-6.1-sol", "description": ""}],
+        "current": "",
+        "reason": "",
+    }
+    assert response.headers["cache-control"] == "no-store"
+    assert sent[0]["url"].startswith("https://chatgpt.com/backend-api/codex/models?")
+    assert sent[0]["headers"]["authorization"] == "Bearer oauth-token"
+    assert sent[0]["headers"]["chatgpt-account-id"] == "account-id"
+    assert "oauth-token" not in response.text
+    assert "account-id" not in response.text
+
+
+@pytest.mark.parametrize("status,reason", [(401, "unauthorized"), (503, "unreachable")])
+def test_subscription_catalog_errors_allow_known_name_fallback(
+    profile_app_factory, paths, status, reason
+):
+    write_codex_session(paths)
+
+    async def probe(target):
+        async with async_client(failing_responder(status)) as http:
+            return await probe_provider_models(target, client=http)
+
+    client, _pid = profile_app_factory(llm_catalog_probe=probe)
+    response = client.get("/api/llm-configs/models", params={"type": "openai_subscription"})
+    assert response.status_code == 200
+    assert response.json() == {"models": [], "current": "", "reason": reason}

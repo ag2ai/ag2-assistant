@@ -7,7 +7,6 @@ import {
   catalogNote,
   catalogSource,
   isNotChatModel,
-  permanentNoCatalog,
   suggestModels,
   browserProbeRequest,
   parseCatalogPayload,
@@ -191,11 +190,17 @@ test('a keyless custom endpoint is asked anyway', () => {
   assert.equal(catalogSource('openai', { hasEndpoint: true }), 'gateway')
 })
 
-test('the ChatGPT subscription can never have a catalog, and says which', () => {
-  assert.equal(permanentNoCatalog('openai_subscription'), 'not_probeable')
-  for (const type of ['gemini', 'ollama', 'anthropic', 'codex']) {
-    assert.equal(permanentNoCatalog(type), '', type)
-  }
+test('the ChatGPT subscription reads its catalog through the gateway after sign-in', () => {
+  assert.equal(catalogSource('openai_subscription', { hasCredential: true }), 'gateway')
+  assert.equal(catalogSource('openai_subscription', { hasCredential: true, hasPastedKey: true }), 'gateway')
+  assert.equal(catalogSource('openai_subscription', { hasEndpoint: true }), '')
+  assert.equal(browserProbeRequest({ type: 'openai_subscription', key: 'sk-test' }), null)
+})
+
+test('OAuth suggestions come from the account catalog, including newly released models', () => {
+  const rows = suggestModels({ type: 'openai_subscription', catalog: ['gpt-6.1-sol', 'gpt-future'] })
+  assert.deepEqual(ids(rows), ['gpt-6.1-sol', 'gpt-future'])
+  assert.ok(rows.every((row) => !row.unverified))
 })
 
 test('each reason is worded separately, and names the provider where it can', () => {

@@ -22,7 +22,7 @@
   import { API_INTERFACES, usesBaseUrl, offersApiInterface, settleWithoutBaseUrl } from '../../lib/apiInterface.ts'
   import { splitModelId, joinModelId, effortLabel, groupModels } from '../../lib/codexModels.ts'
   import { familyOf } from '../../lib/knownModels.ts'
-  import { catalogNote, catalogSource, permanentNoCatalog } from '../../lib/modelSuggest.ts'
+  import { catalogNote, catalogSource } from '../../lib/modelSuggest.ts'
   import ModelCombobox from './ModelCombobox.svelte'
   import { errText } from '../../lib/errors.ts'
   import type { LlmConfigSeed } from '../../lib/llm.ts'
@@ -177,9 +177,10 @@
 
   // Provider model catalog: what the endpoint this model points at says it offers,
   // read on FIRST FOCUS of the Model field and never on form open.
-  // A credential exists when the config references a Secret, or when the provider's
-  // shared key is set — the same key `keyUsage` says the request would use.
-  const hasCredential = $derived(!!secretId || !!ctx?.s?.keys?.[PROV_OF[type] || '']?.set)
+  // OAuth uses the ChatGPT sign-in; keyed providers use a Secret or shared key.
+  const hasCredential = $derived(type === 'openai_subscription'
+    ? codexSignedIn
+    : !!secretId || !!ctx?.s?.keys?.[PROV_OF[type] || '']?.set)
   // The pasted key settles on BLUR, like the endpoint fields: it is what the probe
   // is keyed on, and a request per keystroke would be absurd.
   let settledKey = $state('')
@@ -188,7 +189,6 @@
       hasCredential, hasEndpoint: !!baseUrl.trim(), hasPastedKey: !!settledKey,
     }),
   )
-  const permanentReason = $derived(permanentNoCatalog(type))
   let probed = $state(false)
   let probing = $state(false)
   // null = none read; an array = the live list
@@ -200,10 +200,10 @@
   let probeSeq = 0
 
   async function probeCatalog(refresh = false) {
-    if (!catalogFrom) { providerCatalog = null; catalogReason = ''; return }
+    const seq = ++probeSeq
+    if (!catalogFrom) { providerCatalog = null; catalogReason = ''; probing = false; return }
     probed = true
     probing = true
-    const seq = ++probeSeq
     let result: { reason: string; catalog: string[] | null }
     try {
       // A pasted key the browser sends itself; a saved Secret only the gateway can
@@ -463,11 +463,7 @@
         catalog={providerCatalog} loading={probing} onFirstFocus={() => probeCatalog()}
       />
     </div>
-    {#if permanentReason}
-      <!-- No list exists for this type and none ever will, so there is nothing to
-           re-read and no button offering to. -->
-      <div class="llmfield"><span class="llmhint">{catalogNote(permanentReason, type)}</span></div>
-    {:else if catalogFrom && probed}
+    {#if catalogFrom && probed}
       <!-- One row for both states, like the ACP picker's: why there is no list (if
            so) plus a manual re-read. Always the quiet hint line, never the red one. -->
       <div class="llmfield">
