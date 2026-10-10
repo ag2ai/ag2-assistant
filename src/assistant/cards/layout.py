@@ -132,6 +132,12 @@ PROPERTIES: dict[str, dict[str, Any]] = {
         **{key: BINDING for key in ("columns", "rows", "cells", "key")},
         **{key: VALUE for key in ("win", "pick")},
         **{key: REFERENCE for key in ("header", "lead", "cell")},
+        "variant": {"enum": ["comparison", "data"]},
+        "density": {"enum": ["comfortable", "compact"]},
+        "columnWidth": {"anyOf": [{"enum": ["narrow", "regular", "wide"]}, BINDING]},
+        "columnAlign": {"anyOf": [{"enum": ["start", "center", "end"]}, BINDING]},
+        "columnOverflow": {"anyOf": [{"enum": ["wrap", "nowrap", "ellipsis"]}, BINDING]},
+        "rowVariant": {"anyOf": [{"enum": ["body", "summary", "baseline"]}, BINDING]},
     },
 }
 REQUIRED = {

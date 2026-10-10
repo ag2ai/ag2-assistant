@@ -28,12 +28,12 @@
   }
 </script>
 
-{#if passive}
+{#if link?.kind === 'url'}
+  <a class="a2ui-link" href={link.value} target="_blank" rel="noopener noreferrer" style:flex-grow={grow}>{@render children()}</a>
+{:else if passive}
   <span class="a2ui-link" aria-disabled="true" style:flex-grow={grow}>{@render children()}</span>
 {:else if !link}
   {@render children()}
-{:else if link.kind === 'url'}
-  <a class="a2ui-link" href={link.value} target="_blank" rel="noopener noreferrer" style:flex-grow={grow}>{@render children()}</a>
 {:else}
   <button type="button" class="a2ui-link" onclick={open} style:flex-grow={grow}>{@render children()}</button>
 {/if}

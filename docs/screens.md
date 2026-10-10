@@ -7,6 +7,12 @@ top”). The **screens** Skill creates independent Card instance files and a Scr
 that references them. The available sources remain those supported by Cards:
 Weather, Quotes and approved custom code; other data needs a suitable Card source.
 
+For a publication or monitoring dashboard, ask for a compact data table. The Card
+author can keep ID, date, class, preview and metrics in separate columns, truncate
+long previews, align numeric cells, and place toned percentage pills beside counts.
+Summary and baseline rows share the columns of the records. The table follows the
+app's theme and scrolls horizontally on narrow screens; its widths use design tokens.
+
 A Screen file ends in `.screen.yaml` and lives anywhere in the Profile's Files:
 
 ```yaml
@@ -38,18 +44,21 @@ Relative bindings such as `./title` are permitted only inside repeated templates
 including Table cell templates. Invalid layouts, unsafe paths and missing files
 produce repair errors; they never substitute a catalog Card or start an agent Turn.
 
-Click **Edit Screen** to open its source in Files. Reorder `children` to rearrange
+Open the `.screen.yaml` source in **Files** to edit it. Reorder `children` to rearrange
 Cards, nest them in `Row`/`Column` primitives, or reuse an existing instance path in
 another Screen. Ordinary Files editing, ETag conflicts, rename and deletion apply.
 Renaming an instance requires updating the paths that reference it. Invalid Screen
 files remain listed with a repair indicator.
 
+Source controls stay hidden during successful automatic refresh. They appear when
+an update fails or a custom code version needs approval.
 Source Refresh, approval and Secret binding use the same Profile-owned service as
-saved-instance previews. Visible sources refresh on show and at their declared
-interval; offscreen or hidden sources stop interval requests. Automatic requests
-for the same object share its declared interval across Screens and Chat references;
-manual Refresh always requests an update. Concurrent requests coalesce. Typed source
-events update every open view of that file and keep last-good values on failures.
+saved-instance previews. Sources refresh once when the Screen is opened, including
+Cards below the fold. Screens do not schedule interval updates. Automatic requests
+for the same object share its declared interval with Chat references;
+manual Refresh always requests an update. Concurrent requests coalesce. Responses
+use typed source events and keep last-good values on failures. The Screen remains
+a snapshot until the page is reloaded; edits and updates from other views do not change it.
 Fetching creates no assistant Turn. Authored configuration survives restart; fetched
 file values use the existing bounded runtime cache and may return to the saved values
 until refreshed after restart. Opening a Screen never executes unapproved code.
@@ -60,6 +69,8 @@ current file state on replay and subscribes to the same source events. This diff
 from ordinary drawn Chat Cards and **Save instance**, whose independent-copy behavior
 is unchanged. A copied file remains a separate object even if its stored UUID matches.
 
-Screen and referenced-file inputs/actions remain passive. Source Refresh and approval
-are active buttons. Dragging Cards between columns and writing values back without a
-Turn are follow-up work; Screens do not enable historical actions.
+External HTTP(S) links, such as publication IDs, open in a new browser tab without an
+assistant Turn. Screen and referenced-file inputs/actions and in-app navigation links
+remain passive. Source Refresh and approval are active buttons. Dragging Cards between
+columns and writing values back without a Turn are follow-up work; Screens do not enable
+historical actions.

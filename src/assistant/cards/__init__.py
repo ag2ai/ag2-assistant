@@ -391,7 +391,19 @@ def _binding_scopes(nodes: dict[str, dict], root_id: str) -> None:
         unscoped_properties = {
             key: value
             for key, value in node.items()
-            if not (node["component"] == "Table" and key in {"cells", "key", "win"})
+            if not (
+                node["component"] == "Table"
+                and key
+                in {
+                    "cells",
+                    "key",
+                    "win",
+                    "columnWidth",
+                    "columnAlign",
+                    "columnOverflow",
+                    "rowVariant",
+                }
+            )
         }
         if not scoped and any(
             isinstance(path, str) and path.startswith(".")

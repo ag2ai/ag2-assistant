@@ -21,6 +21,18 @@ itself.
 
 `header`, `lead` and `cell` name a layout id each, the way `child` does.
 
+For tabular records, use `Table.variant: data` (horizontal rules) and optionally
+`density: compact`. The default is the existing comparison grid. `columnWidth` takes
+`narrow`, `regular`, or `wide`; `columnAlign` takes `start`, `center`, or `end`;
+`columnOverflow` takes `wrap`, `nowrap`, or `ellipsis`. Each can be literal or bound
+in **column scope**, e.g. `{path: ./width}`. Widths are design tokens, never CSS lengths.
+Ellipsis keeps one line and the full text remains available on hover. `nowrap` keeps
+cell text and composed number/pill rows on one line; a wide table scrolls horizontally.
+`rowVariant` takes `body`, `summary`, or `baseline`, literal or bound in **row scope**:
+summary rows are emphasised; baseline rows use muted ink. Put these rows after the records
+in the same `rows` array so their cells stay aligned. See `tables.md` in card-author for
+a worked example with separate ID/preview columns, class pills and percentage pills.
+
 `children` is either a list of layout ids or one repeated template:
 `{componentId: mover, path: /quotes, start: 1}` draws `mover` once per item of `/quotes`,
 skipping the first `start` items — so a layout that already drew the lead on its own does not

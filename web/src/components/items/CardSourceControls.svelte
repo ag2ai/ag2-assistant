@@ -7,7 +7,7 @@
   import type { WireEvent } from '../../schemas/events.ts'
   import type { Secret } from '../../schemas/secret.ts'
 
-  let { source, refreshState, target, onEvent }: { source: CardSource; refreshState?: CardSourceEvent; target: SourceTarget; onEvent: (event: WireEvent) => void } = $props()
+  let { source, refreshState, target, onEvent, showControls = true, refreshOnLoad = false }: { source: CardSource; refreshState?: CardSourceEvent; target: SourceTarget; onEvent: (event: WireEvent) => void; showControls?: boolean; refreshOnLoad?: boolean } = $props()
   let element: HTMLDivElement
   let dialog: HTMLDialogElement
   let visible = $state(false)
@@ -17,6 +17,7 @@
   let version = $state('')
   let keys: Secret[] = $state([])
   let selected: Record<string, string> = $state({})
+  const controlsVisible = $derived(showControls || !!error || !!refreshState?.error)
   const scheduleKey = $derived(JSON.stringify([target, source]))
   const canPoll = $derived(refreshState?.status !== 'approval_required')
   let disposed = false
@@ -34,6 +35,10 @@
   }
 
   onMount(() => {
+    if (refreshOnLoad) {
+      void refresh('shown')
+      return () => { disposed = true }
+    }
     const observer = new IntersectionObserver(entries => { visible = entries.some(entry => entry.isIntersecting) })
     observer.observe(element.parentElement || element)
     const visibility = () => { tabVisible = document.visibilityState === 'visible' }
@@ -43,6 +48,7 @@
   })
 
   $effect(() => {
+    if (refreshOnLoad) return
     void scheduleKey
     const interval = untrack(() => source.interval_seconds)
     if (!visible || !tabVisible || !canPoll) return
@@ -76,11 +82,13 @@
   }
 </script>
 
-<div class="source-controls" bind:this={element}>
-  <span>{source.tool === 'get_weather' ? 'Weather' : source.tool === 'get_quotes' ? 'Quotes' : 'Custom source'}</span>
-  <button class="open" disabled={busy} onclick={() => refresh()}>{busy ? 'Refreshing…' : 'Refresh'}</button>
-  {#if source.code}<button class="open" disabled={busy} onclick={review}>Review source</button>{/if}
-  {#if error || refreshState?.error}<span role="alert">{error || refreshState?.error}</span>{/if}
+<div class="source-controls" class:quiet={!controlsVisible} bind:this={element}>
+  {#if controlsVisible}
+    <span>{source.tool === 'get_weather' ? 'Weather' : source.tool === 'get_quotes' ? 'Quotes' : 'Custom source'}</span>
+    <button class="open" disabled={busy} onclick={() => refresh()}>{busy ? 'Refreshing…' : 'Refresh'}</button>
+    {#if source.code}<button class="open" disabled={busy} onclick={review}>Review source</button>{/if}
+    {#if error || refreshState?.error}<span role="alert">{error || refreshState?.error}</span>{/if}
+  {/if}
 </div>
 <dialog class="source-approval" bind:this={dialog} aria-label="Approve Card source">
   <h2>Approve Card source</h2>
@@ -102,6 +110,7 @@
 
 <style>
   .source-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 8px 0; font-size: 12px; }
+  .source-controls.quiet { display: none; }
   [role=alert] { color: var(--danger); }
   dialog { color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 16px; width: min(680px, 90vw); max-height: 85vh; overflow: auto; padding: 24px; }
   dialog::backdrop { background: #0007; }

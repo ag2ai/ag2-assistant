@@ -1,7 +1,6 @@
 <script lang="ts">
   import { api } from '../transport/api/index.ts'
-  import { StreamClient } from '../transport/stream.ts'
-  import { route, openAsideFile } from '../router.ts'
+  import { route } from '../router.ts'
   import { profileEpoch } from '../store.ts'
   import { errText } from '../lib/errors.ts'
   import { asComponent, asComponents } from '../lib/a2ui.ts'
@@ -18,9 +17,7 @@
   let states: Record<string, CardSourceEvent> = $state({})
   const components = $derived.by(() => screen ? asComponents(screen.message.component._components) : [])
   const sourceIds = $derived.by(() => Object.keys(screen?.sources || {}))
-  let duringLoad: WireEvent[] | null = null
   function sourceEvent(event: WireEvent) {
-    if (duringLoad) duringLoad.push(event)
     if (!screen) return
     states = { ...states, ...projectScreenEvent(screen, event) }
     screen = { ...screen }
@@ -29,36 +26,19 @@
     const path = $route.id
     const epoch = $profileEpoch
     let stale = false
-    let loading = false
     screen = null; error = ''; states = {}
     if (!path) return
-    const load = async () => {
-      if (loading || stale) return
-      const buffer: WireEvent[] = []
-      loading = true; duringLoad = buffer
-      try {
-        const result = await api.screen(path)
-        if (stale || epoch !== $profileEpoch) return
-        for (const event of buffer) projectScreenEvent(result, event)
-        screen = result; error = ''
-      } catch (cause) { if (!stale) { error = errText(cause); screen = null } }
-      finally { loading = false; if (duringLoad === buffer) duringLoad = null }
-    }
-    const stream = new StreamClient('', {
-      onEvent: event => { if (!stale && epoch === $profileEpoch) sourceEvent(event) },
-      onReady: () => { void load() },
-    }, '/card-sources/stream').connect()
-    void load()
-    const timer = setInterval(() => { void load() }, 5000)
-    return () => { stale = true; duringLoad = null; clearInterval(timer); stream.close() }
+    void api.screen(path).then(result => {
+      if (!stale && epoch === $profileEpoch) screen = result
+    }).catch(cause => {
+      if (!stale && epoch === $profileEpoch) error = errText(cause)
+    })
+    return () => { stale = true }
   })
 </script>
 
 <AppBar title={screen?.title || 'Screens'} />
 <div class="thread">
-  <div class="screen-actions">
-    {#if $route.id}<button class="open" onclick={() => openAsideFile($route.id)}>Edit Screen</button>{/if}
-  </div>
   {#if error}
     <div class="empty" role="alert"><h1>Screen could not be opened</h1><p>{error}</p><p>Repair its layout or referenced instance in Files.</p></div>
   {:else if screen}
@@ -73,10 +53,9 @@
 {#snippet sourceControls(id: string)}
   {@const target = screen!.sources[id]}
   <CardSourceControls source={CardSource.parse(target.source)} refreshState={states[id]}
-    target={{ path: target.path, source_id: target.source_id }} onEvent={sourceEvent} />
+    target={{ path: target.path, source_id: target.source_id }} onEvent={sourceEvent} showControls={false} refreshOnLoad />
 {/snippet}
 
 <style>
   .screen-content { width: 100%; max-width: 1280px; margin: 0 auto; padding: 16px 24px 48px; }
-  .screen-actions { display: flex; justify-content: end; padding: 12px 24px 0; }
 </style>
