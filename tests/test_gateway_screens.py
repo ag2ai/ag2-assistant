@@ -170,6 +170,7 @@ def test_agent_creates_instances_and_screen_then_layout_edits_survive_restart(pa
     initial = screen("market.card-instance.yaml")
     models = ScriptedModels(
         lambda cfg, model: [
+            ToolCallEvent(name="load_skill", arguments='{"name":"screens"}'),
             screen_call(
                 "save_instance",
                 {
@@ -205,6 +206,13 @@ def test_agent_creates_instances_and_screen_then_layout_edits_survive_restart(pa
         assert response.status_code == 200, response.text
         assert view(client, pid)["message"]["component"]["children"] == ["second", "first"]
         history = replay(client, pid)
+        assert not any(event["type"].endswith("ToolErrorEvent") for event in history)
+        loaded = next(
+            event["data"]
+            for event in history
+            if event["type"].endswith("ToolResultEvent") and event["data"]["name"] == "load_skill"
+        )
+        assert '<skill_content name="screens">' in loaded["result"]["data"]["parts"][0]["content"]
         assert not any(event["type"].endswith("A2UISurface") for event in history)
     with TestClient(create_app(make_manager(paths, persist=True))) as client:
         assert view(client, pid)["message"]["component"]["children"] == ["second", "first"]
