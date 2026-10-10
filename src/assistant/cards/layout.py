@@ -35,6 +35,11 @@ PROPERTIES: dict[str, dict[str, Any]] = {
     "Card": {"child": REFERENCE, "variant": {"enum": ["feature"]}},
     "Column": {"children": CHILDREN},
     "Row": {"children": CHILDREN},
+    "Grid": {
+        "children": CHILDREN,
+        "columns": {"type": "integer", "minimum": 1, "maximum": 6},
+        "minColumnWidth": {"enum": ["sm", "md", "lg"]},
+    },
     "List": {"children": CHILDREN, "variant": {"enum": ["ranked"]}},
     "Divider": {},
     "Text": {
@@ -144,6 +149,7 @@ REQUIRED = {
     "Card": ["child"],
     "Column": ["children"],
     "Row": ["children"],
+    "Grid": ["children", "columns"],
     "List": ["children"],
     "Text": ["text"],
     "Button": ["child", "action"],
@@ -166,6 +172,11 @@ def primitive_schema(kind: str) -> dict:
         "accessibility": {"type": "object"},
         **PROPERTIES[kind],
     }
+    if kind in {"Card", "Column", "Row", "Grid", "List", "Table"}:
+        properties["width"] = {"enum": ["content", "fill"]}
+    if kind == "Grid":
+        properties["gap"] = {"enum": ["none", "xs", "sm", "md", "lg"]}
+        properties["align"] = {"enum": ["start", "center", "end", "stretch"]}
     if kind in {"Column", "Row", "List", "Card", "Text", "Metric", "Icon", "Sparkline"}:
         properties["tone"] = {
             "anyOf": [{"enum": ["neutral", "muted", "accent", "positive", "negative"]}, BINDING]

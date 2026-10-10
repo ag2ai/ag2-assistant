@@ -66,4 +66,35 @@ const results: Result[] = cases.map(({ name, target, scrolls }) => {
   }
   return { name, failures, scrollWidth: wrap.scrollWidth, clientWidth: wrap.clientWidth }
 })
-Object.assign(window, { layoutResults: results })
+
+const sizing: Result[] = []
+for (const frameWidth of [280, 620, 1000]) {
+  const target = document.createElement('section')
+  target.className = 'fixture'; target.style.width = `${frameWidth}px`; fixtures.append(target)
+  const components: A2UIComponent[] = [
+    { id: 'root', component: 'Grid', columns: 2, minColumnWidth: 'sm', gap: 'sm', width: 'fill', children: ['fit', 'fill'] },
+    { id: 'fit', component: 'Card', width: 'content', grow: true, child: 'table-fit' },
+    { id: 'fill', component: 'Card', width: 'fill', child: 'table-fill' },
+    { id: 'table-fit', component: 'Table', width: 'content', columns: { path: '/columns' }, rows: { path: '/rows' }, cells: { path: './cells' }, cell: 'text', columnWidth: 'narrow' },
+    { id: 'table-fill', component: 'Table', width: 'fill', columns: { path: '/columns' }, rows: { path: '/rows' }, cells: { path: './cells' }, cell: 'text', columnWidth: 'narrow' },
+    { id: 'text', component: 'Text', text: { path: '.' } },
+  ]
+  mount(BasicA2UIComponent, { target, props: { component: components[0], components,
+    data: { columns: [{}, {}], rows: [{ cells: ['A', 'B'] }] } } })
+  await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+  const grid = target.querySelector<HTMLElement>('.a2ui-grid')!
+  const cards = Array.from(grid.children) as HTMLElement[]
+  const trackWidths = getComputedStyle(grid).gridTemplateColumns.split(' ').map(parseFloat)
+  const failures: string[] = []
+  const expectedColumns = frameWidth < 524 ? 1 : 2
+  if (trackWidths.length !== expectedColumns) failures.push(`Expected ${expectedColumns} columns; got ${trackWidths}`)
+  if (trackWidths.some(width => Math.abs(width - trackWidths[0]) > 1)) failures.push('Unequal Grid columns')
+  if (cards[0].getBoundingClientRect().width >= trackWidths[0] - 1) failures.push('Content Card stretched to the track')
+  if (Math.abs(cards[1].getBoundingClientRect().width - trackWidths[0]) > 1) failures.push('Fill Card did not fill the track')
+  const tables = cards.map(card => card.querySelector<HTMLElement>('.a2ui-tablewrap')!)
+  if (tables[0].clientWidth > 140) failures.push('Content Table stretched')
+  if (tables[1].clientWidth !== cards[1].clientWidth - 20) failures.push('Fill Table did not fill Card content')
+  if (target.scrollWidth > target.clientWidth + 1) failures.push('Grid escaped its container')
+  sizing.push({ name: `sizing/${frameWidth}`, failures, scrollWidth: target.scrollWidth, clientWidth: target.clientWidth })
+}
+Object.assign(window, { layoutResults: [...results, ...sizing] })

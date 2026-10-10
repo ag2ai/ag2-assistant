@@ -123,6 +123,10 @@
   const justify = $derived(JUSTIFY[String(component.justify ?? '')] || undefined)
   // A component that takes the room its row has left over.
   const grow = $derived(component.grow === true ? 1 : undefined)
+  const width = $derived(component.width === 'content' ? 'fit-content' : component.width === 'fill' ? '100%' : undefined)
+  const layoutGrow = $derived(component.width === 'content' ? 0 : grow)
+  const gridColumns = $derived(Number.isInteger(component.columns) && Number(component.columns) >= 1 && Number(component.columns) <= 6 ? Number(component.columns) : 1)
+  const gridMin = $derived(component.minColumnWidth === 'sm' ? '16rem' : component.minColumnWidth === 'lg' ? '28rem' : '20rem')
   const tone = $derived(a2uiTone(component.tone, data, scope))
   // A component that says nothing about its tone keeps the class it already had.
   const toneClass = $derived(component.tone === undefined ? '' : `a2ui-tone-${tone}`)
@@ -179,25 +183,30 @@
 {#if depth >= MAX_DEPTH || !present}
   <!-- Hidden or unrenderable components do not start source refresh. -->
 {:else if !sourceWrapped && component.id && sourceIds.includes(component.id) && sourceControls}
-  <div class="card-source-frame" style:flex-grow={grow}>
+  <div class="card-source-frame" style:width={width} style:flex-grow={layoutGrow}>
     <BasicA2UIComponent {sourceIds} {sourceControls} {component} {components} {data} {onDataChange} {onAction} {passive} {scope} {depth} sourceWrapped />
     {@render sourceControls(component.id)}
   </div>
 {:else if type === 'column'}
-  <div class="a2ui-basic-col {markerClass}" style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={grow}>
+  <div class="a2ui-basic-col {markerClass}" style:width={width} style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={layoutGrow}>
     {@render kids()}
   </div>
 {:else if type === 'row'}
-  <div class="a2ui-basic-row {markerClass}" style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={grow}>
+  <div class="a2ui-basic-row {markerClass}" style:width={width} style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={layoutGrow}>
+    {@render kids()}
+  </div>
+{:else if type === 'grid'}
+  <div class="a2ui-grid" style:width={width} style:flex-grow={layoutGrow} style:align-items={align}
+    style:--a2ui-grid-columns={gridColumns} style:--a2ui-grid-min={gridMin} style:--a2ui-grid-gap={gap || 'var(--space-5)'}>
     {@render kids()}
   </div>
 {:else if type === 'list'}
-  <div class="a2ui-list {markerClass}" class:a2ui-ranked={ranked} style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={grow} style:--a2ui-rank-from={rankFrom}>
+  <div class="a2ui-list {markerClass}" class:a2ui-ranked={ranked} style:width={width} style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={layoutGrow} style:--a2ui-rank-from={rankFrom}>
     {@render kids()}
   </div>
 {:else if type === 'card'}
   {@const kid = child(component.child)}
-  <div class="a2ui-basic-card {markerClass}" class:a2ui-feature={component.variant === 'feature'} style:flex-grow={grow}>
+  <div class="a2ui-basic-card {markerClass}" class:a2ui-feature={component.variant === 'feature'} style:width={width} style:flex-grow={layoutGrow}>
     {#if kid}<BasicA2UIComponent {sourceIds} {sourceControls} component={kid} {components} {data} {onDataChange} {onAction} {passive} {scope} depth={depth + 1} />{/if}
   </div>
 {:else if type === 'link'}
@@ -240,7 +249,7 @@
   {@const head = child(component.header)}
   {@const body = child(component.cell)}
   {#if tableColumns.length}
-  <div class="a2ui-tablewrap" style:flex-grow={grow}>
+  <div class="a2ui-tablewrap" style:width={width} style:flex-grow={layoutGrow}>
     <div class="a2ui-table" class:a2ui-table-data={component.variant === 'data'} class:a2ui-table-compact={component.density === 'compact'} style:grid-template-columns={tableGrid} role="table">
       {#if head}
         <div class="a2ui-tr" role="row">

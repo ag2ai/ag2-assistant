@@ -15,6 +15,7 @@ itself.
 |---|---|
 | `Card` | A framed block around one `child`. `variant: feature` gives it the editorial board frame and its own surface tones, and suppresses the generic chrome when it is the root. |
 | `Column` / `Row` | Its `children` stacked or in a line. |
+| `Grid` | Its `children` in `columns` equal tracks (1–6). Tracks collapse as available space narrows; `minColumnWidth: sm/md/lg` chooses a readable minimum. Empty tracks remain, so one Card in a two-column Grid occupies half the available width. |
 | `List` | Its `children`, as a column. |
 | `Divider` | A horizontal rule. `emphasis: strong` makes it the heavy one. |
 | `Table` | The comparison grid: one column per item of `columns`, one ruled row per item of `rows`, and one cell per item of the `cells` each row names. `header` is drawn in a column's scope, `lead` in a row's, `cell` in a cell's. A row marks the column whose `key` carries the value its `win` names, and `pick` marks a whole column the same way — a row with no clear winner marks nothing. A row shorter than the columns keeps the columns it does not fill, so every row lines up under its own column; an unfilled cell is drawn as a dash. Wide content scrolls the grid rather than widening the Card, and a `columns` bound to nothing is no table at all. |
@@ -26,6 +27,16 @@ required keys and `additionalProperties: false`. Use `prefixItems` with `const` 
 for fixed ordered axes, and `minItems`/`maxItems` for their lengths. An untyped object array
 allows drawing arguments to change the structure. Supply statuses as enums and map their
 symbols and tones in the layout. The example must follow the same shape as real data.
+
+`width: content` fits a Card, Column, Row, Grid, List or Table to its contents;
+`width: fill` fills its available container. Omit it to keep the existing sizing.
+Content sizing takes precedence over `grow`; all boxes stay bounded by their container.
+For a compact calendar use a content-sized Card and Table. To fill a Card with a table,
+set the Table's width to fill. Keep useful frame padding around the contents.
+For equal halves use `Grid` with `columns: 2`, rather than two growing Rows/Columns:
+grow distributes leftover room and does not equalize their existing content widths.
+Alignment belongs to the parent: a Column's align controls its children's widths;
+alignment inside a Card controls its contents, not the Card's own width.
 
 For tabular records, use `Table.variant: data` (horizontal rules) and optionally
 `density: compact`. The default is the existing comparison grid. `columnWidth` takes
