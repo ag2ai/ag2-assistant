@@ -29,7 +29,7 @@ dependencies = [
     # gateway facade
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.34.0",
-    "websockets>=14",
+    "websockets>=15",
     # channels
     "python-telegram-bot>=21.0",
     "discord.py>=2.4",
