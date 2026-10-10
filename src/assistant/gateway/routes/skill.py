@@ -26,6 +26,7 @@ from assistant.gateway.schemas import (
     SkillMutatedResponse,
     SkillSearchResultsResponse,
 )
+from assistant.screen_skill import screen_skill_descriptor
 from assistant.skills import SkillStateStore, skill_origin
 from assistant.skills_install import (
     SkillSourceError,
@@ -90,6 +91,7 @@ def _shared_skills(config) -> list:
         for s in [
             a2ui_skill_descriptor(),
             card_author_descriptor(),
+            screen_skill_descriptor(),
             *build_skills_runtime(config).skills,
         ]
     }

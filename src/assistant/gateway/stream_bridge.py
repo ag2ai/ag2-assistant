@@ -41,7 +41,9 @@ class StreamBridge:
         if is_binary_event(event):
             return  # audio rides its own binary frame, not {type, data}
         with contextlib.suppress(Exception):
-            await self._ws.send_json({"event": to_wire(as_drawn(event, self._gw.catalog))})
+            await self._ws.send_json(
+                {"event": to_wire(as_drawn(event, self._gw.catalog, self._gw.card_sources))}
+            )
 
     async def run_turn(
         self,

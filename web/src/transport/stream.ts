@@ -47,12 +47,15 @@ export class StreamClient {
   private ws: WebSocket | null
   private _closed: boolean
   private _queue: ClientFrame[]
+  private readonly endpoint: string
 
   constructor(
     chatId: string,
     { onEvent, onReady, onOpen, onTurnEnd, onQueued, onError }: StreamHandlers = {},
+    endpoint?: string,
   ) {
     this.chatId = chatId
+    this.endpoint = endpoint || '/stream?chat=' + encodeURIComponent(chatId)
     this.onEvent = onEvent || (() => {})
     this.onReady = onReady || (() => {})
     // The server fed this message to the turn already running. It won't come back as an
@@ -71,8 +74,9 @@ export class StreamClient {
   }
 
   connect(): this {
+    if (this._closed) return this
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-    const url = `${proto}://${location.host}${P('/stream?chat=' + encodeURIComponent(this.chatId))}`
+    const url = `${proto}://${location.host}${P(this.endpoint)}`
     this.ws = new WebSocket(url)
     this.ws.onopen = () => { this.onOpen(); const q = this._queue; this._queue = []; q.forEach((o) => this._raw(o)) }
     this.ws.onmessage = (e: MessageEvent) => {

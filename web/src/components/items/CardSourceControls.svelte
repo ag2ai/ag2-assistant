@@ -21,12 +21,12 @@
   const canPoll = $derived(refreshState?.status !== 'approval_required')
   let disposed = false
 
-  async function refresh() {
+  async function refresh(trigger: 'manual' | 'shown' | 'interval' = 'manual') {
     if (busy || disposed) return
     const epoch = $profileEpoch
     busy = true; error = ''
     try {
-      const response = await api.refreshCardSource(target)
+      const response = await api.refreshCardSource(target, trigger)
       if (disposed || epoch !== $profileEpoch) return
       for (const event of response.events) onEvent(event)
     } catch (cause) { if (!disposed && epoch === $profileEpoch) error = errText(cause) }
@@ -46,8 +46,8 @@
     void scheduleKey
     const interval = untrack(() => source.interval_seconds)
     if (!visible || !tabVisible || !canPoll) return
-    untrack(() => { void refresh() })
-    const timer = interval ? setInterval(() => { void refresh() }, interval * 1000) : undefined
+    untrack(() => { void refresh('shown') })
+    const timer = interval ? setInterval(() => { void refresh('interval') }, interval * 1000) : undefined
     return () => { if (timer) clearInterval(timer) }
   })
 
@@ -78,7 +78,7 @@
 
 <div class="source-controls" bind:this={element}>
   <span>{source.tool === 'get_weather' ? 'Weather' : source.tool === 'get_quotes' ? 'Quotes' : 'Custom source'}</span>
-  <button class="open" disabled={busy} onclick={refresh}>{busy ? 'Refreshing…' : 'Refresh'}</button>
+  <button class="open" disabled={busy} onclick={() => refresh()}>{busy ? 'Refreshing…' : 'Refresh'}</button>
   {#if source.code}<button class="open" disabled={busy} onclick={review}>Review source</button>{/if}
   {#if error || refreshState?.error}<span role="alert">{error || refreshState?.error}</span>{/if}
 </div>

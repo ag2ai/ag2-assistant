@@ -65,6 +65,7 @@ export const EventData = {
     components: z.array(z.unknown()).optional(),
     data: z.record(z.string(), z.unknown()).optional(),
   }),
+  CardInstanceReference: z.object({ file_path: z.string(), file_surface_id: z.string() }),
   EphemeralCard: z.object({
     draft_id: z.string(),
     draft_version: z.number().int().positive(),
@@ -125,7 +126,7 @@ export const HANDLED_EVENTS = [
   'ModelRequest', 'DrainedModelRequest', 'ModelMessageChunk', 'ModelResponse',
   'ToolCallsEvent', 'TaskCreated', 'TaskScheduled', 'TaskStarted', 'TaskCompleted',
   'TaskFailed', 'TaskCancelled', 'SubagentTrace', 'ObserverAlert', 'DeliverableProduced',
-  'ImageGenerated', 'A2UISurface', 'EphemeralCard', 'CardDefinitionSaved', 'CardInstanceSaved', 'CardSourceUpdated', 'A2UISurfaceDataUpdated', 'A2UIActionSubmitted',
+  'ImageGenerated', 'A2UISurface', 'CardInstanceReference', 'EphemeralCard', 'CardDefinitionSaved', 'CardInstanceSaved', 'CardSourceUpdated', 'A2UISurfaceDataUpdated', 'A2UIActionSubmitted',
   'A2UIMessageEvent', 'Attachment', 'InquiryRaised', 'InquiryAnswered', 'TurnCancelled',
   'TurnFailed', 'FeedbackGiven', 'FeedbackCleared',
 ] as const
@@ -231,4 +232,4 @@ export type ThreadItem =
   | (ItemBase & { kind: 'genimage'; path: string; prompt?: string; feedback?: Feedback })
   | (ItemBase & { kind: 'attachment'; path: string; name?: string })
   | (ItemBase & { kind: 'inquiry'; inquiryId: string; question: string; detail: string; options: string[]; qkind?: string; resolved: boolean; answer?: string; resolution?: string })
-  | (ItemBase & { kind: 'a2ui'; sourceStates?: Record<string, z.infer<typeof CardSourceEvent>>; surfaceId: string; version?: string; catalogId?: string; title?: string; intent?: string; component: A2UIComponent; components?: A2UIComponent[]; data: Record<string, unknown>; messages?: unknown[]; draft?: { id: string; version: number; name: string } })
+  | (ItemBase & { kind: 'a2ui'; filePath?: string; fileSurfaceId?: string; sourceStates?: Record<string, z.infer<typeof CardSourceEvent>>; surfaceId: string; version?: string; catalogId?: string; title?: string; intent?: string; component: A2UIComponent; components?: A2UIComponent[]; data: Record<string, unknown>; messages?: unknown[]; draft?: { id: string; version: number; name: string } })

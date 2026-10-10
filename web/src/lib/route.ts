@@ -13,9 +13,9 @@
 const BASE = '/app'
 
 // The drawer Tab, the open Thread's kind, and the main-pane driver.
-export type Tab = 'chats' | 'tasks' | 'files'
+export type Tab = 'chats' | 'tasks' | 'files' | 'screens'
 export type ThreadKind = 'c' | 't' | 'r'
-export type RouteName = 'home' | 'chat' | 'task' | 'run' | 'files' | 'tasks'
+export type RouteName = 'home' | 'chat' | 'task' | 'run' | 'files' | 'tasks' | 'screens' | 'screen'
 
 // The Modal slot's vocabulary — see MODAL_KEYS below for what each one's value means.
 export type Modal = 'settings' | 'poweredby'
@@ -72,6 +72,7 @@ function threadName(tab: string, kind: ThreadKind | null): RouteName {
   if (kind === 'r') return 'run'
   if (kind === 't') return 'task'
   if (kind === 'c') return 'chat'
+  if (tab === 'screens') return 'screens'
   if (tab === 'files') return 'files'
   if (tab === 'tasks') return 'tasks'
   return 'home'
@@ -178,6 +179,12 @@ export function parse(pathname: string, hash: string | null | undefined): Route 
   const p = pathname
   const o = parseHash(hash)
   let m
+  if ((m = p.match(/^\/app\/([^/]+)\/screens\/?$/))) {
+    return { name: 'screens', tab: 'screens', kind: null, id: null, pid: dec(m[1]), ...o }
+  }
+  if ((m = p.match(/^\/app\/([^/]+)\/screens\/s\/(.+?)\/?$/))) {
+    return { name: 'screen', tab: 'screens', kind: null, id: dec(m[2]), pid: dec(m[1]), ...o }
+  }
   if ((m = p.match(/^\/app\/([^/]+)\/(chats|tasks|files)(?:\/(c|t|r)\/(.+?))?\/?$/))) {
     // The regex alternation IS the validation — these groups can only be those words.
     const tab = m[2] as Tab, kind = (m[3] || null) as ThreadKind | null, id = m[4] ? dec(m[4]) : null
@@ -213,9 +220,9 @@ function normalizePath(path: string, r: Route): string {
   if (path === '/chats' || path === '/tasks' || path === '/files') {
     return path + (r.kind && r.id ? '/' + r.kind + '/' + r.id : '')
   }
-  if (path.startsWith('/c/')) return '/' + r.tab + '/c/' + path.slice(3)
-  if (path.startsWith('/t/')) return '/' + r.tab + '/t/' + path.slice(3)
-  if (path.startsWith('/r/')) return '/' + r.tab + '/r/' + path.slice(3)
+  if (path.startsWith('/c/')) return '/' + (r.tab === 'screens' ? 'chats' : r.tab) + '/c/' + path.slice(3)
+  if (path.startsWith('/t/')) return '/' + (r.tab === 'screens' ? 'tasks' : r.tab) + '/t/' + path.slice(3)
+  if (path.startsWith('/r/')) return '/' + (r.tab === 'screens' ? 'tasks' : r.tab) + '/r/' + path.slice(3)
   return path
 }
 

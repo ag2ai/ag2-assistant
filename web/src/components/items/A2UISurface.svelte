@@ -1,5 +1,9 @@
 <script lang="ts">
   import { untrack } from 'svelte'
+  import { StreamClient } from '../../transport/stream.ts'
+  import { api } from '../../transport/api/index.ts'
+  import { asComponent, asComponents } from '../../lib/a2ui.ts'
+  import { profileEpoch } from '../../store.ts'
   import { cardSources, projectSourceEvent } from '../../lib/cardSources.ts'
   import CardSourceControls from './CardSourceControls.svelte'
   import type { WireEvent } from '../../schemas/events.ts'
@@ -17,6 +21,9 @@
 
   type Props = { item: Extract<ThreadItem, { kind: 'a2ui' }>; passive?: boolean; filePath?: string }
   let { item, passive = false, filePath = '' }: Props = $props()
+  const linkedPath = $derived(item.filePath || '')
+  const fileTarget = $derived(filePath || linkedPath)
+  const readOnly = $derived(passive || !!linkedPath)
   const sources = $derived(cardSources(item.data))
   const sourceIds = $derived(Object.keys(sources))
   const data = $derived(item.data || {})
@@ -27,10 +34,10 @@
   // A feature Card draws its own frame and heading; the generic chrome is skipped.
   const isFeature = $derived(rootKind === 'card' && str(item.component.variant) === 'feature')
   const title = $derived(item.title || SURFACE_TITLE)
-  const isComposingUpdate = $derived(!passive && $thread.items.some(
+  const isComposingUpdate = $derived(!readOnly && $thread.items.some(
     (entry) => entry.kind === 'agent' && entry.streaming && a2uiComposingSurfaceId(entry.text) === item.surfaceId
   ))
-  const actionPending = $derived(!passive && $thread.items.some(
+  const actionPending = $derived(!readOnly && $thread.items.some(
     (entry) => entry.kind === 'note' && entry.a2uiActionPending && entry.surfaceId === item.surfaceId
   ))
   let edits: Record<string, unknown> = {}
@@ -60,7 +67,7 @@
 
   // The click carries the data model this instance holds alongside the envelope.
   function submitAction(action: A2UIAction) {
-    if (passive) return
+    if (readOnly) return
     a2uiAction(
       {
         version: item.version || 'v1.0',
@@ -69,9 +76,28 @@
       { surfaceId: item.surfaceId, data: inputData },
     )
   }
+  $effect(() => {
+    const path = linkedPath
+    const epoch = $profileEpoch
+    if (!path) return
+    let stale = false
+    const stream = new StreamClient('', {
+      onEvent: event => { if (!stale && epoch === $profileEpoch) sourceEvent(event) },
+      onReady: () => {
+        void api.cardInstance(path).then(instance => {
+          if (stale || epoch !== $profileEpoch) return
+          const message = instance.message
+          item = { ...item, fileSurfaceId: message.surface_id, component: asComponent(message.component),
+            components: asComponents(message.component._components), data: message.data }
+        }).catch(() => {})
+      },
+    }, '/card-sources/stream').connect()
+    return () => { stale = true; stream.close() }
+  })
+
   function sourceEvent(event: WireEvent) {
-    if (filePath) {
-      if (projectSourceEvent(item, event, filePath)) item = { ...item }
+    if (fileTarget) {
+      if (projectSourceEvent(item, event, fileTarget)) item = { ...item }
     } else {
       thread.update(current => {
         const items = current.items.map(entry => {
@@ -86,13 +112,13 @@
 </script>
 
 {#snippet sourceControls(id: string)}
-  <CardSourceControls source={sources[id]} refreshState={item.sourceStates?.[id]} target={filePath ? { path: filePath, source_id: id } : { chat_id: $thread.chat, surface_id: item.surfaceId, source_id: id }} onEvent={sourceEvent} />
+  <CardSourceControls source={sources[id]} refreshState={item.sourceStates?.[id]} target={fileTarget ? { path: fileTarget, source_id: id } : { chat_id: $thread.chat, surface_id: item.surfaceId, source_id: id }} onEvent={sourceEvent} />
 {/snippet}
 
 {#if isComposingUpdate}
   <A2UIComposing />
 {:else if isFeature}
-  <BasicA2UIComponent {sourceIds} {sourceControls} component={item.component} {components} data={inputData} {passive} onDataChange={setInputValue} onAction={submitAction} />
+  <BasicA2UIComponent {sourceIds} {sourceControls} component={item.component} {components} data={inputData} passive={readOnly} onDataChange={setInputValue} onAction={submitAction} />
 {:else if hasLayout}
 <div class="a2ui">
   <div class="a2ui-head">
@@ -104,13 +130,13 @@
     <span class="a2ui-catalog" title={item.catalogId}>AG2 catalog</span>
   </div>
 
-  <BasicA2UIComponent {sourceIds} {sourceControls} component={item.component} {components} data={inputData} {passive} onDataChange={setInputValue} onAction={submitAction} />
+  <BasicA2UIComponent {sourceIds} {sourceControls} component={item.component} {components} data={inputData} passive={readOnly} onDataChange={setInputValue} onAction={submitAction} />
 </div>
 {/if}
-{#if !passive && !isComposingUpdate && hasLayout}
+{#if !readOnly && !isComposingUpdate && hasLayout}
   <CardInstanceSave {item} localData={() => inputData} />
 {/if}
-{#if !passive && currentDraft($thread.items, item)}
+{#if !readOnly && currentDraft($thread.items, item)}
   <CardDraftSave {item} />
 {/if}
 {#if actionPending}

@@ -1,5 +1,7 @@
 """Profile-scoped refresh and explicit approval of retained source code."""
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -23,6 +25,10 @@ class SourceApproval(SourceTarget):
     secrets: dict[str, str] = Field(default_factory=dict)
 
 
+class SourceRefresh(SourceTarget):
+    trigger: Literal["manual", "shown", "interval"] = "manual"
+
+
 def build_profile_router(get_runtime, *, tools=None, executor=None) -> APIRouter:
     r = APIRouter()
 
@@ -39,7 +45,7 @@ def build_profile_router(get_runtime, *, tools=None, executor=None) -> APIRouter
         return sources
 
     @r.post("/card-sources/refresh", response_model=CardSourceResponse)
-    async def refresh(req: SourceTarget, runtime: ProfileRuntime = Depends(get_runtime)):
+    async def refresh(req: SourceRefresh, runtime: ProfileRuntime = Depends(get_runtime)):
         try:
             return await service(runtime).refresh(**req.model_dump())
         except (InstanceError, OSError, ValueError) as exc:

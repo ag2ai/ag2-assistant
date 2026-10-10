@@ -542,6 +542,13 @@ def _escaped(part: str) -> str:
     return part.replace("~", "~0").replace("/", "~1")
 
 
+def namespace_components(
+    nodes: list[dict[str, Any]], ids: dict[str, str], data_path: str
+) -> list[dict[str, Any]]:
+    """Namespace primitive ids and absolute bindings, retaining repeated-item scopes."""
+    return [_rewritten(node, ids, data_path) for node in nodes]
+
+
 def _rewritten(node: dict[str, Any], ids: dict[str, str], prefix: str) -> dict[str, Any]:
     """One layout component with its ids namespaced and its bindings re-rooted."""
     named = _id_keys(node)
@@ -566,7 +573,8 @@ def _rerooted(value: Any, ids: dict[str, str], prefix: str) -> Any:
     drawn: dict[str, Any] = {}
     for key, item in value.items():
         if key == "path" and isinstance(item, str):
-            drawn[key] = item if item.startswith(".") else f"{prefix}{item}"
+            suffix = item if not item or item.startswith("/") else f"/{item}"
+            drawn[key] = item if item.startswith(".") else f"{prefix}{suffix}"
         elif key == "componentId" and isinstance(item, str):
             drawn[key] = ids.get(item, item)
         else:

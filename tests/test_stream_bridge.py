@@ -49,6 +49,7 @@ class _GW:
         return self._stream
 
     catalog = _Catalog()
+    card_sources = None
 
     async def send_message(
         self,

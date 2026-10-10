@@ -10,6 +10,7 @@
   import type { Profile } from './schemas/index.ts'
   import Onboarding from './components/Onboarding.svelte'
   import Drawer from './components/Drawer.svelte'
+  import ScreenPage from './components/ScreenPage.svelte'
   import Thread from './components/Thread.svelte'
   import TaskPage from './components/task/TaskPage.svelte'
 import AppBar from './components/AppBar.svelte'
@@ -195,7 +196,7 @@ import AppBar from './components/AppBar.svelte'
     // missing one means the URL isn't a thread — it falls through to the fresh chat.
     if (r.name === 'run' && r.id) openThread('run', r.id)
     else if (r.name === 'chat' && r.id) openThread('chat', r.id)
-    else if (r.name === 'task' || r.name === 'tasks' || r.name === 'files') closeThread()
+    else if (r.name === 'task' || r.name === 'tasks' || r.name === 'files' || r.name === 'screens' || r.name === 'screen') closeThread()
     else { closeThread(); go('/c/' + newChatId()) } // home → a fresh chat
   })
 </script>
@@ -215,6 +216,8 @@ import AppBar from './components/AppBar.svelte'
       <Hitl />
       {#if $route.name === 'chat' || $route.name === 'run'}
         <Thread />
+      {:else if $route.name === 'screen' || $route.name === 'screens'}
+        {#key $route.pid}<ScreenPage />{/key}
       {:else if $route.name === 'task'}
         <TaskPage />
       {:else if $route.name === 'files'}

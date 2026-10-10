@@ -1,0 +1,65 @@
+# Screens
+
+Screens are pages of Cards outside conversations. Open **Screens** in the sidebar
+and select a dashboard. Ask the assistant to create one (for example, “make me a
+morning dashboard with weather and AAPL”) or rearrange it (“move weather to the
+top”). The **screens** Skill creates independent Card instance files and a Screen
+that references them. The available sources remain those supported by Cards:
+Weather, Quotes and approved custom code; other data needs a suitable Card source.
+
+A Screen file ends in `.screen.yaml` and lives anywhere in the Profile's Files:
+
+```yaml
+kind: screen
+format_version: 1
+title: Morning
+layout:
+  - id: root
+    component: Column
+    children: [weather, market]
+  - id: weather
+    component: CardInstance
+    path: weather.card-instance.yaml
+  - id: market
+    component: CardInstance
+    path: investments/market.card-instance.yaml
+```
+
+The layout uses the same primitives as Cards (`Row`, `Column`, `Text`, etc.).
+`CardInstance` is a file reference with exactly `id`, `component` and `path`.
+All paths are relative to the Profile's Files root, including references in a
+Screen kept in a nested Directory. Screens do not copy values or consult current
+catalog definitions: each referenced instance retains its own layout, values,
+parameters, source contract and custom code. Up to 32 instances may be referenced.
+
+The backend expands the entire page into one A2UI surface. Component ids and
+absolute bindings are namespaced; instance data lives under `/_cards/<reference-id>`.
+Relative bindings such as `./title` are permitted only inside repeated templates,
+including Table cell templates. Invalid layouts, unsafe paths and missing files
+produce repair errors; they never substitute a catalog Card or start an agent Turn.
+
+Click **Edit Screen** to open its source in Files. Reorder `children` to rearrange
+Cards, nest them in `Row`/`Column` primitives, or reuse an existing instance path in
+another Screen. Ordinary Files editing, ETag conflicts, rename and deletion apply.
+Renaming an instance requires updating the paths that reference it. Invalid Screen
+files remain listed with a repair indicator.
+
+Source Refresh, approval and Secret binding use the same Profile-owned service as
+saved-instance previews. Visible sources refresh on show and at their declared
+interval; offscreen or hidden sources stop interval requests. Automatic requests
+for the same object share its declared interval across Screens and Chat references;
+manual Refresh always requests an update. Concurrent requests coalesce. Typed source
+events update every open view of that file and keep last-good values on failures.
+Fetching creates no assistant Turn. Authored configuration survives restart; fetched
+file values use the existing bounded runtime cache and may return to the saved values
+until refreshed after restart. Opening a Screen never executes unapproved code.
+
+To show an existing instance in a conversation, ask the assistant to show that saved
+file. Its `screens/show_instance` script adds an explicit file reference: it reads
+current file state on replay and subscribes to the same source events. This differs
+from ordinary drawn Chat Cards and **Save instance**, whose independent-copy behavior
+is unchanged. A copied file remains a separate object even if its stored UUID matches.
+
+Screen and referenced-file inputs/actions remain passive. Source Refresh and approval
+are active buttons. Dragging Cards between columns and writing values back without a
+Turn are follow-up work; Screens do not enable historical actions.
