@@ -269,7 +269,7 @@ def test_a_catalog_that_cannot_be_probed_says_why(paths):
     app, _pid = make_profile_app(paths)
     with TestClient(app) as c:
         body = c.get("/api/llm-configs/models?type=openai_subscription").json()
-    assert body == {"models": [], "current": "", "reason": "not_probeable"}
+    assert body == {"models": [], "current": "", "reason": "unauthorized"}
 
 
 # ---- live-configs ----

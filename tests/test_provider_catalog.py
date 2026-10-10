@@ -7,6 +7,7 @@ so request building, headers and response parsing are the real ones.
 import httpx
 import pytest
 
+from assistant.codex_auth import BACKEND_BASE, CLIENT_VERSION, Creds
 from assistant.provider_catalog import (
     CatalogTarget,
     CatalogUnavailable,
@@ -91,7 +92,7 @@ async def test_a_provider_having_a_bad_moment_is_unreachable(status):
     assert caught.value.reason == "unreachable"
 
 
-async def test_a_type_with_no_provider_list_is_not_probeable():
+async def test_an_unsigned_subscription_is_not_probeable():
     async with async_client(json_responder(TAGS)) as client:
         with pytest.raises(CatalogUnavailable) as caught:
             await probe_provider_models(CatalogTarget(type="openai_subscription"), client=client)
@@ -208,10 +209,65 @@ async def test_a_keyless_custom_endpoint_is_still_asked():
     assert sent[0]["url"] == "http://localhost:8080/v1/models"
 
 
-async def test_the_chatgpt_subscription_is_never_probeable():
-    async with async_client(json_responder(OPENAI_LIST)) as client:
+async def test_subscription_reads_account_slugs_with_oauth_headers():
+    payload = {
+        "models": [
+            {"slug": "gpt-6.1-sol", "visibility": "list"},
+            {"slug": "gpt-future"},
+            {"slug": "hidden", "visibility": "hide"},
+            {"slug": ""},
+            None,
+        ]
+    }
+    handler, sent = recording_responder(payload)
+    target = CatalogTarget(
+        type="openai_subscription",
+        creds=Creds("oauth-token", "account-id"),
+        base_url="https://untrusted.example/v1",
+        api_key="wrong-key",
+    )
+    async with async_client(handler) as client:
+        assert await probe_provider_models(target, client=client) == ["gpt-6.1-sol", "gpt-future"]
+    assert sent[0]["url"] == f"{BACKEND_BASE}/models?client_version={CLIENT_VERSION}"
+    assert sent[0]["headers"]["authorization"] == "Bearer oauth-token"
+    assert sent[0]["headers"]["chatgpt-account-id"] == "account-id"
+    assert sent[0]["headers"]["version"] == CLIENT_VERSION
+    assert sent[0]["headers"]["originator"]
+    assert "oauth-token" not in repr(target)
+
+
+@pytest.mark.parametrize(
+    "payload", [{"models": []}, {"models": [{"slug": "hidden", "visibility": "hide"}]}]
+)
+async def test_subscription_empty_catalog_is_successful(payload):
+    async with async_client(json_responder(payload)) as client:
+        assert (
+            await probe_provider_models(
+                CatalogTarget(type="openai_subscription", creds=Creds("token", None)), client=client
+            )
+            == []
+        )
+
+
+@pytest.mark.parametrize("payload", [{"data": [{"id": "gpt-6.1-sol"}]}, {"models": None}])
+async def test_subscription_invalid_payload_is_not_a_catalog(payload):
+    async with async_client(json_responder(payload)) as client:
         with pytest.raises(CatalogUnavailable) as caught:
             await probe_provider_models(
-                CatalogTarget(type="openai_subscription", api_key="sk-live"), client=client
+                CatalogTarget(type="openai_subscription", creds=Creds("token", None)), client=client
+            )
+    assert caught.value.reason == "no_list_endpoint"
+
+
+async def test_subscription_cannot_use_a_key_or_custom_endpoint_without_oauth():
+    handler, sent = recording_responder({"models": []})
+    async with async_client(handler) as client:
+        with pytest.raises(CatalogUnavailable) as caught:
+            await probe_provider_models(
+                CatalogTarget(
+                    type="openai_subscription", api_key="sk-key", base_url="https://custom"
+                ),
+                client=client,
             )
     assert caught.value.reason == "not_probeable"
+    assert sent == []

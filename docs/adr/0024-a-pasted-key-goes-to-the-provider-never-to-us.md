@@ -46,4 +46,6 @@ there and falls back to **Known models** — and because a CORS refusal is
 indistinguishable from a dead host in a browser, that failure reads as `unreachable`
 rather than `no_list_endpoint`, which is less precise than the gateway path can be
 about the same endpoint. The gateway probe route is therefore *not* the general answer
-it looks like: it authenticates by `secret_id` only, and accepts no key material.
+it looks like: it resolves a saved `secret_id` or the existing ChatGPT OAuth session,
+and accepts no key material. OAuth model suggestions come from the account catalog
+through the gateway; its access token stays on the server.
