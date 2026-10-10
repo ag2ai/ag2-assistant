@@ -20,6 +20,12 @@ itself.
 | `Table` | The comparison grid: one column per item of `columns`, one ruled row per item of `rows`, and one cell per item of the `cells` each row names. `header` is drawn in a column's scope, `lead` in a row's, `cell` in a cell's. A row marks the column whose `key` carries the value its `win` names, and `pick` marks a whole column the same way — a row with no clear winner marks nothing. A row shorter than the columns keeps the columns it does not fill, so every row lines up under its own column; an unfilled cell is drawn as a dash. Wide content scrolls the grid rather than widening the Card, and a `columns` bound to nothing is no table at all. |
 
 `header`, `lead` and `cell` name a layout id each, the way `child` does.
+`lead` adds its own column before `columns`; do not include its heading in the data axis.
+Keep a saved Card's table orientation in its field schemas: declare row/cell properties,
+required keys and `additionalProperties: false`. Use `prefixItems` with `const` labels
+for fixed ordered axes, and `minItems`/`maxItems` for their lengths. An untyped object array
+allows drawing arguments to change the structure. Supply statuses as enums and map their
+symbols and tones in the layout. The example must follow the same shape as real data.
 
 For tabular records, use `Table.variant: data` (horizontal rules) and optionally
 `density: compact`. The default is the existing comparison grid. `columnWidth` takes

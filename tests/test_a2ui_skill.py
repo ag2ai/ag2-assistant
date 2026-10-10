@@ -3,6 +3,7 @@ demand, and one Card's schema and example fetched only once it is being drawn.""
 
 import json
 from contextlib import AsyncExitStack
+from copy import deepcopy
 
 import pytest
 from ag2.a2ui.middleware import A2UIExtractionMiddleware, A2UIValidationMiddleware
@@ -288,6 +289,78 @@ async def test_fields_the_card_does_not_accept_draw_nothing_and_name_the_fields(
 
     assert reply.startswith("Not drawn") and '"items"' in reply
     assert published == []
+
+
+@pytest.mark.parametrize("reference", ["#/properties/days/$defs/day", "#day", "dynamic"])
+async def test_saved_cards_keep_local_schema_references_and_fixed_axes(config, reference):
+    weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    ref_key = "$dynamicRef" if reference == "dynamic" else "$ref"
+    ref_value = "#day" if reference == "dynamic" else reference
+    for name, status in [("Calendar", "lesson"), ("OtherCalendar", "analysis")]:
+        day = {
+            "$dynamicAnchor" if reference == "dynamic" else "$anchor": "day",
+            "type": "object",
+            "properties": {"label": {"type": "string"}, "status": {"const": status}},
+            "required": ["label", "status"],
+            "additionalProperties": False,
+        }
+        definition = {
+            "name": name,
+            "description": "Seven fixed weekday rows.",
+            "fields": {
+                "days": {
+                    "$defs": {"day": day},
+                    "type": "array",
+                    "minItems": 7,
+                    "maxItems": 7,
+                    "prefixItems": [
+                        {
+                            "allOf": [
+                                {ref_key: ref_value},
+                                {"properties": {"label": {"const": label}}},
+                            ]
+                        }
+                        for label in weekdays
+                    ],
+                    "items": False,
+                }
+            },
+            "required": ["days"],
+            "layout": [
+                {
+                    "id": "root",
+                    "component": "Column",
+                    "children": {"componentId": "day", "path": "/days"},
+                },
+                {"id": "day", "component": "Text", "text": {"path": "./label"}},
+            ],
+            "example": {"days": [{"label": label, "status": status} for label in weekdays]},
+        }
+        directory = config.workspace_dir / CARDS_DIR
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / f"{name}.card.yaml").write_text(json.dumps(definition))
+
+    data = {"days": [{"label": label, "status": "lesson"} for label in weekdays]}
+    reply, published = await draw(config, "Calendar", data)
+    assert "drawn in the chat" in reply
+    written = next(m["updateDataModel"] for m in published if "updateDataModel" in m)
+    assert written == {
+        "surfaceId": published[0]["createSurface"]["surfaceId"],
+        "path": "/days",
+        "value": data["days"],
+    }
+    other = {"days": [{"label": label, "status": "analysis"} for label in weekdays]}
+    reply, published = await draw(config, "OtherCalendar", other)
+    assert "drawn in the chat" in reply and published
+
+    rotated = {"days": list(reversed(data["days"]))}
+    extra = {"days": [*data["days"], data["days"][0]]}
+    arbitrary = deepcopy(data)
+    arbitrary["days"][0]["tone"] = "positive"
+    for invalid in [rotated, extra, arbitrary, other]:
+        reply, published = await draw(config, "Calendar", invalid)
+        assert reply.startswith("Not drawn")
+        assert published == []
 
 
 async def test_every_shape_a_model_sends_its_fields_in_draws_the_card(config):
