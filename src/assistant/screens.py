@@ -1,5 +1,6 @@
 """Screens compose independent instance files into one primitive surface."""
 
+import hashlib
 import os
 from collections.abc import Callable
 from pathlib import Path
@@ -19,7 +20,7 @@ from assistant.gateway.schemas.screen import (
     ScreenRow,
     ScreenSource,
 )
-from assistant.workspace import _MAX_WRITE_BYTES, list_files
+from assistant.workspace import _MAX_WRITE_BYTES, list_files, write_text
 
 SCREEN_SUFFIX = ".screen.yaml"
 
@@ -79,6 +80,30 @@ def load_screen(root: str | os.PathLike[str], path: str, instances) -> ScreenRes
     """Expand references from the current Profile without catalog or Chat dependencies."""
     document = decode_screen(read_document(root, path, SCREEN_SUFFIX))
     return expand_screen(document, path, instances.file_instance)
+
+
+def rename_screen(root: str | os.PathLike[str], path: str, title: str) -> ScreenRow:
+    """Persist a Screen title while preserving its layout and referenced files."""
+    title = title.strip()
+    if not title or len(title) > 200:
+        raise InstanceError("Screen needs a title of at most 200 characters")
+    original = read_document(root, path, SCREEN_SUFFIX)
+    decode_screen(original)
+    document = yaml.safe_load(original)
+    document["title"] = title
+    content = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
+    decode_screen(content.encode("utf-8"))
+    status, _ = write_text(root, path, content, base_token=hashlib.sha256(original).hexdigest())
+    if status != "ok":
+        errors = {
+            "conflict": ("Screen changed; try renaming it again", 409),
+            "not_found": ("Screen no longer exists", 404),
+            "too_large": ("Screen is too large", 413),
+            "invalid": ("Screen could not be renamed", 400),
+        }
+        message, code = errors[status]
+        raise InstanceError(message, code)
+    return ScreenRow(path=path, title=title, error="")
 
 
 def expand_screen(

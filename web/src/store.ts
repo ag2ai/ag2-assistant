@@ -2,6 +2,7 @@ import { derived, writable, type Readable, type Writable } from 'svelte/store'
 import { DEFAULT_RAIL_WIDTH, DEFAULT_DRAWER_WIDTH } from './lib/railWidth.ts'
 import { NO_CHAT_MODEL, type ChatModelState } from './lib/chatModel.ts'
 import type { A2UIKnown } from './lib/a2ui.ts'
+import type { ScreenRow } from './schemas/screen.ts'
 import type {
   ChatRow,
   HitlQuestion,
@@ -66,6 +67,7 @@ export const chatModel: Writable<ChatModelState> = writable(NO_CHAT_MODEL)
 
 // Drawer: unified history of chats + tasks, plus the user-writable Files tree.
 export const chats: Writable<ChatRow[]> = writable([])
+export const screenRows: Writable<ScreenRow[]> = writable([])
 export const tasks: Writable<Task[]> = writable([])
 // False until the active profile's first chats/tasks poll lands. The drawer shows a
 // loader instead of its empty state; a Card link waits rather than reading `[]` as gone.

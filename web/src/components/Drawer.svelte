@@ -777,24 +777,4 @@
   .rowconfirm .linkbtn.danger:hover { color: var(--danger); }
   .rowconfirm .linkbtn.danger:disabled { cursor: default; opacity: .6; }
 
-  /* Kebab: hover-revealed like the old trash; swaps with the timestamp. */
-  .rowkebab { flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 2px; border: none; background: none; color: var(--muted); cursor: pointer; border-radius: 6px; opacity: 0; width: 0; overflow: hidden; transition: opacity var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
-  .chatrow:hover .rowkebab, .chatrow:focus-within .rowkebab,
-  .ttask:hover .rowkebab, .ttask:focus-within .rowkebab { opacity: .55; width: auto; }
-  /* An open menu keeps its kebab visible even once the pointer leaves the row. */
-  .rowkebab[aria-expanded='true'] { opacity: 1 !important; width: auto; color: var(--text); }
-  .rowkebab:hover { opacity: 1; color: var(--text); }
-
-  /* Row action menu: fixed-position (escapes the scrolling list), right edge
-     anchored to the kebab via translateX(-100%). */
-  .chatmenu { position: fixed; z-index: var(--z-modal); transform: translateX(-100%); min-width: 150px; display: flex; flex-direction: column; padding: 4px; background: var(--surface-elevated); border: 1px solid var(--line); border-radius: var(--radius-sm); box-shadow: var(--shadow-lg); }
-  .cmitem { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: none; background: none; font: inherit; font-size: var(--text-xs); color: var(--text); border-radius: var(--radius-xs, 6px); cursor: pointer; text-align: left; }
-  .cmitem:hover { background: var(--surface-hover); }
-  .cmitem.danger { color: var(--danger, var(--danger)); }
-  .cmitem.danger:hover { background: color-mix(in srgb, var(--danger, var(--danger)) 12%, transparent); }
-  .cmitem :global(svg) { flex: none; opacity: .7; }
-  .cmdiv { height: 1px; margin: 4px 6px; background: var(--line); }
-
-  /* Inline rename input, replacing the label at the row's own size. */
-  .renamein { flex: 1; min-width: 0; font: inherit; font-size: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--accent); border-radius: 6px; padding: 1px 6px; outline: none; }
 </style>

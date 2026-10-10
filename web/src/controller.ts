@@ -2,7 +2,7 @@
 // folds events into items, runs turns, and (for tasks) polls the durable panel.
 
 import { get, writable, type Writable } from 'svelte/store'
-import { thread, runInfo, chats, tasks, inquiries, inspectorEvents, viewer, profiles, profileEpoch, chatModel, refreshFiles } from './store.ts'
+import { thread, runInfo, chats, screenRows, tasks, inquiries, inspectorEvents, viewer, profiles, profileEpoch, chatModel, refreshFiles } from './store.ts'
 import type { ThreadKind } from './store.ts'
 import { NO_CHAT_MODEL, openedChat, sentFirstMessage } from './lib/chatModel.ts'
 import { StreamClient } from './transport/stream.ts'
@@ -194,6 +194,7 @@ function resetProfileState(): void {
   thread.set({ id: null, kind: 'chat', chat: '', items: [], busy: false })
   chatModel.set(NO_CHAT_MODEL)
   chats.set([])
+  screenRows.set([])
   tasks.set([])
   runInfo.set(null)
   inquiries.set([])

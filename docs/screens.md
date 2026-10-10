@@ -7,6 +7,10 @@ top”). The **screens** Skill creates independent Card instance files and a Scr
 that references them. The available sources remain those supported by Cards:
 Weather, Quotes and approved custom code; other data needs a suitable Card source.
 
+To rename a Screen, open its sidebar **⋮** menu and choose **Rename**. Enter or
+leaving the input saves; Escape or an empty name cancels. The new title appears
+in the sidebar and page header. Its file path, layout and Card references stay the same.
+
 For a publication or monitoring dashboard, ask for a compact data table. The Card
 author can keep ID, date, class, preview and metrics in separate columns, truncate
 long previews, align numeric cells, and place toned percentage pills beside counts.
@@ -57,7 +61,7 @@ saved-instance previews. Sources refresh once when the Screen is opened, includi
 Cards below the fold. Screens do not schedule interval updates. Automatic requests
 for the same object share its declared interval with Chat references;
 manual Refresh always requests an update. Concurrent requests coalesce. Responses
-use typed source events and keep last-good values on failures. The Screen remains
+use typed source events and keep last-good values on failures. Card data remains
 a snapshot until the page is reloaded; edits and updates from other views do not change it.
 Fetching creates no assistant Turn. Authored configuration survives restart; fetched
 file values use the existing bounded runtime cache and may return to the saved values
