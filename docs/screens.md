@@ -84,3 +84,11 @@ tracks collapse as available space narrows; `minColumnWidth: sm/md/lg` selects t
 minimum. Use `width: content` on a Card or Table to fit its contents, and `width: fill`
 to fill its container. Existing layouts keep their sizing when width is omitted.
 The card-author skill's `layout.md` explains these options with a worked example.
+
+The existing `screens` skill offers a `preview` script for saved Screens, instances,
+Chat drafts, and unsaved Card or Screen candidates. It returns a screenshot and
+measured layout diagnostics through the typed tool result. Select a Chromium executable
+in Settings → General → Visual preview for each profile. Preview uses the same compiled
+A2UI renderer, disables interactions and animations, and renders retained values without
+running source scripts or saving files. External resources are blocked. Read the skill's
+`preview.md` for viewport options and diagnostic limits.

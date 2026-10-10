@@ -28,6 +28,7 @@ from assistant.gateway.schemas import (
     VoiceCatalogResponse,
     VoiceSelectedResponse,
 )
+from assistant.gateway.schemas.settings import PreviewBrowserSavedResponse
 from assistant.settings import profile_settings
 from assistant.tools.mcp import build_mcp_tools, describe_mcp_error
 from assistant.voice import synthesize_preview
@@ -45,6 +46,10 @@ class ModelOverrideRequest(BaseModel):
 
 class ReplyTimeoutRequest(BaseModel):
     reply_timeout_s: float = Field(gt=0, le=3600)
+
+
+class PreviewBrowserRequest(BaseModel):
+    preview_browser: str = Field(max_length=1024)
 
 
 class VoiceRequest(BaseModel):
@@ -377,6 +382,7 @@ def build_profile_router(
             "mcp_servers": settings.list_mcp_servers(),
             "focuses": settings.get_focuses(),  # per-profile persona focus areas
             "reply_timeout_s": cfg.gateway.reply_timeout_s,
+            "preview_browser": cfg.tools.preview_browser,
             "fs": {  # start roots for the folder picker
                 "home": str(d.paths.home),
                 "cwd": str(Path.cwd()),
@@ -465,6 +471,18 @@ def build_profile_router(
             return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
         settings.set_live_override(cid)
         return {"ok": True, "live_override": cid or None}
+
+    @r.post("/settings/preview-browser", response_model=PreviewBrowserSavedResponse)
+    async def set_preview_browser(
+        req: PreviewBrowserRequest, runtime: ProfileRuntime = Depends(get_runtime)
+    ):
+        """Select or disable Chromium rendering for this Profile's Screen skill."""
+        try:
+            browser = runtime_settings(runtime).set_preview_browser(req.preview_browser)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        await d.manager.refresh(runtime.pid)
+        return {"ok": True, "preview_browser": browser}
 
     @r.post("/settings/reply-timeout", response_model=ReplyTimeoutSavedResponse)
     async def set_reply_timeout(

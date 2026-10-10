@@ -5,14 +5,15 @@ from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 from functools import partial
+from pathlib import Path
 from typing import Any
 
 import yaml
 from ag2.context import ConversationContext
 from ag2.tools.skills import MemoryRuntime, MemorySkill
-from ag2.tools.skills.skill_types import Script, Skill, SkillMetadata
+from ag2.tools.skills.skill_types import Resource, Script, Skill, SkillMetadata
 
-from assistant.a2ui import CATALOG_ID
+from assistant.a2ui import CARD_VOCABULARY, CATALOG_ID
 from assistant.a2ui_skill import _fields_from
 from assistant.card_instances import (
     INSTANCE_SUFFIX,
@@ -21,11 +22,17 @@ from assistant.card_instances import (
     read_document,
     read_instance,
 )
-from assistant.cards import expand_components, generation_contract, validate_card_data
+from assistant.cards import (
+    expand_components,
+    generation_contract,
+    validate_card,
+    validate_card_data,
+)
 from assistant.events import CardInstanceReference
 from assistant.screens import SCREEN_SUFFIX, decode_screen, expand_screen, list_screens
+from assistant.visual_preview import VisualPreview
 
-DESCRIPTION = "Create or rearrange Screens: dashboards of saved Cards outside chats."
+DESCRIPTION = "Create or rearrange Screens: dashboards of saved Cards outside chats. Preview Card or Screen layouts as an image with measured bounds through this skill."
 INSTRUCTIONS = """Screens are pages in the Screens tab, composed from saved Card instance files.
 Read rich-views Card details first. Fetch real initial fields; never invent values.
 run_skill_script(name="screens", script="save_instance", args={"path":"weather.card-instance.yaml",
@@ -52,6 +59,10 @@ explicit reference; ordinary drawn Chat Cards and Save instance copies remain in
 Create parent directories with file tools first. Save scripts never overwrite existing files.
 Use list_screens and read_screen to discover current Screens. Rearrange an existing Screen
 by editing only its layout through the ordinary Files tools; keep its instance references.
+Before judging a design's sizing, use preview through THIS skill. Read preview.md for the
+arguments. It returns an image and measured component boxes, including horizontal scroll.
+Preview is read-only: it renders retained values without running source scripts. Inspect
+both desktop and narrow viewports and iterate; saving is a separate explicit action.
 Renaming an instance requires updating its references. Missing or invalid references report
 an error; repair the file rather than substituting another Card. Buttons in Screens are passive
 except source Refresh and approval controls. Drag/write-back boards are a separate feature.
@@ -63,6 +74,7 @@ class _ScreenSkill(MemorySkill):
     def descriptor(self) -> Skill:
         return replace(
             super().descriptor,
+            resources=(Resource(name="preview.md"),),
             scripts=tuple(
                 Script(name=name)
                 for name in (
@@ -71,6 +83,7 @@ class _ScreenSkill(MemorySkill):
                     "list_screens",
                     "read_screen",
                     "show_instance",
+                    "preview",
                 )
             ),
         )
@@ -84,17 +97,66 @@ def screen_skill_descriptor() -> Skill:
 class ScreenSkillRuntime(MemoryRuntime):
     """Create independent instance files and Screen layouts through structured scripts."""
 
-    def __init__(self, config, catalog):
+    def __init__(self, config, catalog, *, drafts=None, preview=None):
         super().__init__(
             _ScreenSkill(name="screens", description=DESCRIPTION, instructions=INSTRUCTIONS)
         )
         self.root = config.workspace_dir
         self.catalog = catalog
+        self.drafts = drafts
+        self.preview = preview or VisualPreview(config.tools.preview_browser)
 
     async def read(self, name: str, context: ConversationContext) -> str:
         if name != "screens":
             return await super().read(name, context)
         return f'<skill_content name="screens">\n{INSTRUCTIONS.strip()}\n</skill_content>'
+
+    async def read_resource(self, name: str, resource: str, context: ConversationContext) -> str:
+        if name == "screens" and resource == "preview.md":
+            return (Path(__file__).parent / "cards" / "PREVIEW.md").read_text()
+        raise FileNotFoundError(resource)
+
+    async def _preview(self, context, values: dict):
+        options = {key: values.pop(key) for key in ("width", "height", "theme") if key in values}
+        if "document" in values:
+            if set(values) - {"document", "path"}:
+                raise ValueError("Pass document and optional path for a Screen candidate")
+            document = decode_screen(yaml.safe_dump(values["document"]).encode())
+            message = expand_screen(
+                document,
+                values.get("path", "preview.screen.yaml"),
+                partial(read_instance, self.root),
+            ).message
+        elif "definition" in values:
+            if set(values) != {"definition", "data"}:
+                raise ValueError("Pass definition and data for a Card candidate")
+            card = validate_card(values["definition"], CARD_VOCABULARY)
+            if card.name in CARD_VOCABULARY:
+                raise ValueError("Card name must differ from a primitive name")
+            validate_card_data(card.fields, card.required, values["data"])
+            nodes, _ = expand_components(
+                [{**values["data"], "id": "root", "component": card.name}], {card.name: card}
+            )
+            data = values["data"]
+            root = next(node for node in nodes if node["id"] == "root")
+            return await self.preview.render({**root, "_components": nodes}, data, **options)
+        elif "draft_id" in values:
+            if self.drafts is None:
+                raise ValueError("Card drafts require durable Chat history")
+            if set(values) - {"draft_id", "version"}:
+                raise ValueError("Pass draft_id and optional version for a Chat draft")
+            draft = await self.drafts.read(context, **values)
+            return await self.preview.render(draft["component"], draft["data"], **options)
+        elif set(values) == {"path"}:
+            path = values["path"]
+            if path.endswith(INSTANCE_SUFFIX):
+                message = read_instance(self.root, path).message
+            else:
+                document = decode_screen(read_document(self.root, path, SCREEN_SUFFIX))
+                message = expand_screen(document, path, partial(read_instance, self.root)).message
+        else:
+            raise ValueError("Pass path, document, definition/data, or draft_id; read preview.md")
+        return await self.preview.render(message.component, message.data, **options)
 
     async def execute(
         self,
@@ -102,12 +164,17 @@ class ScreenSkillRuntime(MemoryRuntime):
         script: str,
         context: ConversationContext,
         args: dict[str, Any] | Sequence[str] | None = None,
-    ) -> str:
+    ) -> Any:
         if name != "screens":
             return await super().execute(name, script, context, args)
         values = _fields_from(args)
         if values is None:
             raise ValueError("Pass named script arguments as an object")
+        if script == "preview":
+            try:
+                return await self._preview(context, dict(values))
+            except (ValueError, TypeError, OSError, TimeoutError) as exc:
+                return f"Preview unavailable: {exc}"
         if script == "list_screens":
             return list_screens(self.root).model_dump_json()
         if script == "read_screen":

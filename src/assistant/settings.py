@@ -93,6 +93,19 @@ class Settings:
         self._write(data)
         return clean
 
+    def set_preview_browser(self, executable: str) -> str:
+        """Persist the explicitly selected Chromium executable for visual previews."""
+        executable = executable.strip()
+        if executable and not Path(executable).is_absolute():
+            raise ValueError("Use an absolute path to a Chromium executable.")
+        data = self._read()
+        existing = data.get("tools")
+        tools = existing if isinstance(existing, dict) else {}
+        tools["preview_browser"] = executable
+        data["tools"] = tools
+        self._write(data)
+        return executable
+
     # --- gateway ---
 
     def set_reply_timeout(self, seconds: float) -> float:

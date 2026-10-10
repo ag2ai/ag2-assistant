@@ -162,6 +162,7 @@ class ToolsConfig(BaseModel):
     # "local" = subprocess on the host (command-filtered + approval-gated).
     # "docker" = isolated container with no host FS access (approval dropped).
     sandbox: str = "local"
+    preview_browser: str = ""
     docker_image: str = "python:3.12-slim"
     # "bridge" allows outbound network (pip, fetches); "none" is strictest.
     docker_network: str = "bridge"

@@ -66,10 +66,12 @@ def test_settings_on_a_fresh_profile(client):
         "mcp_servers",
         "focuses",
         "reply_timeout_s",
+        "preview_browser",
         "fs",
     }
     assert body["mcp_servers"] == []
     assert body["focuses"] == []
+    assert body["preview_browser"] == ""
     # No config saved and none pinned: both switchers inherit, and there is
     # nothing to inherit either.
     assert body["llm_override"] is None

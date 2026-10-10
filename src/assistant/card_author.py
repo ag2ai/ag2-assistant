@@ -22,6 +22,7 @@ Read vocabulary.md and examples.md before authoring. Use the existing primitives
 words, bindings and repeated templates; never add CSS, JavaScript or backend handlers.
 For sizing or equal columns read layout.md. Use width="content" for a frame fitted to its
 contents, width="fill" to fill its container, and Grid for equal responsive columns.
+For visual inspection load screens and read its preview.md; preview is a screens script.
 For analytics or publication tables read the current tables.md before creating or editing
 a view, even when an earlier version of the references is already in Chat history.
 Use Table for aligned columns, never independent Row components. Set variant="data",

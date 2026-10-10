@@ -54,6 +54,7 @@ import {
   ProfileHealth,
   ProfileSettings,
   ReplyTimeoutSaved,
+  PreviewBrowserSaved,
   VoiceCatalog,
   VoiceSelected,
 } from './settings.ts'
@@ -272,6 +273,7 @@ export const ROUTES: Record<string, z.ZodTypeAny> = {
   'POST /api/p/{pid}/settings/llm-override': LlmOverrideSaved,
   'POST /api/p/{pid}/settings/live-override': LiveOverrideSaved,
   'POST /api/p/{pid}/settings/reply-timeout': ReplyTimeoutSaved,
+  'POST /api/p/{pid}/settings/preview-browser': PreviewBrowserSaved,
   'POST /api/p/{pid}/settings/voice_provider': Ok,
   'GET /api/p/{pid}/voice/voices': VoiceCatalog,
   'POST /api/p/{pid}/voice/select': VoiceSelected,

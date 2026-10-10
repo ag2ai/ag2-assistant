@@ -14,4 +14,5 @@ npm --prefix web run test:layout -- http://127.0.0.1:9360 http://127.0.0.1:5186/
 ```
 
 Open `/app/browser/layout.html` on the Vite server to inspect the fixtures visually.
-These fixtures are development files; the production build still has only the app entry.
+These fixtures are development files. Production ships the app entry and a passive
+preview entry used by the screens skill.

@@ -19,6 +19,7 @@ const settings = {
   mcp_servers: [],
   focuses: [],
   reply_timeout_s: 120.0,
+  preview_browser: '',
   fs: { home: '/home/u', cwd: '/home/u/app', workspace: '/home/u/ws' },
 }
 
