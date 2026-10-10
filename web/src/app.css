@@ -528,6 +528,8 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .a2ui-basic-col { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .a2ui-basic-row { display: flex; flex-wrap: wrap; gap: 10px; min-width: 0; }
 .a2ui-basic-card { border: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 70%, var(--code) 30%); border-radius: 7px; padding: 10px; min-width: 0; }
+/* Aligned flex children stay within their parent's content box. */
+.a2ui-basic-col, .a2ui-basic-row, .a2ui-basic-card, .a2ui-list, .card-source-frame { max-width: 100%; box-sizing: border-box; }
 .a2ui-text { font-size: 12.5px; line-height: 1.4; color: var(--a2ui-ink, var(--ink)); overflow-wrap: anywhere; min-width: 0; }
 .a2ui-icon { display: inline-flex; color: var(--a2ui-muted, var(--muted)); }
 .a2ui-divider { height: 1px; background: var(--a2ui-rule, var(--line)); margin: 2px 0; align-self: stretch; }
@@ -650,7 +652,7 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 
 /* The comparison table: one column per option, one ruled row per criterion. The
    winning cell of a row is dotted, the picked column washed in the accent. */
-.a2ui-tablewrap { overflow-x: auto; min-width: 0; margin-inline: -2px; padding: 2px; }
+.a2ui-tablewrap { overflow-x: auto; max-width: 100%; min-width: 0; padding: 2px; box-sizing: border-box; }
 .a2ui-table { display: grid; min-width: min-content; border-top: 1.5px solid var(--a2ui-rule-strong, var(--ink)); border-left: 1px solid var(--a2ui-rule, var(--line)); }
 .a2ui-th, .a2ui-td { padding: 9px 12px; min-width: 0; border-right: 1px solid var(--a2ui-rule, var(--line)); border-bottom: 1px solid var(--a2ui-rule, var(--line)); }
 .a2ui-th, .a2ui-th-row { background: color-mix(in srgb, var(--a2ui-rule, var(--line)) 22%, transparent); }
