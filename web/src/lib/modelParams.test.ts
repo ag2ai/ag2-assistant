@@ -64,6 +64,25 @@ test('the Advanced box names the parameters it overrides', () => {
   assert.deepEqual([...advancedKeys('{"temperature": 0.1, "seed": 7}')], ['temperature', 'seed'])
 })
 
+test('Advanced extra_body overrides name the affected controls', () => {
+  const keys = advancedKeys('{"extra_body":{"temperature":0.2,"max_tokens":128}}')
+  assert.ok(keys.has('temperature'))
+  assert.ok(keys.has('max_tokens'))
+})
+
+test('Advanced extra_body and top-level overrides share one set of names', () => {
+  assert.deepEqual(
+    [...advancedKeys('{"temperature":0.7,"extra_body":{"temperature":0.2,"max_tokens":128}}')],
+    ['temperature', 'extra_body', 'max_tokens'],
+  )
+})
+
+test('an extra_body that is not an object names no additional overrides', () => {
+  for (const extra_body of [null, [], 7, 'temperature']) {
+    assert.deepEqual([...advancedKeys(JSON.stringify({ seed: 7, extra_body }))], ['seed', 'extra_body'])
+  }
+})
+
 test('an Advanced box that is empty or not an object overrides nothing', () => {
   assert.equal(advancedKeys('').size, 0)
   assert.equal(advancedKeys('{"temperature":').size, 0)

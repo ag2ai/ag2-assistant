@@ -67,7 +67,12 @@ export function advancedKeys(text: string): Set<string> {
   try {
     const parsed: unknown = JSON.parse(text)
     const isObject = !!parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-    return new Set(isObject ? Object.keys(parsed as object) : [])
+    if (!isObject) return new Set()
+    const options = parsed as Record<string, unknown>
+    const extraBody = options.extra_body
+    const bodyKeys = extraBody && typeof extraBody === 'object' && !Array.isArray(extraBody)
+      ? Object.keys(extraBody) : []
+    return new Set([...Object.keys(options), ...bodyKeys])
   } catch {
     return new Set()
   }

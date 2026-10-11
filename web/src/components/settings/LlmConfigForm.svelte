@@ -181,18 +181,10 @@
   function changeType(next: string) {
     if (next === type) return
     if (modelFamily(next) !== modelFamily(type)) model = ''
-    // Provider tools belong to the provider. Drop the ones the new type has no
-    // answer for, mirroring the server's own filter, so the form never shows a
-    // switch a save would silently strip.
+    // Retain offered tools and their options; save validates the final type.
     const offered = $llmConfigs.builtinByType?.[next] || []
-    const options = $llmConfigs.builtinOptionsByType?.[next] || {}
     builtinTools = Object.fromEntries(
-      Object.entries(builtinTools)
-        .filter(([id]) => offered.includes(id))
-        .map(([id, set]) => {
-          const taken = (options[id] || []).map((o) => o.id)
-          return [id, Object.fromEntries(Object.entries(set).filter(([o]) => taken.includes(o)))]
-        }),
+      Object.entries(builtinTools).filter(([id]) => offered.includes(id)),
     )
     // Keep only the parameters the new type offers.
     const nextParams = ($llmConfigs.paramsByType?.[next] || []).map((p) => p.id)

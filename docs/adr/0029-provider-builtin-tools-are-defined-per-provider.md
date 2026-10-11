@@ -147,6 +147,8 @@ Other supported constructor options are declared separately as
 `extra_fields` and retained in saved configurations, without adding UI controls.
 They keep their existing pass-through behaviour: fetch citation and content budgets,
 search context and location, and Anthropic tool versions remain effective after a save.
+The editor retains options for offered tools across interface changes in a draft;
+the server filters them against the final type on save.
 
 Each Anthropic registration also declares its domain format: search accepts domain
 names with optional paths, including path wildcards; fetch accepts domain names only.
