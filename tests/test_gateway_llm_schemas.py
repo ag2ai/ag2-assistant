@@ -18,6 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from assistant import llm_configs
+from assistant.config import update_global_section
 from assistant.secrets import SecretStore
 from tests.support.apps import make_manager, make_paths, make_profile_app, write_codex_session
 
@@ -174,6 +175,28 @@ def test_a_saved_parameter_comes_back_on_the_config(client):
     assert saved["params"] == {"reasoning_effort": "high"}
     listed = client.get("/api/llm-configs").json()["configs"][0]
     assert listed["params"] == {"reasoning_effort": "high"}
+
+
+@pytest.mark.parametrize(
+    "params,expected",
+    [
+        (None, {}),
+        (["high"], {}),
+        ({"temperature": float("nan"), "max_tokens": 2048}, {"max_tokens": 2048}),
+        ({"reasoning_effort": "max", "temperature": 0.3}, {"temperature": 0.3}),
+    ],
+)
+def test_malformed_stored_parameters_can_be_loaded_and_corrected(client, paths, params, expected):
+    saved = _save_llm(client)
+    entry = {**llm_configs.LlmConfigStore(paths).get_config(saved["id"]), "params": params}
+    update_global_section(paths, "llm_configs", {"configs": [entry], "active": None})
+    response = client.get("/api/llm-configs")
+    assert response.status_code == 200
+    listed = response.json()["configs"][0]
+    assert listed["params"] == expected
+    response = client.post(f"/api/llm-configs/{saved['id']}", json=listed)
+    assert response.status_code == 200
+    assert llm_configs.LlmConfigStore(paths).get_config(saved["id"])["params"] == expected
 
 
 def test_a_parameter_the_provider_does_not_have_is_a_client_error(client):

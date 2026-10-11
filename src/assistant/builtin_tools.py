@@ -49,8 +49,10 @@ class BuiltinTool:
     # Local tool names this replaces when enabled — ours and the builtin do the
     # same job, and offering both only invites the model to pick badly.
     suppresses: tuple[str, ...] = ()
-    # Option names this type actually honours — the ones its AG2 mapper reads.
+    # Options offered as UI controls on this type.
     fields: tuple[str, ...] = field(default=())
+    # Other supported constructor options retained in authored configurations.
+    extra_fields: tuple[str, ...] = ()
 
 
 _REGISTRY: dict[str, tuple[BuiltinTool, ...]] = {}
@@ -87,15 +89,41 @@ _ANTHROPIC_WEB = ("max_uses", "allowed_domains", "blocked_domains")
 
 register(
     "anthropic",
-    BuiltinTool("web_search", WebSearchTool, fields=_ANTHROPIC_WEB, **_SEARCH),
-    BuiltinTool("web_fetch", WebFetchTool, fields=_ANTHROPIC_WEB, **_FETCH),
-    BuiltinTool("code_execution", CodeExecutionTool, **_CODE),
+    BuiltinTool(
+        "web_search",
+        WebSearchTool,
+        fields=_ANTHROPIC_WEB,
+        extra_fields=("user_location", "version"),
+        **_SEARCH,
+    ),
+    BuiltinTool(
+        "web_fetch",
+        WebFetchTool,
+        fields=_ANTHROPIC_WEB,
+        extra_fields=(
+            "citations",
+            "max_content_tokens",
+            "strict",
+            "use_cache",
+            "response_inclusion",
+            "url_sources",
+            "version",
+        ),
+        **_FETCH,
+    ),
+    BuiltinTool("code_execution", CodeExecutionTool, extra_fields=("version",), **_CODE),
 )
 
 # max_uses is not offered here (ADR 0029, amendment).
 register(
     "openai_responses",
-    BuiltinTool("web_search", WebSearchTool, fields=("allowed_domains",), **_SEARCH),
+    BuiltinTool(
+        "web_search",
+        WebSearchTool,
+        fields=("allowed_domains",),
+        extra_fields=("search_context_size", "user_location"),
+        **_SEARCH,
+    ),
     BuiltinTool("code_execution", CodeExecutionTool, **_CODE),
 )
 
@@ -151,7 +179,7 @@ def _checked_option(name: str, value: object) -> object:
 
 def clean_options(spec: BuiltinTool, raw: Mapping) -> dict:
     """One tool's stored options, filtered to the ones this type honours."""
-    cleaned = {}
+    cleaned = {name: raw[name] for name in spec.extra_fields if raw.get(name) is not None}
     for name in spec.fields:
         value = raw.get(name)
         if value is not None and value != []:

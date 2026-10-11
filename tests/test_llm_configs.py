@@ -844,6 +844,20 @@ def test_a_hand_edited_params_value_that_is_not_an_object_sets_nothing(store):
     assert store.entry_options(entry) == {}
 
 
+@pytest.mark.parametrize("temperature", [float("nan"), float("inf"), float("-inf")])
+def test_nonfinite_parameters_are_refused_on_save_and_omitted_on_read(store, paths, temperature):
+    entry = _hand_edited(
+        type="gemini", params={"temperature": temperature, "max_output_tokens": 2048}
+    )
+    with pytest.raises(ValueError, match="temperature"):
+        store.save_config(entry)
+    cfg = Config.for_paths(paths)
+    store.derive_onto(cfg, entry)
+    built = model_config(cfg)
+    assert built.temperature is None
+    assert built.max_output_tokens == 2048
+
+
 def test_a_hand_edited_parameter_cannot_reach_a_type_that_offers_none(store):
     entry = _hand_edited(type="codex", params={"temperature": 0.3})
     assert store.entry_options(entry) == {}

@@ -14,6 +14,7 @@ from assistant.builtin_tools import (
     find_builtin,
     suppressed_by,
 )
+from assistant.config import update_global_section
 from assistant.tools import CAPABILITIES, build_agent_tools
 
 
@@ -187,6 +188,52 @@ async def test_a_saved_option_is_on_the_provider_tool_the_agent_is_built_with():
     assert schema.max_uses == 3
     assert schema.blocked_domains == ["spam.example"]
     assert schema.allowed_domains is None
+
+
+@pytest.mark.parametrize(
+    "ctype,tool_id,options,expected",
+    [
+        (
+            "anthropic",
+            "web_fetch",
+            {"max_content_tokens": 1024, "citations": False, "max_uses": 3},
+            {"max_content_tokens": 1024, "citations": False, "max_uses": 3},
+        ),
+        (
+            "openai_responses",
+            "web_search",
+            {"search_context_size": "high", "allowed_domains": ["example.com"]},
+            {"search_context_size": "high", "allowed_domains": ["example.com"]},
+        ),
+        (
+            "anthropic",
+            "code_execution",
+            {"version": "code_execution_20260120"},
+            {"version": "code_execution_20260120"},
+        ),
+    ],
+)
+async def test_persisted_options_without_ui_controls_reach_the_provider_tool(
+    paths, ctype, tool_id, options, expected
+):
+    store = llm_configs.LlmConfigStore(paths)
+    entry = {
+        "id": "c_existing",
+        "name": "M",
+        "type": ctype,
+        "model": "m",
+        "builtin_tools": {tool_id: options},
+    }
+    update_global_section(paths, "llm_configs", {"configs": [entry], "active": None})
+    for _ in range(2):
+        saved = store.get_config(entry["id"])
+        assert saved["builtin_tools"] == {tool_id: options}
+        tools = build_agent_tools(ctype, builtin=saved["builtin_tools"])
+        tool = next(t for t in tools if getattr(t, "name", "") == tool_id)
+        (schema,) = await tool.schemas(None)
+        for name, value in expected.items():
+            assert getattr(schema, name) == value
+        store.save_config(saved)
 
 
 def test_a_hand_edited_option_the_type_does_not_honour_never_reaches_the_tool():

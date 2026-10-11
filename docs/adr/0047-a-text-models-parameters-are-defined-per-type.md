@@ -57,7 +57,10 @@ The editor marks a control whose Parameter the Advanced box also names.
 A value outside a Parameter's choices or bounds is refused on save, and a Parameter the
 type does not offer is dropped, as an unoffered provider tool is. The same filter runs
 again when a turn derives the Text model, leniently: a hand-edited Global config never
-passes through a save, and a Parameter it got wrong is left out rather than sent. The gateway ships
+passes through a save, and a Parameter it got wrong is left out rather than sent.
+Numeric values must be finite; NaN and infinities are refused on save and omitted on read.
+The gateway applies the same lenient filter to the model list, so malformed stored
+Parameters can be corrected in Settings. The gateway ships
 `params_by_type` — id, kind, choices and bounds — and `web/src/lib/modelParams.ts`
 supplies the words, the same split as `lib/builtinTools.ts`.
 

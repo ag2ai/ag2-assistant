@@ -4,6 +4,7 @@ Ids are the provider's own constructor names; entries carry no user-facing strin
 """
 
 from dataclasses import dataclass
+from math import isfinite
 from typing import Literal
 
 
@@ -79,6 +80,8 @@ def _checked(param: ModelParam, value: object) -> object:
     if isinstance(value, bool) or not isinstance(value, numeric):
         wanted = "a whole number" if param.kind == "int" else "a number"
         raise ValueError(f"{param.id} must be {wanted}, not {value!r}")
+    if isinstance(value, float) and not isfinite(value):
+        raise ValueError(f"{param.id} must be a finite number, not {value!r}")
     if param.minimum is not None and value < param.minimum:
         raise ValueError(f"{param.id} must be at least {param.minimum}, not {value!r}")
     if param.maximum is not None and value > param.maximum:

@@ -38,7 +38,7 @@ from assistant.gateway.schemas import (
     PingResultResponse,
     ProviderCatalogResponse,
 )
-from assistant.model_params import params_for
+from assistant.model_params import params_for, usable_params
 from assistant.secrets import KEY_ENV, OLLAMA_BASE_ENV
 from assistant.structured import aclose_config
 
@@ -132,7 +132,7 @@ def build_router(
             "options": entry.get("options", {}),
             # {tool id: options} — the provider-native tools switched on here.
             "builtin_tools": entry.get("builtin_tools", {}),
-            "params": entry.get("params", {}),
+            "params": usable_params(entry["type"], entry.get("params")),
             "secret_id": entry.get("secret_id", ""),
             "secret": sec,
             "secret_missing": bool(entry.get("secret_id")) and sec is None,

@@ -140,11 +140,14 @@ decision 1 applied one level down:
 | gemini · web_fetch | — | — | — |
 
 The Responses mapper does send `max_uses`, but OpenAI documents no such field, so it is
-not offered. The other options the AG2 classes take stay reachable only in code.
+not offered. Other supported constructor options are declared separately as
+`extra_fields` and retained in saved configurations, without adding UI controls.
+They keep their existing pass-through behaviour: fetch citation and content budgets,
+search context and location, and Anthropic tool versions remain effective after a save.
 
 Options are stored where decision 5 left room for them, in the `{id: options}` map, so
 there is no migration. On save an option the type does not declare is dropped, a
-malformed one is refused, and an allowed list together with a blocked list is refused —
+malformed UI option is refused, and an allowed list together with a blocked list is refused —
 Anthropic accepts one or the other. A turn applies the same filter to what it reads, so
 a hand-edited option that is undeclared never reaches the tool, and a malformed set
 leaves the tool on its defaults. Switching a tool off removes its entry and its
