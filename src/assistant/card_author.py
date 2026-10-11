@@ -16,16 +16,19 @@ from assistant.cards import CardError
 from assistant.cards.layout import PROPERTIES, primitive_schema
 
 CARD_AUTHOR = "card-author"
-DESCRIPTION = "Create and refine a custom interactive Card in this Chat when the user requests a custom view or no available rich view fits. Table supports compact rows and different column widths: read the current tables.md before editing tabular views, including saved Screen instances. Compact activity calendars use CalendarHeatmap: read heatmap.md. Save its reusable definition only on explicit request."
+DESCRIPTION = "Create and refine a custom interactive Card in this Chat when the user requests a custom view or no available rich view fits. Native line, grouped and stacked bar charts use Chart; tables support compact rows and different column widths; compact activity calendars use CalendarHeatmap. Use charts.md, tables.md or heatmap.md as needed, reusing unchanged references fully present in the current context. Save its reusable definition only on explicit request."
 INSTRUCTIONS = """Prefer a suitable available Card from rich-views before authoring a custom one.
-Read vocabulary.md and examples.md before authoring. Use the existing primitives, styling
+Reuse unchanged instructions and references whose full text is in the current context.
+Read missing or changed references; a compaction summary is not their full text.
+Use vocabulary.md and examples.md before authoring. Use the existing primitives, styling
 words, bindings and repeated templates; never add CSS, JavaScript or backend handlers.
-For sizing or equal columns read layout.md. Use width="content" for a frame fitted to its
+For sizing or equal columns use layout.md. Use width="content" for a frame fitted to its
 contents, width="fill" to fill its container, and Grid for equal responsive columns.
-For GitHub-like activity calendars read heatmap.md and use CalendarHeatmap instead of Table.
-For visual inspection load screens and read its preview.md; preview is a screens script.
-For analytics or publication tables read the current tables.md before creating or editing
-a view, even when an earlier version of the references is already in Chat history.
+For GitHub-like activity calendars use heatmap.md and CalendarHeatmap instead of Table.
+For line or bar charts use charts.md and Chart with factual data, axes and legends.
+Use null for missing measurements. Do not generate an image or a file for these charts.
+For visual inspection use screens and its preview.md; preview is a screens script.
+For analytics or publication tables use tables.md before creating or editing a view.
 Use Table for aligned columns, never independent Row components. Set variant="data",
 density="compact" and columnWidth={"path":"./width"}; give each column item a width
 token (narrow, regular or wide). Without that binding the columns retain equal widths.
@@ -39,7 +42,7 @@ run_skill_script(name="card-author", script="draft_card", args={"definition": {.
 name, description, fields (JSON schemas), required, layout, example and optional topic.
 Errors draw nothing: repair the actual definition/data and retry. No file is created.
 
-To iterate, read drafts.md for the short index, then read_draft with draft_id and optional
+To iterate, use drafts.md for the short index, then read_draft with draft_id and optional
 version for the exact definition and current surface data. Target the intended draft from
 conversation; ask when ambiguous. draft_card revises it with draft_id and expected_version.
 Each draft is independent; revisions append to history and supersede only that draft.
@@ -76,6 +79,7 @@ class _CardAuthorSkill(MemorySkill):
                     "tables.md",
                     "layout.md",
                     "heatmap.md",
+                    "charts.md",
                     "drafts.md",
                 )
             ),
@@ -134,6 +138,8 @@ class CardAuthorRuntime(MemoryRuntime):
             return (Path(__file__).parent / "cards" / "LAYOUT.md").read_text()
         if resource == "heatmap.md":
             return (Path(__file__).parent / "cards" / "HEATMAP.md").read_text()
+        if resource == "charts.md":
+            return (Path(__file__).parent / "cards" / "CHARTS.md").read_text()
         if resource == "drafts.md" and self.drafts is not None:
             return json.dumps(await self.drafts.index(context), ensure_ascii=False)
         raise FileNotFoundError(resource)

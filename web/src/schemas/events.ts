@@ -21,6 +21,9 @@ export const EventData = {
   ToolCallsEvent: z.object({
     calls: z.array(z.object({ name: z.string(), arguments: z.unknown().optional() })).optional(),
   }),
+  CompactionStarted: z.object({ agent: z.string() }),
+  CompactionCompleted: z.object({ agent: z.string() }),
+  CompactionFailed: z.object({ agent: z.string(), error: z.string(), error_type: z.string() }),
   TaskCreated: z.object({
     task_id: z.string(),
     title: z.string().optional(),
@@ -124,6 +127,7 @@ export type EventMeta = z.infer<typeof EventMeta>
 // The event names project.ts folds; anything else is ignored by design.
 export const HANDLED_EVENTS = [
   'ModelRequest', 'DrainedModelRequest', 'ModelMessageChunk', 'ModelResponse',
+  'CompactionStarted', 'CompactionCompleted', 'CompactionFailed',
   'ToolCallsEvent', 'TaskCreated', 'TaskScheduled', 'TaskStarted', 'TaskCompleted',
   'TaskFailed', 'TaskCancelled', 'SubagentTrace', 'ObserverAlert', 'DeliverableProduced',
   'ImageGenerated', 'A2UISurface', 'CardInstanceReference', 'EphemeralCard', 'CardDefinitionSaved', 'CardInstanceSaved', 'CardSourceUpdated', 'A2UISurfaceDataUpdated', 'A2UIActionSubmitted',
@@ -223,9 +227,9 @@ export type { ToolCard }
 export type ThreadItem =
   // `voice` marks a bubble spoken in a live voice session — UserMessage/AgentMessage style it.
   | (ItemBase & { kind: 'user'; text: string; queued?: boolean; voice?: boolean })
-  | (ItemBase & { kind: 'agent'; text: string; streaming?: boolean; empty?: boolean; voice?: boolean; feedback?: Feedback })
+  | (ItemBase & { kind: 'agent'; text: string; streaming?: boolean; continues?: boolean; empty?: boolean; voice?: boolean; feedback?: Feedback })
   | (ItemBase & { kind: 'tools'; names: { name: string; n: number }[]; cards: ToolCard[] })
-  | (ItemBase & { kind: 'note'; icon: string; text: string; alert?: boolean; ends?: boolean; pending?: boolean; a2uiActionPending?: boolean; surfaceId?: string; savedPath?: string; saveRequestId?: string })
+  | (ItemBase & { kind: 'note'; icon: string; text: string; alert?: boolean; ends?: boolean; pending?: boolean; compactionAgent?: string; a2uiActionPending?: boolean; surfaceId?: string; savedPath?: string; saveRequestId?: string })
   | (ItemBase & { kind: 'taskcard'; taskId: string; title?: string; scheduled: boolean })
   | (ItemBase & { kind: 'subagent'; taskId: string; agent: string; objective: string; status?: string; result?: string; error?: string; items: ThreadItem[] })
   | (ItemBase & { kind: 'deliverable'; taskId?: string; deliverableId: string; description?: string; preview?: string; path?: string; feedback?: Feedback })

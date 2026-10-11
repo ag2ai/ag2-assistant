@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 
-const [chrome, vite] = process.argv.slice(2)
+const [chrome, vite, fixture = 'layout', profile] = process.argv.slice(2)
 if (!chrome || !vite) throw Error('Usage: npm --prefix web run test:layout -- <dedicated Chrome debug URL> <Vite URL>')
 const targets = await (await fetch(`${chrome}/json/list`)).json()
 const socket = new WebSocket(targets.find(target => target.type === 'page').webSocketDebuggerUrl)
@@ -27,7 +27,9 @@ try {
   await Promise.all([send('Runtime.enable'), send('Page.enable'), send('Network.enable')])
   await send('Emulation.setFocusEmulationEnabled', { enabled: true })
   await send('Network.setCacheDisabled', { cacheDisabled: true })
-  await send('Page.navigate', { url: `${vite}/browser/layout.html` })
+  const url = new URL(`${vite}/browser/${fixture}.html`)
+  if (profile) url.searchParams.set('profile', profile)
+  await send('Page.navigate', { url: url.href })
   let results
   for (let attempts = 0; attempts < 60 && !results; attempts++) {
     await new Promise(resolve => setTimeout(resolve, 250))
@@ -39,7 +41,7 @@ try {
   assert.ok(results?.length, 'Layout fixtures did not finish')
   const failures = results.filter(result => result.failures.length)
   assert.deepEqual(failures, [], 'A2UI containment regressions')
-  console.log(`${results.length} layout fixtures passed in Chrome: aligned/nested tables stay contained; wide tables scroll to the last column.`)
+  console.log(`${results.length} ${fixture} fixtures passed in Chrome; console and network clean.`)
 } finally {
   socket.close()
 }

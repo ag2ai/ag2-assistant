@@ -34,7 +34,9 @@ from assistant.visual_preview import VisualPreview
 
 DESCRIPTION = "Create or rearrange Screens: dashboards of saved Cards outside chats. Preview Card or Screen layouts as an image with measured bounds through this skill."
 INSTRUCTIONS = """Screens are pages in the Screens tab, composed from saved Card instance files.
-Read rich-views Card details first. Fetch real initial fields; never invent values.
+Reuse unchanged instructions and references whose full text is in the current context.
+Read missing or changed references; a compaction summary is not their full text.
+Use rich-views Card details first. Fetch real initial fields; never invent values.
 run_skill_script(name="screens", script="save_instance", args={"path":"weather.card-instance.yaml",
 "card":"WeatherPanel", "fields":{...}}) creates an independent source-backed instance.
 Choose its _parameters once; later refresh uses its retained source without another Turn.
@@ -46,13 +48,13 @@ run_skill_script(name="screens", script="save_screen", args={"path":"morning.scr
 {"id":"weather","component":"CardInstance","path":"weather.card-instance.yaml"}]}})
 creates one Screen. Each CardInstance is a reference, never inline Card data or a catalog name.
 Layouts use the Card vocabulary (Column, Row, Text, etc.); relative ./ bindings are permitted
-only within repeated templates. Read card-author's vocabulary when choosing primitives.
-Read card-author's layout.md for sizing. Grid with columns=2 gives equal responsive halves;
+only within repeated templates. Use card-author's vocabulary when choosing primitives.
+Use card-author's layout.md for sizing. Grid with columns=2 gives equal responsive halves;
 two grow=true columns only share leftover space. width="content" fits a frame to its contents;
 width="fill" fills its container. A parent's align affects the child; inner align does not
 resize the enclosing frame. These properties also work in retained instance layouts.
-For compact activity calendars use CalendarHeatmap and read card-author's heatmap.md.
-When editing table density or column widths, read card-author's current tables.md. Keep a
+For compact activity calendars use CalendarHeatmap and card-author's heatmap.md.
+When editing table density or column widths, use card-author's tables.md. Keep a
 Table with explicit columnWidth bindings; independent Rows do not share aligned columns.
 Paths are relative to the Profile's Files root, including references in nested directories.
 To show the SAME file-backed instance in Chat, use show_instance with its path. This is an
@@ -60,7 +62,7 @@ explicit reference; ordinary drawn Chat Cards and Save instance copies remain in
 Create parent directories with file tools first. Save scripts never overwrite existing files.
 Use list_screens and read_screen to discover current Screens. Rearrange an existing Screen
 by editing only its layout through the ordinary Files tools; keep its instance references.
-Before judging a design's sizing, use preview through THIS skill. Read preview.md for the
+Before judging a design's sizing, use preview through THIS skill. Use preview.md for the
 arguments. It returns an image and measured component boxes, including horizontal scroll.
 Preview is read-only: it renders retained values without running source scripts. Inspect
 both desktop and narrow viewports and iterate; saving is a separate explicit action.

@@ -295,6 +295,19 @@ def resolve_a2ui_skill(config: Config):
     return FilteredSkillRuntime(A2UISkillRuntime(CardCatalog(config)), _availability(config))
 
 
+SKILL_USAGE_GUIDANCE = """The following skills provide specialized instructions for specific tasks.
+When a task matches a skill, follow its instructions. Call load_skill(name) before
+using it only if its full instructions are missing from the current context or there
+is evidence they changed. Reuse unchanged instructions and resource text already in
+the current context across messages; a new message alone does not require reloading.
+Use read_skill_resource only for references you need that are missing or changed.
+A catalog entry or compaction summary is not the full instructions or resource text.
+After compaction, reload only the needed texts that are no longer fully present.
+If a skill, resource or Card definition changed, read its current version before use.
+Read mutable user data and current file state separately when the task requires it.
+"""
+
+
 def build_skills_plugin(
     config: Config, runtime, *, catalog=None, snapshot: bool = False, drafts=None, preview=None
 ):
@@ -311,17 +324,24 @@ def build_skills_plugin(
     )
     if snapshot:
         runtime.invalidate()
-        return SkillPlugin(
-            author,
-            screens,
-            FilteredSkillRuntime(
-                A2UISkillRuntime(catalog or CardCatalog(config)),
-                _availability(config),
-                snapshot=True,
-            ),
-            FilteredSkillRuntime(runtime, _availability(config), snapshot=True),
+        views = FilteredSkillRuntime(
+            A2UISkillRuntime(catalog or CardCatalog(config)),
+            _availability(config),
+            snapshot=True,
         )
-    return SkillPlugin(author, screens, resolve_a2ui_skill(config), resolve_skills(config, runtime))
+        files = FilteredSkillRuntime(runtime, _availability(config), snapshot=True)
+    else:
+        views = resolve_a2ui_skill(config)
+        files = resolve_skills(config, runtime)
+    plugin = SkillPlugin(author, screens, views, files)
+    # Keep AG2's catalog and activation tools with context-aware reading instructions.
+    plugin._system_prompt = [
+        SKILL_USAGE_GUIDANCE + part[part.index("<available_skills>") :]
+        if "<available_skills>" in part
+        else part
+        for part in plugin._system_prompt
+    ]
+    return plugin
 
 
 def build_skills_install_tools(config: Config, runtime) -> list:

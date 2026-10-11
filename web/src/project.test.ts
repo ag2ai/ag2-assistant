@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { foldEvent, isBusy, queueMessage } from './project.ts'
+import { foldEvent, isBusy, isCompacting, queueMessage } from './project.ts'
 import type { ThreadItem, WireEvent } from './schemas/events.ts'
 
 const user = (text: string): WireEvent => ({
@@ -17,6 +17,10 @@ const a2uiAction = (): WireEvent => ({ type: 'assistant.events.A2UIActionSubmitt
 const response = (content: string): WireEvent => ({
   type: 'ag2.events.ModelResponse',
   data: { message: { content }, tool_calls: { calls: [] } },
+})
+const compaction = (type: 'Started' | 'Completed' | 'Failed', data: Record<string, unknown> = {}): WireEvent => ({
+  type: 'ag2.events.lifecycle.Compaction' + type,
+  data: { agent: 'ag2-assistant', strategy: 'ConversationCompact', ...data },
 })
 
 // Narrow to the one kind a test asserts on, failing the test if it is another.
@@ -33,6 +37,115 @@ test('a user message with no reply yet is busy', () => {
   foldEvent(items, user('hello'))
   assert.equal(isBusy(items), true)
 })
+
+const toolCalls: WireEvent = {
+  type: 'ag2.events.ToolCallsEvent',
+  data: { calls: [{ name: 'read_file', arguments: { path: 'weekly.json' } }] },
+}
+const toolResult: WireEvent = { type: 'ag2.events.ToolResult', data: { content: 'Weekly data' } }
+
+for (const content of ['I will read the data.', '']) {
+  test(`a reply with tools stays busy through execution and replay (${content || 'no text'})`, () => {
+    const events = [user('plot the data'), chunk(content), {
+      ...response(content), data: { message: { content }, tool_calls: toolCalls.data },
+    }, toolCalls, toolResult]
+    const items: ThreadItem[] = []
+    for (const event of events) {
+      foldEvent(items, event)
+      assert.equal(isBusy(items), true)
+    }
+    const agent = itemOfKind(items.find(it => it.kind === 'agent'), 'agent')
+    assert.equal(agent.streaming, false)
+    assert.equal(agent.empty, undefined)
+    assert.equal(items.filter(it => it.kind === 'tools').length, 1)
+
+    const replay: ThreadItem[] = []
+    for (const event of events) foldEvent(replay, event)
+    assert.equal(isBusy(replay), true)
+
+    foldEvent(items, chunk('Here is the result.'))
+    foldEvent(items, response('Here is the result.'))
+    assert.equal(isBusy(items), false)
+  })
+}
+
+test('a tool batch resumes activity after a text-only progress message', () => {
+  const items: ThreadItem[] = []
+  for (const event of [user('plot the data'), response('Reading data…'), toolCalls, toolResult]) {
+    foldEvent(items, event)
+  }
+  assert.equal(isBusy(items), true)
+  foldEvent(items, response('Done'))
+  assert.equal(isBusy(items), false)
+})
+
+for (const ending of [cancelled('Stopped'), failed('Timed out')]) {
+  test(`${ending.type} stops activity after tools`, () => {
+    const items: ThreadItem[] = []
+    for (const event of [user('plot the data'), toolCalls, toolResult, ending]) foldEvent(items, event)
+    assert.equal(isBusy(items), false)
+  })
+}
+
+test('compaction remains visible and busy after the reply and during replay', () => {
+  const events = [user('hello'), response('Hello'), compaction('Started')]
+  const items: ThreadItem[] = []
+  for (const event of events) foldEvent(items, event)
+  const pending = itemOfKind(items.at(-1), 'note')
+  assert.equal(pending.text, 'Compacting history…')
+  assert.equal(pending.pending, true)
+  assert.equal(isBusy(items), true)
+  assert.equal(isCompacting(items), true)
+
+  const replay: ThreadItem[] = []
+  for (const event of events) foldEvent(replay, event)
+  assert.equal(isBusy(replay), true)
+  assert.equal(isCompacting(replay), true)
+
+  foldEvent(items, compaction('Completed'))
+  const completed = itemOfKind(items.at(-1), 'note')
+  assert.notEqual(completed, pending)
+  assert.equal(completed.id, pending.id)
+  assert.equal(completed.text, 'History compacted')
+  assert.equal(completed.pending, false)
+  assert.equal(isBusy(items), false)
+  assert.equal(isCompacting(items), false)
+  assert.equal(items.length, 3)
+})
+
+test('completion renders after history compaction removed the start event', () => {
+  const items: ThreadItem[] = []
+  foldEvent(items, response('Hello'))
+  foldEvent(items, compaction('Completed'))
+  assert.equal(itemOfKind(items.at(-1), 'note').text, 'History compacted')
+  assert.equal(isBusy(items), false)
+})
+
+test('compaction failure explains the error and ends the pending status', () => {
+  const items: ThreadItem[] = []
+  foldEvent(items, user('hello'))
+  foldEvent(items, response('Hello'))
+  foldEvent(items, compaction('Started'))
+  foldEvent(items, compaction('Failed', { error_type: 'ValueError', error: 'Model unavailable' }))
+  const note = itemOfKind(items.at(-1), 'note')
+  assert.equal(note.text, 'History compaction failed: Model unavailable')
+  assert.equal(note.alert, true)
+  assert.equal(note.pending, false)
+  assert.equal(isBusy(items), false)
+  assert.equal(isCompacting(items), false)
+})
+
+for (const ending of [cancelled('Stopped'), failed('Timed out'), user('next turn')]) {
+  test(`${ending.type} retires an interrupted compaction indicator`, () => {
+    const items: ThreadItem[] = []
+    foldEvent(items, response('Hello'))
+    foldEvent(items, compaction('Started'))
+    foldEvent(items, ending)
+    assert.equal(isCompacting(items), false)
+    assert.equal(itemOfKind(items[1], 'note').text, 'History compaction stopped')
+    assert.equal(isBusy(items), ending.type.endsWith('ModelRequest'))
+  })
+}
 
 test('a message fed to a running turn renders as a user bubble where it landed', () => {
   const items: ThreadItem[] = []

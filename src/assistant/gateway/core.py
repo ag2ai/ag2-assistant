@@ -29,6 +29,9 @@ from ag2.a2ui import A2UIMessageEvent
 from ag2.agent import AgentRun
 from ag2.context import ConversationContext
 from ag2.events import (
+    CompactionCompleted,
+    CompactionFailed,
+    CompactionStarted,
     ModelMessageChunk,
     ModelRequest,
     ModelResponse,
@@ -645,6 +648,11 @@ class Gateway:
         stream = self._streams.get(chat_id)
         if stream is None:
             stream = MemoryStream(id=chat_id)  # type: ignore[arg-type]
+            # Retain compaction lifecycle events for reconnects and persisted replay.
+            stream.subscribe(
+                stream.history.storage.save_event,
+                condition=CompactionStarted | CompactionCompleted | CompactionFailed,
+            )
             self._streams[chat_id] = stream
         if self._writer is not None and chat_id not in self._active:
             raw = None

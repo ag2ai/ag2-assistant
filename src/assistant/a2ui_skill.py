@@ -48,7 +48,7 @@ def card_resource(name: str) -> str:
 def skill_description(cards: dict[str, Card]) -> str:
     """The resident line: what a rich view is, and every case a Card is ready for,
     kept within the description cap."""
-    closing = " Users never ask for one: load this skill before you answer such a question."
+    closing = " Users never ask for one: use this skill's instructions, loading them if absent or changed."
     lead = f"{A2UI_SKILL_DESCRIPTION[:-1]}. Views are ready for: "
     room = SKILL_DESCRIPTION_LIMIT - len(lead) - len(closing) - len(", and more.")
     topics: list[str] = []
@@ -67,6 +67,9 @@ def skill_body(cards: dict[str, Card]) -> str:
     return f"""A rich view is a panel the AG2 Assistant web UI draws from a view's fields. When \
 the user's question matches one of the views below, the view IS the answer — do not settle \
 for prose. Users never ask for one.
+Reuse unchanged instructions and Card details whose full text is in the current context.
+Read missing or changed references before using them; a compaction summary is not their
+full text. After changing a Card definition, read its current detail before drawing it.
 
 ## Views this profile can draw
 
@@ -76,7 +79,8 @@ for prose. Users never ask for one.
 
 1. Gather the real data with your tools first. Never fill a field from memory or invent a \
 value; leave out what you do not have.
-2. Read the view's detail: read_skill_resource(name="{A2UI_SKILL}", \
+2. Use the view's detail, reading it if missing or changed: \
+read_skill_resource(name="{A2UI_SKILL}", \
 resource="{card_resource("<CardName>")}") returns the exact fields it accepts and a worked \
 example of the call that draws it.
 3. Draw it: every view is a script of the same name — run_skill_script(name="{A2UI_SKILL}", \
@@ -86,7 +90,8 @@ fields to fix.
 its contents in prose, and never mention A2UI, schemas or components to the user.
 
 To put several views on one surface, or to build one from the basic components when no view \
-above fits, read_skill_resource(name="{A2UI_SKILL}", resource="{PROTOCOL_RESOURCE}") first.
+above fits, use the protocol reference, reading it if missing or changed: \
+read_skill_resource(name="{A2UI_SKILL}", resource="{PROTOCOL_RESOURCE}").
 """
 
 

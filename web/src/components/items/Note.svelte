@@ -8,7 +8,8 @@
   let { item }: Props = $props()
 </script>
 
-<div class="note" class:alert={item.alert} class:withicon={item.icon} class:pending={item.pending}>
+<div class="note" role={item.compactionAgent !== undefined ? 'status' : undefined}
+  class:alert={item.alert} class:withicon={item.icon} class:pending={item.pending}>
   {#if item.icon}<Icon name={item.icon} size={14} />{/if}{item.text}
   {#if item.savedPath}<button class="open" onclick={() => openAsideFile(item.savedPath!)}>Open</button>{/if}
   {#if item.at}<span class="itemtime">{fmtStamp(item.at)}</span>{/if}

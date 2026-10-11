@@ -12,6 +12,7 @@
   import Icon from './Icon.svelte'
   import AppBar from './AppBar.svelte'
   import { dayRows } from '../lib/time.ts'
+  import { isCompacting } from '../project.ts'
 
   let scroller: HTMLDivElement | undefined
   const tail = $derived($thread.items[$thread.items.length - 1])
@@ -43,7 +44,7 @@
   // above the first item of a new calendar day (null otherwise). Items carry `at`
   // (the source event's created_at, Unix seconds — see project.ts). See dayRows.
   const rows = $derived(dayRows($thread.items))
-  const showThinking = $derived($thread.busy && !(tail && tail.kind === 'agent' && tail.streaming))
+  const showThinking = $derived($thread.busy && !isCompacting($thread.items) && !(tail && tail.kind === 'agent' && tail.streaming))
 
   // Autoscroll follows the stream only while the reader is at the bottom. Scrolling
   // up unpins (so you can read back mid-turn); scrolling back down re-pins. Without

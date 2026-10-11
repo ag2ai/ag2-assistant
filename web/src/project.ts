@@ -58,20 +58,31 @@ function clearA2UIActionStatus(items: ThreadItem[]): void {
   }
 }
 
-// Whether a turn is still in progress, derived from the items rather than a
-// transient flag — so it's correct after reopening a chat mid-turn (where the
-// turn_end frame went to the old, closed socket). Busy if the most recent
-// decisive item is a user message (awaiting a reply) and not yet a finalized
-// agent response. A streaming agent bubble is skipped (the thinking dots are
-// already hidden once text is streaming).
+// Derive turn activity from the latest request, tool batch or final response.
+// Replies with tool calls keep the turn busy, including when replayed.
 export function isBusy(items: ThreadItem[]): boolean {
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i]
     if (it.kind === 'note' && it.ends) return false   // a stopped turn ends here — never "thinking" on replay
-    if (it.kind === 'agent' && !it.streaming) return false
+    if (it.kind === 'note' && it.compactionAgent !== undefined && it.pending) return true
+    if (it.kind === 'agent' && !it.streaming) return !!it.continues
+    if (it.kind === 'tools') return true
     if (it.kind === 'user') return true
   }
   return false
+}
+
+export function isCompacting(items: ThreadItem[]): boolean {
+  return items.some((it) => it.kind === 'note' && it.compactionAgent !== undefined && it.pending)
+}
+
+function stopCompaction(items: ThreadItem[]): void {
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i]
+    if (it.kind === 'note' && it.compactionAgent !== undefined && it.pending) {
+      items[i] = { ...it, pending: false, icon: 'x', text: 'History compaction stopped' }
+    }
+  }
 }
 
 // Root task lifecycle notes. `icon` is a Lucide name (see Icon.svelte) rendered
@@ -222,6 +233,7 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
       const d = EventData.ModelRequest.parse(data)
       const text = joinText(d.parts)
       if (!text) break
+      if (type === 'ModelRequest') stopCompaction(items)
       // Button fallbacks are private instructions passed to the agent. Their
       // corresponding A2UIActionSubmitted event is the user-facing status.
       if (text.startsWith('[[A2UI_ACTION]]')) break
@@ -247,15 +259,23 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
       // An A2UI button dispatches an ordinary agent turn. Its status note belongs
       // only to that turn, not to the durable conversation history.
       if (msg || !calls.length) clearA2UIActionStatus(items)
-      const streaming = [...items]
+      const streaming = currentTurn(items)
         .reverse()
         .find((it): it is ItemOf<'agent'> => it.kind === 'agent' && !!it.streaming)
       if (msg) {
         if (streaming) {
           streaming.text = msg
           streaming.streaming = false
+          streaming.continues = calls.length > 0
         } else {
-          items.push({ id: nid(), kind: 'agent', text: msg })
+          items.push({ id: nid(), kind: 'agent', text: msg, continues: calls.length > 0 })
+        }
+      } else if (calls.length) {
+        if (streaming) {
+          streaming.streaming = false
+          streaming.continues = true
+        } else {
+          items.push({ id: nid(), kind: 'agent', text: '', continues: true })
         }
       } else if (!calls.length) {
         // A final response with no text ends the turn: a finalized agent item clears
@@ -265,6 +285,7 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
         if (streaming) {
           streaming.text = text
           streaming.streaming = false
+          streaming.continues = false
           streaming.empty = !drew
         } else {
           items.push({ id: nid(), kind: 'agent', text, empty: !drew })
@@ -277,6 +298,30 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
     case 'ToolCallsEvent': {
       const d = EventData.ToolCallsEvent.parse(data)
       for (const c of d.calls ?? []) addTool(items, c.name, cardFor(c.name, c.arguments))
+      break
+    }
+    case 'CompactionStarted': {
+      const d = EventData.CompactionStarted.parse(data)
+      items.push({ id: nid(), kind: 'note', icon: 'rotate-cw', text: 'Compacting history…',
+        pending: true, compactionAgent: d.agent })
+      break
+    }
+    case 'CompactionCompleted':
+    case 'CompactionFailed': {
+      const failed = type === 'CompactionFailed' ? EventData.CompactionFailed.parse(data) : null
+      const d = failed ?? EventData.CompactionCompleted.parse(data)
+      let index = items.length - 1
+      while (index >= 0) {
+        const it = items[index]
+        if (it.kind === 'note' && it.compactionAgent === d.agent && it.pending) break
+        index--
+      }
+      const status = failed
+        ? { icon: 'x', text: `History compaction failed: ${failed.error || failed.error_type}`, alert: true }
+        : { icon: 'check', text: 'History compacted', alert: false }
+      const previous = items[index]
+      if (previous?.kind === 'note') items[index] = { ...previous, ...status, pending: false }
+      else items.push({ id: nid(), kind: 'note', compactionAgent: d.agent, ...status })
       break
     }
     case 'TaskCreated': {
@@ -443,6 +488,7 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
       // text); finalize a mid-stream bubble so it reads as what was said before the
       // stop, and mark the turn ended (`ends` → isBusy stops here on replay too).
       const d = EventData.TurnCancelled.parse(data)
+      stopCompaction(items)
       const prev = items[items.length - 1]
       if (prev && prev.kind === 'agent' && prev.streaming) prev.streaming = false
       items.push({ id: nid(), kind: 'note', icon: 'x', text: d.reason || 'Stopped', ends: true })
@@ -453,6 +499,7 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
       // a stop — keep the work, finalize the bubble, end the turn — but flagged as an
       // alert so the thread says why it stopped instead of just ending mid-air.
       const d = EventData.TurnFailed.parse(data)
+      stopCompaction(items)
       const prev = items[items.length - 1]
       if (prev && prev.kind === 'agent' && prev.streaming) prev.streaming = false
       items.push({

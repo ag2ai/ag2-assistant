@@ -8,7 +8,8 @@ On a narrow view the table scrolls; never merge ID and preview to make it fit.
 Different widths require both `Table.columnWidth: {"path": "./width"}` and a `width`
 token on each item in `columns` (for example `{"name": "PREVIEW", "width": "wide"}`).
 Adding metadata to the data alone does not configure the Table. The available tokens are
-`narrow`, `regular` and `wide`. Read this current reference when revising an older table;
+`narrow`, `regular` and `wide`. Reuse this reference if its unchanged full text remains in
+the current context; read it again when missing or changed. When revising an older table,
 update its component properties as well as its data. Independent `Row` components do not
 share column widths, and `grow` cannot align cells across rows. Use a `Row` inside a Table
 cell only to compose that cell's contents.

@@ -75,6 +75,7 @@ CARD_PRIMITIVES = frozenset(
         "Metric",
         "Sparkline",
         "CalendarHeatmap",
+        "Chart",
         "Table",
         "WeatherGlyph",
     }

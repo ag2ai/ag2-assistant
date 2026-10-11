@@ -1,6 +1,7 @@
 """Validation schemas for the primitives and styling words drawn by the renderer."""
 
 from datetime import date
+from math import isfinite
 from typing import Any
 
 from jsonschema import Draft202012Validator
@@ -17,6 +18,24 @@ NUMBER = {"anyOf": [{"type": "number"}, BINDING]}
 ARRAY = {"anyOf": [{"type": "array"}, BINDING]}
 VALUE: dict[str, Any] = {}
 REFERENCE = {"type": "string", "minLength": 1}
+CHART_LABEL = {"type": "string", "minLength": 1, "maxLength": 200}
+CHART_VALUE = {"type": ["number", "null"], "minimum": -1e12, "maximum": 1e12}
+CHART_SERIES = {
+    "type": "object",
+    "properties": {
+        "label": CHART_LABEL,
+        "values": {"type": "array", "minItems": 1, "maxItems": 366, "items": CHART_VALUE},
+        "tone": {"enum": ["neutral", "muted", "accent", "positive", "negative"]},
+    },
+    "required": ["label", "values"],
+    "additionalProperties": False,
+}
+CHART_ANNOTATION = {
+    "type": "object",
+    "properties": {"index": {"type": "number", "minimum": 0}, "label": CHART_LABEL},
+    "required": ["index", "label"],
+    "additionalProperties": False,
+}
 CHILDREN = {
     "anyOf": [
         {"type": "array", "items": REFERENCE},
@@ -82,6 +101,30 @@ PROPERTIES: dict[str, dict[str, Any]] = {
         "deltaPercent": NUMBER,
     },
     "Sparkline": {"values": ARRAY},
+    "Chart": {
+        "variant": {"enum": ["bar", "line"]},
+        "labels": {
+            "anyOf": [
+                {"type": "array", "minItems": 1, "maxItems": 366, "items": CHART_LABEL},
+                BINDING,
+            ]
+        },
+        "series": {
+            "anyOf": [
+                {"type": "array", "minItems": 1, "maxItems": 8, "items": CHART_SERIES},
+                BINDING,
+            ]
+        },
+        "annotations": {
+            "anyOf": [
+                {"type": "array", "maxItems": 8, "items": CHART_ANNOTATION},
+                BINDING,
+            ]
+        },
+        "stacked": {"type": "boolean"},
+        "showLegend": {"type": "boolean"},
+        **{key: TEXT for key in ("xLabel", "yLabel", "description", "locale")},
+    },
     "CalendarHeatmap": {
         "startDate": {"anyOf": [CALENDAR_DAY["properties"]["date"], BINDING]},
         "endDate": {"anyOf": [CALENDAR_DAY["properties"]["date"], BINDING]},
@@ -173,6 +216,7 @@ REQUIRED = {
     "Grid": ["children", "columns"],
     "List": ["children"],
     "Text": ["text"],
+    "Chart": ["variant", "labels", "series"],
     "CalendarHeatmap": ["startDate", "endDate", "days"],
     "Button": ["child", "action"],
     "Icon": ["name"],
@@ -194,7 +238,7 @@ def primitive_schema(kind: str) -> dict:
         "accessibility": {"type": "object"},
         **PROPERTIES[kind],
     }
-    if kind in {"Card", "Column", "Row", "Grid", "List", "Table", "CalendarHeatmap"}:
+    if kind in {"Card", "Column", "Row", "Grid", "List", "Table", "CalendarHeatmap", "Chart"}:
         properties["width"] = {"enum": ["content", "fill"]}
     if kind == "Grid":
         properties["gap"] = {"enum": ["none", "xs", "sm", "md", "lg"]}
@@ -207,7 +251,7 @@ def primitive_schema(kind: str) -> dict:
         properties["marker"] = TEXT
     if kind in {"Text", "Divider"}:
         properties["emphasis"] = {"enum": ["strong"]}
-    if kind in {"Metric", "Sparkline", "Icon", "Figure", "WeatherGlyph"}:
+    if kind in {"Metric", "Sparkline", "Icon", "Figure", "WeatherGlyph", "Chart"}:
         properties["size"] = {"enum": ["sm", "md", "lg"]}
     if kind in {"Column", "Row", "List"}:
         properties.update(
@@ -236,8 +280,30 @@ def validate_primitive(node: dict) -> None:
         Draft202012Validator(primitive_schema(kind)).validate(node)
         if kind == "CalendarHeatmap":
             _calendar_dates(node)
+        if kind == "Chart":
+            _chart_values(node)
     except ValidationError as exc:
         raise ValueError(f"layout {node['id']!r}: {exc.message}") from exc
+
+
+def _chart_values(node: dict) -> None:
+    """Check literal axes and finite values; bound data is checked by the renderer."""
+    if node.get("stacked") and node["variant"] != "bar":
+        raise ValueError("Only bar charts support stacked=true")
+    labels = node["labels"]
+    if isinstance(node["series"], list):
+        for series in node["series"]:
+            if isinstance(labels, list) and len(series["values"]) != len(labels):
+                raise ValueError(
+                    "Each chart series must have one value per label; use null for gaps"
+                )
+            if any(value is not None and not isfinite(value) for value in series["values"]):
+                raise ValueError("Chart values must be finite numbers or null")
+    if isinstance(node.get("annotations"), list):
+        for annotation in node["annotations"]:
+            index = annotation["index"]
+            if not isfinite(index) or (isinstance(labels, list) and index > len(labels) - 1):
+                raise ValueError("Chart annotation index must lie within the labels axis")
 
 
 def _calendar_dates(node: dict) -> None:
