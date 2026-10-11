@@ -61,7 +61,8 @@
   .card-save-menu :global(form) { display: flex; flex-direction: column; gap: 12px; }
   .card-save-menu :global(h2) { margin: 0; font-size: 18px; font-weight: var(--fw-semibold); line-height: 1.3; }
   .card-save-menu :global(label) { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
-  .card-save-menu :global(input), .card-save-menu :global(select) { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--text); background: var(--bg); font: inherit; }
+  .card-save-menu :global(input), .card-save-menu :global(select) { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--text); background-color: var(--bg); font: inherit; }
+  .card-save-menu :global(select) { padding-right: 32px; }
   .card-save-menu :global(p) { margin: 0; font-size: 12px; }
   .card-save-menu :global(.card-save-actions) { display: flex; flex-wrap: wrap; justify-content: end; gap: 8px; margin-top: 4px; }
   .card-save-menu { position: fixed; inset: auto; margin: 0; box-sizing: border-box; width: min(340px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow: auto; padding: 16px; border: 1px solid var(--line); border-radius: 12px; color: var(--text); background: var(--panel); box-shadow: 0 12px 32px #0004; }
