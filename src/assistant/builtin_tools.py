@@ -54,6 +54,8 @@ class BuiltinTool:
     fields: tuple[str, ...] = field(default=())
     # Other supported constructor options retained in authored configurations.
     extra_fields: tuple[str, ...] = ()
+    # Options the mapper reads but this configuration's provider API refuses.
+    unsupported_fields: tuple[str, ...] = ()
     # The format accepted by this tool's domain filters, if constrained.
     domain_format: Literal["domain", "domain_path"] | None = None
     # The provider's maximum number of entries in a domain filter.
@@ -138,7 +140,7 @@ register(
 
 register(
     "gemini",
-    BuiltinTool("web_search", WebSearchTool, fields=("blocked_domains",), **_SEARCH),
+    BuiltinTool("web_search", WebSearchTool, unsupported_fields=("blocked_domains",), **_SEARCH),
     BuiltinTool("web_fetch", WebFetchTool, **_FETCH),
     BuiltinTool("code_execution", CodeExecutionTool, **_CODE),
 )
@@ -226,10 +228,13 @@ def _checked_option(
 
 def clean_options(spec: BuiltinTool, raw: Mapping, *, strict: bool = True) -> dict:
     """One tool's stored options, filtered to the ones this type honours."""
+    for name in spec.unsupported_fields:
+        if raw.get(name) is not None and raw[name] != []:
+            raise ValueError(f"{name} is not supported by this configuration type's {spec.id}")
     cleaned = {name: raw[name] for name in spec.extra_fields if raw.get(name) is not None}
     for name in spec.fields:
         value = raw.get(name)
-        if value is not None and value != []:
+        if value is not None and not (OPTION_KINDS[name] == "domains" and value == []):
             try:
                 cleaned[name] = _checked_option(
                     name, value, domain_format=spec.domain_format, max_domains=spec.max_domains

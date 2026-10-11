@@ -1,10 +1,14 @@
 """Provider-native tool registry: availability per type, capability gating, and
 the suppression that replaces the old _NATIVE_WEB_FETCH_PROVIDERS branch."""
 
+import json
+
+import ag2
 import pytest
 from ag2.tools import CodeExecutionTool, WebFetchTool, WebSearchTool
 
 from assistant import llm_configs
+from assistant.agent import model_config
 from assistant.builtin_tools import (
     BuiltinTool,
     active_builtins,
@@ -16,6 +20,7 @@ from assistant.builtin_tools import (
 )
 from assistant.config import Config, update_global_section
 from assistant.tools import CAPABILITIES, build_agent_tools
+from tests.support.http import async_client, recording_responder
 
 
 def names(tools):
@@ -168,11 +173,11 @@ def test_no_builtins_leaves_the_local_toolset_exactly_as_before():
         ("anthropic", "web_fetch", ("max_uses", "allowed_domains", "blocked_domains")),
         ("anthropic", "code_execution", ()),
         ("openai_responses", "web_search", ("allowed_domains",)),
-        ("gemini", "web_search", ("blocked_domains",)),
+        ("gemini", "web_search", ()),
         ("gemini", "web_fetch", ()),
     ],
 )
-def test_each_tool_offers_only_the_options_its_provider_s_mapper_reads(ctype, tool_id, expected):
+def test_each_tool_offers_only_the_options_its_provider_api_supports(ctype, tool_id, expected):
     assert find_builtin(ctype, tool_id).fields == expected
 
 
@@ -248,6 +253,60 @@ def test_a_malformed_usage_limit_keeps_valid_domain_restrictions():
     ((spec, options),) = active_builtins("anthropic", stored)
     assert spec.id == "web_search"
     assert options == {"blocked_domains": ["spam.example"]}
+
+
+@pytest.mark.parametrize(
+    "options",
+    [{"blocked_domains": ["example.com"]}, [["blocked_domains", ["example.com"]]]],
+)
+def test_stored_gemini_domain_restrictions_never_become_unrestricted_tools(paths, options):
+    entry = {
+        "id": "c_gemini_filter",
+        "name": "Gemini",
+        "type": "gemini",
+        "model": "gemini-2.5-flash",
+        "builtin_tools": {"web_search": options},
+    }
+    update_global_section(paths, "llm_configs", {"configs": [entry], "active": None})
+    cfg = Config.for_paths(paths)
+    store = llm_configs.LlmConfigStore(paths)
+    store.derive_onto(cfg, store.get_config(entry["id"]))
+    with pytest.raises(ValueError, match="blocked_domains.*not supported"):
+        build_agent_tools(cfg.llm.config_type, builtin=cfg.llm.builtin_tools, capabilities=["web"])
+    assert store.get_config(entry["id"])["builtin_tools"] == entry["builtin_tools"]
+
+
+@pytest.mark.parametrize("options", [{}, {"blocked_domains": []}])
+async def test_gemini_search_defaults_reach_the_developer_api(paths, options):
+    store = llm_configs.LlmConfigStore(paths)
+    entry = store.save_config(
+        {
+            "name": "Gemini",
+            "type": "gemini",
+            "model": "gemini-2.5-flash",
+            "builtin_tools": {"web_search": options},
+        }
+    )
+    cfg = Config.for_paths(paths)
+    store.derive_onto(cfg, entry)
+    handler, sent = recording_responder(
+        {
+            "candidates": [
+                {
+                    "content": {"role": "model", "parts": [{"text": "PONG"}]},
+                    "finishReason": "STOP",
+                }
+            ],
+            "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 1},
+        }
+    )
+    async with async_client(handler) as network:
+        provider = model_config(cfg).copy(api_key="fake-key", streaming=False, http_client=network)
+        tools = build_agent_tools("gemini", builtin=cfg.llm.builtin_tools, capabilities=["web"])
+        reply = await ag2.Agent("test", config=provider, tools=tools).ask("Reply PONG")
+    assert reply.body == "PONG"
+    sent_tools = json.loads(sent[0]["body"])["tools"]
+    assert [tool["googleSearch"] for tool in sent_tools if "googleSearch" in tool] == [{}]
 
 
 @pytest.mark.parametrize("tool_id", ["web_search", "web_fetch"])

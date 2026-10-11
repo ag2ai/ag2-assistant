@@ -128,7 +128,7 @@ Decision 5 held while nothing needed configuring. A search with no cap on how of
 turn may run it, and no way to keep it to trusted sources, turned out to need both.
 
 Each registration now declares, in `fields`, the options that type honours for that
-tool — exactly the ones its AG2 mapper reads, which is the per-type argument of
+tool — the ones its AG2 mapper reads and its provider API accepts, which is the per-type argument of
 decision 1 applied one level down:
 
 | type · tool | `max_uses` | `allowed_domains` | `blocked_domains` |
@@ -136,11 +136,14 @@ decision 1 applied one level down:
 | anthropic · web_search | yes | yes | yes |
 | anthropic · web_fetch | yes | yes | yes |
 | openai_responses · web_search | — | yes | — |
-| gemini · web_search | — | — | yes |
+| gemini · web_search | — | — | — |
 | gemini · web_fetch | — | — | — |
 
 The Responses mapper does send `max_uses`, but OpenAI documents no such field, so it is
-not offered. Other supported constructor options are declared separately as
+not offered. Gemini's mapper reads `blocked_domains`, but its Developer API rejects
+the mapped `exclude_domains`; that option is not offered and a nonempty saved filter
+raises on save and read. Registrations declare these refused options in `unsupported_fields`.
+Other supported constructor options are declared separately as
 `extra_fields` and retained in saved configurations, without adding UI controls.
 They keep their existing pass-through behaviour: fetch citation and content budgets,
 search context and location, and Anthropic tool versions remain effective after a save.
@@ -153,7 +156,8 @@ Responses search accepts domain names only, with at most 100 entries per filter.
 Options are stored where decision 5 left room for them, in the `{id: options}` map, so
 there is no migration. On save an option the type does not declare is dropped, a
 malformed UI option is refused, and an allowed list together with a blocked list is refused —
-Anthropic accepts one or the other. A turn applies the same filter to what it reads, so
+Anthropic accepts one or the other. An empty domain list is unset; an empty array is
+invalid for a numeric usage limit. A turn applies the same filter to what it reads, so
 a hand-edited option that is undeclared never reaches the tool. Malformed usage limits
 are omitted individually, preserving valid domain restrictions. Invalid or conflicting
 domain restrictions raise before a turn builds tools, rather than enabling unrestricted

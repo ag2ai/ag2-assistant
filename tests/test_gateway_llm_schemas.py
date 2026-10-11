@@ -222,6 +222,43 @@ def test_a_draft_test_refuses_tool_options_a_save_would_refuse(client):
 
 
 @pytest.mark.parametrize("endpoint", ["/api/llm-configs", "/api/llm-configs/test"])
+@pytest.mark.parametrize("tool_id", ["web_search", "web_fetch"])
+def test_an_empty_array_is_not_a_valid_usage_limit(client, endpoint, tool_id):
+    response = client.post(
+        endpoint,
+        json={
+            "name": "Anthropic",
+            "type": "anthropic",
+            "model": "claude",
+            "builtin_tools": {tool_id: {"max_uses": [], "allowed_domains": ["example.com"]}},
+        },
+    )
+    assert response.status_code == 400
+    assert "max_uses" in response.json()["error"]
+    assert client.get("/api/llm-configs").json()["configs"] == []
+
+
+@pytest.mark.parametrize("endpoint", ["/api/llm-configs", "/api/llm-configs/test"])
+def test_gemini_refuses_domain_filters_unsupported_by_the_developer_api(client, endpoint):
+    response = client.post(
+        endpoint,
+        json={
+            "name": "Gemini",
+            "type": "gemini",
+            "model": "gemini-2.5-flash",
+            "builtin_tools": {"web_search": {"blocked_domains": ["example.com"]}},
+        },
+    )
+    assert response.status_code == 400
+    assert "blocked_domains" in response.json()["error"]
+    assert client.get("/api/llm-configs").json()["configs"] == []
+    assert (
+        client.get("/api/llm-configs").json()["builtin_options_by_type"]["gemini"]["web_search"]
+        == []
+    )
+
+
+@pytest.mark.parametrize("endpoint", ["/api/llm-configs", "/api/llm-configs/test"])
 @pytest.mark.parametrize("limit", [1, 15])
 def test_responses_refuses_output_limits_below_the_api_minimum(client, endpoint, limit):
     body = {
