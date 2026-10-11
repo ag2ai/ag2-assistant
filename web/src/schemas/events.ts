@@ -22,7 +22,11 @@ export const EventData = {
     calls: z.array(z.object({ name: z.string(), arguments: z.unknown().optional() })).optional(),
   }),
   CompactionStarted: z.object({ agent: z.string() }),
-  CompactionCompleted: z.object({ agent: z.string() }),
+  CompactionCompleted: z.object({
+    agent: z.string(),
+    strategy: z.string().optional(),
+    llm_calls: z.number().optional(),
+  }),
   CompactionFailed: z.object({ agent: z.string(), error: z.string(), error_type: z.string() }),
   TaskCreated: z.object({
     task_id: z.string(),

@@ -258,6 +258,41 @@ test('completion renders after history compaction removed the start event', () =
   assert.equal(isBusy(items), false)
 })
 
+for (const withStart of [true, false]) {
+  test('excerpt-only checkpoint events add no notice during ' + (withStart ? 'live updates' : 'replay'), () => {
+    const items: ThreadItem[] = []
+    foldEvent(items, user('hello'))
+    foldEvent(items, response('Hello'))
+    if (withStart) foldEvent(items, compaction('Started', { strategy: 'CheckpointCompact' }))
+    foldEvent(items, compaction('Completed', { strategy: 'CheckpointCompact', llm_calls: 0 }))
+    assert.equal(items.some(it => it.kind === 'note'), false)
+    assert.equal(isCompacting(items), false)
+    assert.equal(isBusy(items), false)
+    assert.equal(items.length, 2)
+  })
+}
+
+for (const data of [
+  { strategy: 'CheckpointCompact', llm_calls: 1 },
+  { strategy: 'TailWindowCompact', llm_calls: 0 },
+]) {
+  test('a real history reduction stays visible for ' + data.strategy, () => {
+    const items: ThreadItem[] = []
+    foldEvent(items, user('hello'))
+    foldEvent(items, response('Hello'))
+    foldEvent(items, compaction('Started', data))
+    foldEvent(items, compaction('Completed', data))
+    assert.equal(itemOfKind(items.at(-1), 'note').text, 'History compacted')
+    assert.equal(isCompacting(items), false)
+  })
+}
+
+test('a legacy compaction timeout is identified during replay', () => {
+  const items: ThreadItem[] = []
+  foldEvent(items, compaction('Failed', { error_type: 'TimeoutError', error: 'Compaction cancelled' }))
+  assert.equal(itemOfKind(items.at(-1), 'note').text, 'History compaction failed: Compaction timed out')
+})
+
 test('compaction failure explains the error and ends the pending status', () => {
   const items: ThreadItem[] = []
   foldEvent(items, user('hello'))

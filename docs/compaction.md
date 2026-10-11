@@ -25,6 +25,7 @@ Archived outputs reuse their bounded projection before the next budget check,
 within a Turn and after a restart. The source archive is written once per result.
 Excerpt-only reductions do not emit history-compaction notifications; lifecycle
 events describe checkpoint creation and failures in preparing the context.
+The UI also filters legacy zero-call CheckpointCompact completion notices during replay.
 
 If that is insufficient, a replayable old prefix becomes a versioned checkpoint:
 goal, constraints, decisions, completed work, artifacts, pending work, unknown

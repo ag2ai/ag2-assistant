@@ -326,8 +326,16 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
         if (it.kind === 'note' && it.compactionAgent === d.agent && it.pending) break
         index--
       }
+      if (!failed && 'llm_calls' in d && d.strategy === 'CheckpointCompact' && d.llm_calls === 0) {
+        if (index >= 0) items.splice(index, 1)
+        break
+      }
+      let failureText = failed?.error || failed?.error_type
+      if (failed?.error_type === 'TimeoutError' && failed.error === 'Compaction cancelled') {
+        failureText = 'Compaction timed out'
+      }
       const status = failed
-        ? { icon: 'x', text: `History compaction failed: ${failed.error || failed.error_type}`, alert: true }
+        ? { icon: 'x', text: `History compaction failed: ${failureText}`, alert: true }
         : { icon: 'check', text: 'History compacted', alert: false }
       const previous = items[index]
       if (previous?.kind === 'note') items[index] = { ...previous, ...status, pending: false }
