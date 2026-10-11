@@ -173,10 +173,8 @@ class MemoryConfig(BaseModel):
 
     # Distil the profile every N conversation turns (an LLM call each time).
     aggregate_every_n_turns: int = 4
-    # Summarise the oldest stream events (an LLM call on the cheap model) once a
-    # conversation's history crosses this many tokens, keeping long chats and
-    # task runs inside the context window.
-    compact_max_tokens: int = 20_000
+    # Summarise older history when its estimated token count crosses this threshold.
+    compact_max_tokens: int = 50_000
 
 
 # The Config sections a profile's config.yaml may overlay. Settings keys in the same

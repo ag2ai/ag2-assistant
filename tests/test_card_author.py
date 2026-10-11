@@ -33,9 +33,8 @@ def call(script, args):
 
 
 async def drafts(gateway, chat="drafts"):
-    stream = await gateway.stream_for(chat)
     return [
-        event for event in await stream.history.get_events() if isinstance(event, EphemeralCard)
+        event for event in await gateway.replay_events(chat) if isinstance(event, EphemeralCard)
     ]
 
 

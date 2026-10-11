@@ -52,6 +52,7 @@ export const ProfileSettings = z.object({
   mcp_servers: z.array(McpServer),
   focuses: z.array(z.string()),
   reply_timeout_s: z.number(),
+  compact_max_tokens: z.number().int(),
   preview_browser: z.string(),
   fs: FsRoots,
 })
@@ -126,6 +127,12 @@ export const ReplyTimeoutSaved = z.object({
   reply_timeout_s: z.number(),
 })
 export type ReplyTimeoutSaved = z.infer<typeof ReplyTimeoutSaved>
+
+export const CompactionSaved = z.object({
+  ok: z.literal(true),
+  compact_max_tokens: z.number().int(),
+})
+export type CompactionSaved = z.infer<typeof CompactionSaved>
 
 export const McpServerSaved = z.object({
   ok: z.literal(true),

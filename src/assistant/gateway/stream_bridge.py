@@ -31,7 +31,7 @@ class StreamBridge:
         """Replay the persisted stream, then subscribe to forward live events."""
         stream: MemoryStream = await self._gw.stream_for(self._sid)
         self._stream = stream
-        for event in await stream.history.get_events():
+        for event in await self._gw.replay_events(self._sid):
             await self._forward(event)
         with contextlib.suppress(Exception):
             await self._ws.send_json({"type": "ready", "chat": self._sid})

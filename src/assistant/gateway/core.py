@@ -36,7 +36,6 @@ from ag2.events import (
 )
 from ag2.knowledge import SqliteKnowledgeStore
 from ag2.knowledge.constants import LOG_PREFIX
-from ag2.knowledge.log import EventLogWriter
 from ag2.plugin import Plugin
 from ag2.stream import MemoryStream
 from ag2.tools import LocalEnvironment
@@ -70,6 +69,7 @@ from assistant.coding.detect import parse_bridge
 from assistant.config import Config, load_config
 from assistant.events import TurnCancelled, TurnFailed
 from assistant.folders import FolderStore
+from assistant.gateway.history import ChatEventLog
 from assistant.gateway.repair import repair_stream_history, wait_reply
 from assistant.gateway.tasks_service import TaskService
 from assistant.gateway.wire import is_binary_event
@@ -237,7 +237,7 @@ class Gateway:
         self._permissions: PermissionStore | None = None
         self._folders: FolderStore | None = None
         self._event_store: SerialStore | None = None
-        self._writer: EventLogWriter | None = None
+        self._writer: ChatEventLog | None = None
         # async (chat_id, user_text, reply, origin=…) -> None, called once a turn
         # completes: the router pushes it to the Peer Attached to that chat.
         self._mirror: Callable | None = None
@@ -527,7 +527,7 @@ class Gateway:
                     ),
                 ).value
             )
-            self._writer = EventLogWriter(self._event_store)
+            self._writer = ChatEventLog(self._event_store)
 
     async def refresh(self) -> None:
         """Refresh runtime configuration and retire obsolete owned resources."""
@@ -549,6 +549,25 @@ class Gateway:
         event bridge replays and subscribes to. Same cached object send_message
         uses, so events from a turn are caught by the bridge's subscription."""
         return await self._get_stream(chat_id)
+
+    def _chat_archive(self):
+        """The existing profile store holding compaction-dropped event segments."""
+        if self._knowledge_store is not None:
+            return self._knowledge_store
+        path = self._config.data_dir / "profile.db"
+        if not path.is_file():
+            return None
+        return self._resources.acquire(
+            "history-archive", "history-archive", lambda: build_profile_store(path)
+        ).value
+
+    async def replay_events(self, chat_id: str):
+        """The complete typed event history for a client reconnecting to this chat."""
+        stream = await self.stream_for(chat_id)
+        current = list(await stream.history.get_events())
+        if self._writer is None:
+            return current
+        return await self._writer.replay(chat_id, current, self._chat_archive())  # type: ignore[arg-type]
 
     def is_running(self, chat_id: str = "default") -> bool:
         """Whether a turn is in flight on this chat — what a message sent now would be
@@ -632,7 +651,7 @@ class Gateway:
             try:
                 raw = await self._read_log(chat_id)
                 if chat_id not in self._synced or self._synced[chat_id] != raw:
-                    events = await self._writer.load(chat_id)  # type: ignore[arg-type]
+                    events = await self._writer.load_current(chat_id)  # type: ignore[arg-type]
                     await stream.history.replace(events)
             except Exception as exc:
                 log_suppressed("chat stream hydrate", exc, chat_id=chat_id)
@@ -653,18 +672,7 @@ class Gateway:
             self._synced[chat_id] = await self._read_log(chat_id)
 
     async def _draft_history(self, context: ConversationContext) -> list:
-        events = [] if self._writer is None else await self._writer.load(context.stream.id)
-        stream = self._streams[str(context.stream.id)]
-        current = list(await stream.history.get_events())
-        return list(
-            {
-                (
-                    type(event).__name__,
-                    json.dumps(event.to_dict(), sort_keys=True, default=str),
-                ): event
-                for event in [*events, *current]
-            }.values()
-        )
+        return await self.replay_events(str(context.stream.id))
 
     async def save_card_definition(self, chat_id: str, **request) -> dict:
         """Save a current draft through the same operation as the Card author Skill."""
@@ -1507,15 +1515,14 @@ class Gateway:
             return False
         async with self._chat_lock(chat_id), self.event_transaction():
             removed = await purge_history_for_chat(self._event_store, chat_id)
-            paths = [self._transcript_path(chat_id), f"{LOG_PREFIX}{chat_id}.jsonl"]
-            # dropped-turn segments are "<sid>.dropped-N.jsonl" under LOG_PREFIX
-            for entry in await self._event_store.list(LOG_PREFIX):
-                if entry.startswith(f"{chat_id}.dropped-") and entry.endswith(".jsonl"):
-                    paths.append(f"{LOG_PREFIX}{entry}")
-            for path in paths:
-                if await self._event_store.exists(path):
-                    await self._event_store.delete(path)
-                    removed = True
+            path = self._transcript_path(chat_id)
+            if await self._event_store.exists(path):
+                await self._event_store.delete(path)
+                removed = True
+            if self._writer is not None:
+                removed = (
+                    await self._writer.delete(chat_id, self._chat_archive()) or removed  # type: ignore[arg-type]
+                )
             self._streams.pop(chat_id, None)
             self._synced.pop(chat_id, None)
         self._locks.pop(chat_id, None)

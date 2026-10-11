@@ -10,6 +10,7 @@ import httpx
 import pytest
 from ag2 import Agent
 from ag2.a2ui import A2UIMessageEvent
+from ag2.compact import CompactionSummary
 from ag2.events import (
     CompactionCompleted,
     ModelMessage,
@@ -27,7 +28,6 @@ from assistant.agent import (
     agent_session,
     build_skills_plugin,
     build_skills_runtime,
-    cheap_model,
     create_agent,
     model_config,
 )
@@ -1255,8 +1255,8 @@ async def test_cancelled_turn_keeps_work_when_another_gateway_changes_the_chat_l
         await fresh.close()
 
 
-async def test_changed_compaction_threshold_emits_compaction_and_uses_profile_cheap_model(config):
-    models = ScriptedModels()
+async def test_changed_compaction_threshold_emits_compaction_and_uses_chat_model(config):
+    models = ScriptedModels(script=lambda cfg, model: [model or cfg.llm.model])
     config.memory.aggregate_every_n_turns = 0
     config.memory.compact_max_tokens = 0
     gateway = real_gateway(config, onboard=False, model_factory=models)
@@ -1275,9 +1275,50 @@ async def test_changed_compaction_threshold_emits_compaction_and_uses_profile_ch
         config.memory.compact_max_tokens = 1
         await gateway.send_message("apply new threshold", chat_id="existing")
         assert events and events[-1].events_before > events[-1].events_after
-        assert any(request[4] == cheap_model(config) for request in models.requests)
+        history = await (await gateway.stream_for("existing")).history.get_events()
+        summary = next(event for event in history if isinstance(event, CompactionSummary))
+        assert summary.summary == config.llm.model
         assert any(
             message["text"] == "history turn 0" for message in await gateway.transcript("existing")
         )
+    finally:
+        await gateway.close()
+
+
+async def test_compaction_follows_concurrent_chat_overrides_and_model_changes(config):
+    models = ScriptedModels(script=lambda cfg, model: [model or cfg.llm.model])
+    config.llm.aggregate_model = "aggregate-only"
+    config.memory.aggregate_every_n_turns = 0
+    config.memory.compact_max_tokens = 0
+    store = LlmConfigStore(config.paths)
+    entries = [
+        store.save_config({"name": name, "type": "gemini", "model": name})
+        for name in ("chat-one", "chat-two")
+    ]
+    gateway = real_gateway(config, onboard=False, model_factory=models)
+    await gateway.start()
+    try:
+        for index in range(32):
+            await asyncio.gather(
+                gateway.send_message(f"first history {index}", chat_id="first"),
+                gateway.send_message(f"second history {index}", chat_id="second"),
+            )
+        for chat_id, entry in zip(("first", "second"), entries, strict=True):
+            await gateway.update_chat(chat_id, model=entry["id"])
+        config.memory.compact_max_tokens = 1
+        await asyncio.gather(
+            gateway.send_message("compact first", chat_id="first"),
+            gateway.send_message("compact second", chat_id="second"),
+        )
+        for chat_id, entry in zip(("first", "second"), entries, strict=True):
+            history = await (await gateway.stream_for(chat_id)).history.get_events()
+            summary = next(event for event in history if isinstance(event, CompactionSummary))
+            assert summary.summary == entry["model"]
+
+        await gateway.update_chat("first", model=entries[1]["id"])
+        await gateway.send_message("compact after switching", chat_id="first")
+        history = await (await gateway.stream_for("first")).history.get_events()
+        summary = next(event for event in history if isinstance(event, CompactionSummary))
+        assert summary.summary == "chat-two"
     finally:
         await gateway.close()

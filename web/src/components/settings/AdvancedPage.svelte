@@ -1,8 +1,5 @@
 <script lang="ts">
-  // Settings → Advanced: shared identity ("Who you are"), turn budget, and the AG2
-  // architecture map + live-view toggle. The identity doc is install-wide
-  // (globalMemory/setGlobalMemory), so it lives here rather than the per-profile
-  // Profile Memory tab (ADR 0015), edited inline.
+  // Advanced settings: history and turn budgets, shared identity, and the AG2 view.
   import { getSettings } from './context.svelte.ts'
   import { ag2View } from '../../store.ts'
   import { toggleAsideInspector } from '../../router.ts'
@@ -12,9 +9,13 @@
 
   const ctx = getSettings()
   let replyTimeout = $state('')
+  let compactMaxTokens = $state('')
 
   $effect(() => {
-    if (ctx.s) replyTimeout = String(ctx.s.reply_timeout_s)
+    if (ctx.s) {
+      replyTimeout = String(ctx.s.reply_timeout_s)
+      compactMaxTokens = String(ctx.s.compact_max_tokens)
+    }
   })
 
   function saveReplyTimeout() {
@@ -25,7 +26,30 @@
     }
     ctx.run(() => api.setReplyTimeout(seconds))
   }
+
+  function saveCompactionThreshold() {
+    const tokens = Number(compactMaxTokens)
+    if (!Number.isSafeInteger(tokens) || tokens <= 0) {
+      ctx.err = 'History compaction threshold must be a positive whole number.'
+      return
+    }
+    ctx.run(() => api.setCompactionThreshold(tokens))
+  }
 </script>
+
+<div class="setgroup">Chat history</div>
+<div class="setrowwrap">
+  <div class="setrow">
+    <span class="sk">History compaction threshold</span>
+    <span class="sv">Applies next message</span>
+  </div>
+  <label class="timeoutfield tokenfield">
+    <input type="number" min="1" step="1" bind:value={compactMaxTokens} aria-label="History compaction threshold in tokens" />
+    <span>tokens</span>
+  </label>
+  <button class="open" disabled={ctx.busy} onclick={saveCompactionThreshold}>Save</button>
+</div>
+<p class="muted">Summarize older messages when the model's conversation context exceeds this estimated size. The full chat history stays available.</p>
 
 <div class="setgroup">Turn budget</div>
 <div class="setrowwrap">
@@ -65,4 +89,5 @@
   .timeoutfield { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 13px; }
   .timeoutfield input { width: 66px; border: 1px solid var(--line); border-radius: 8px; padding: 7px 8px; font: inherit; background: var(--bg); color: var(--ink); }
   .timeoutfield input:focus { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
+  .tokenfield input { width: 100px; }
 </style>

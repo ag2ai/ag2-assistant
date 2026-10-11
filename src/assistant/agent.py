@@ -56,12 +56,8 @@ from assistant.tools import build_agent_tools, docker_environment
 from assistant.tools.docker_sandbox import build_docker_skill_runtime, docker_available
 from assistant.tools.mcp import build_mcp_tools
 
-# Default (cheaper) model for the passive memory-aggregation pass, per provider.
-# Used only when llm.aggregate_model isn't set. Override via AG2ASSISTANT_AGGREGATE_MODEL.
-# Per-provider default for bulk/background LLM work (aggregation, compaction,
-# research subtasks) — the provider's cheap tier, overridable via
-# `config.llm.aggregate_model`. Ollama is absent on purpose: it's local (nothing
-# to save) and any specific model here might not be pulled.
+# Default model for memory aggregation and background work, overridden by aggregate_model.
+# Ollama uses the main model because a different local model may not be installed.
 _DEFAULT_AGGREGATE_MODEL = {
     "gemini": "gemini-3.1-flash-lite",
     "anthropic": "claude-haiku-4-5-20251001",
@@ -665,11 +661,8 @@ def create_agent(
 
     knowledge = None
     assembly: list = []
-    # Profile aggregation and stream compaction are both just summarisation, so
-    # run them on a cheaper model when one is configured (or a sensible
-    # per-provider default). Falls back to the main model if neither applies.
     agg_model = config.llm.aggregate_model or _default_aggregate_model(config)
-    agg_config = model_factory(config, agg_model) if memory or compact else None
+    agg_config = model_factory(config, agg_model) if memory else None
     if memory:
         if owner is not None and knowledge_store is None:
             knowledge_store = owned_resource(
@@ -691,7 +684,6 @@ def create_agent(
     elif compact:
         # Memory-less agents (task subagents) still get their context bounded.
         knowledge = build_compaction_config(
-            aggregate_config=agg_config,
             max_tokens=config.memory.compact_max_tokens,
         )
 

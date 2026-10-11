@@ -3,6 +3,7 @@
 import { api as P, pidApi as PID } from '../../lib/profile.ts'
 import { del, get, post } from '../http.ts'
 import {
+  CompactionSaved,
   FocusesSaved,
   LiveOverrideSaved,
   LlmOverrideSaved,
@@ -64,6 +65,9 @@ export const settingsApi = {
 
   setReplyTimeout: (replyTimeoutS: number) =>
     post(P('/settings/reply-timeout'), { reply_timeout_s: replyTimeoutS }, ReplyTimeoutSaved),
+
+  setCompactionThreshold: (compactMaxTokens: number) =>
+    post(P('/settings/compaction'), { compact_max_tokens: compactMaxTokens }, CompactionSaved),
 
   setVoiceProvider: (provider: string) => post(P('/settings/voice_provider'), { provider }, Ok),
 

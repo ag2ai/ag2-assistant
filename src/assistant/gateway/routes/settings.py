@@ -14,6 +14,7 @@ from assistant import voice_providers
 from assistant.gateway.profile_manager import ProfileRuntime
 from assistant.gateway.routes.deps import GatewayDeps
 from assistant.gateway.schemas import (
+    CompactionSavedResponse,
     FocusesSavedResponse,
     HealthChannelOut,
     LiveOverrideSavedResponse,
@@ -50,6 +51,10 @@ class ReplyTimeoutRequest(BaseModel):
 
 class PreviewBrowserRequest(BaseModel):
     preview_browser: str = Field(max_length=1024)
+
+
+class CompactionRequest(BaseModel):
+    compact_max_tokens: int = Field(strict=True, gt=0)
 
 
 class VoiceRequest(BaseModel):
@@ -382,6 +387,7 @@ def build_profile_router(
             "mcp_servers": settings.list_mcp_servers(),
             "focuses": settings.get_focuses(),  # per-profile persona focus areas
             "reply_timeout_s": cfg.gateway.reply_timeout_s,
+            "compact_max_tokens": cfg.memory.compact_max_tokens,
             "preview_browser": cfg.tools.preview_browser,
             "fs": {  # start roots for the folder picker
                 "home": str(d.paths.home),
@@ -483,6 +489,15 @@ def build_profile_router(
             return JSONResponse({"error": str(exc)}, status_code=400)
         await d.manager.refresh(runtime.pid)
         return {"ok": True, "preview_browser": browser}
+
+    @r.post("/settings/compaction", response_model=CompactionSavedResponse)
+    async def set_compaction(
+        req: CompactionRequest, runtime: ProfileRuntime = Depends(get_runtime)
+    ):
+        """Save this Profile's history threshold and apply it to subsequent Turns."""
+        tokens = runtime_settings(runtime).set_compact_max_tokens(req.compact_max_tokens)
+        await d.manager.refresh(runtime.pid)
+        return {"ok": True, "compact_max_tokens": tokens}
 
     @r.post("/settings/reply-timeout", response_model=ReplyTimeoutSavedResponse)
     async def set_reply_timeout(

@@ -48,6 +48,9 @@ class _GW:
     async def stream_for(self, sid):
         return self._stream
 
+    async def replay_events(self, sid):
+        return await self._stream.history.get_events()
+
     catalog = _Catalog()
     card_sources = None
 

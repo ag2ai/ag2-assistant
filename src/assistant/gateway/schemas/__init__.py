@@ -95,6 +95,7 @@ from .profile import ProfileEnvelopeResponse, ProfileListResponse, ProfileOut
 from .secret import SecretListResponse, SecretOut, SecretSavedResponse
 from .settings import (
     AssistantModelOut,
+    CompactionSavedResponse,
     FocusesSavedResponse,
     FsRootsOut,
     HealthChannelOut,
@@ -176,6 +177,7 @@ from .task import (
 
 __all__ = [
     "AssistantModelOut",
+    "CompactionSavedResponse",
     "CatalogModelOut",
     "ChatListResponse",
     "ChatRowOut",

@@ -1,13 +1,18 @@
 """Tests for AG2 Assistant persistent user-profile memory."""
 
 import pytest
+from ag2 import Agent
+from ag2.compact import CompactionSummary
 from ag2.knowledge import SqliteKnowledgeStore
+from ag2.stream import MemoryStream
+from ag2.testing import TestConfig
 
 import assistant.agent as agent_mod
 from assistant.agent import ask
 from assistant.config import Config, LLMConfig, load_config
 from assistant.memory import (
     PROFILE_PATH,
+    build_compaction_config,
     build_knowledge_config,
     build_profile_prompt,
     clear_profile,
@@ -106,6 +111,18 @@ def test_explicit_aggregate_model_wins(paths):
     cfg = Config.for_paths(paths, llm=LLMConfig(aggregate_model="gemini-2.5-flash"))
     agent = agent_mod.create_agent(cfg, memory=True, skills=False)
     assert _aggregate_model(agent) == "gemini-2.5-flash"
+
+
+async def test_compaction_without_profile_memory_uses_invocation_model():
+    stream = MemoryStream()
+    agent = Agent(
+        "chat", config=TestConfig("default-model"), knowledge=build_compaction_config(max_tokens=1)
+    )
+    for index in range(32):
+        await agent.ask(f"history turn {index}", stream=stream, config=TestConfig("selected-model"))
+    history = await stream.history.get_events()
+    summary = next(event for event in history if isinstance(event, CompactionSummary))
+    assert summary.summary == "selected-model"
 
 
 async def test_read_profile_empty(tmp_path):
