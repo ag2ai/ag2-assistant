@@ -10,6 +10,8 @@ from ag2.annotations import Context
 from ag2.events import BaseEvent, ModelRequest, ModelResponse, TextInput
 from ag2.middleware.base import BaseMiddleware, LLMCall, MiddlewareFactory
 
+from assistant.compaction import ContextBudgetError
+
 _TRANSIENT_HTTP_STATUS = frozenset({429, 500, 502, 503, 504})
 # Match transport base classes without importing optional provider SDKs.
 _TRANSIENT_NETWORK_TYPES = frozenset(
@@ -71,6 +73,8 @@ def _is_transient(exc: BaseException) -> bool:
     seen: set[int] = set()
     while id(exc) not in seen:
         seen.add(id(exc))
+        if isinstance(exc, ContextBudgetError):
+            return False
         for status in (
             getattr(exc, "status_code", None),
             getattr(exc, "code", None),

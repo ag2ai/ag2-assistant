@@ -10,6 +10,7 @@ from ag2.context import ConversationContext
 from ag2.events import (
     CompactionCompleted,
     CompactionFailed,
+    CompactionStarted,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -36,6 +37,7 @@ from assistant.compaction import (
 )
 from assistant.gateway.history import ChatEventLog
 from assistant.memory import build_compaction_config
+from assistant.middleware import LLMRetryMiddleware
 from assistant.skills import FilteredSkillRuntime
 from tests.support.apps import compacting_agent
 from tests.support.fakes import CheckpointTestConfig, ControlledHistory, checkpoint_json
@@ -146,6 +148,93 @@ async def test_large_tool_output_is_excerpted_between_rounds_and_can_be_read():
     await agent.ask("read", stream=MemoryStream())
     other = [event for event in reader.requests[-1][0] if isinstance(event, ToolResultsEvent)]
     assert "unavailable in this Chat" in str(other)
+
+
+async def test_excerpt_projection_is_reused_between_rounds_and_turns_without_notices():
+    class ImmutableSources(MemoryKnowledgeStore):
+        async def write(self, path, content):
+            if "/sources/" in path and await self.read(path) is not None:
+                raise OSError("An archived source cannot be overwritten")
+            await super().write(path, content)
+
+    @tool
+    def big_output() -> str:
+        return "begin " + "x" * 40_000 + " end"
+
+    @tool
+    def small_output() -> str:
+        return "small result"
+
+    store = ImmutableSources()
+    knowledge = build_compaction_config(max_tokens=2_000, store=store)
+    stream = MemoryStream()
+    notices = []
+    stream.where(CompactionStarted).subscribe(lambda event: notices.append(event))
+    stream.where(CompactionCompleted).subscribe(lambda event: notices.append(event))
+    config = CheckpointTestConfig(
+        ToolCallEvent(name="big_output"),
+        ToolCallEvent(name="small_output"),
+        ToolCallEvent(name="small_output"),
+        "done",
+    )
+    await compacting_agent(config, knowledge, tools=[big_output, small_output]).ask(
+        "run", stream=stream
+    )
+    next_config = CheckpointTestConfig("next")
+    await compacting_agent(next_config, knowledge, tools=[big_output, small_output]).ask(
+        "continue", stream=stream
+    )
+    for messages, prompt, options in [*config.requests, *next_config.requests]:
+        assert options.get("response_schema") is not CHECKPOINT_SCHEMA
+        assert request_tokens(messages, prompt, options["tools"]) <= 2_000
+    raw = list(await stream.history.get_events())
+    assert notices == []
+    original = next(e for e in raw if isinstance(e, ToolResultEvent) and e.name == "big_output")
+    assert original.result.parts[0].content.endswith(" end")
+    assert (
+        await store.read(checkpoint_root(stream.id) + f"sources/{event_ref(original)}.txt")
+        == original.result.parts[0].content
+    )
+
+
+async def test_compaction_timeout_is_explicit_and_not_retried_as_a_provider_timeout():
+    async def stall(messages, context, options):
+        if options.get("response_schema") is CHECKPOINT_SCHEMA:
+            await asyncio.Event().wait()
+
+    config = CheckpointTestConfig("unreachable", before_call=stall)
+    limits = CompactionLimits(max_tokens=3_000, timeout_s=0.05)
+    knowledge = build_compaction_config(limits=limits)
+    stream = MemoryStream()
+    original = ModelRequest.ensure_request(["old " + "x" * 20_000])
+    await stream.history.replace([original])
+    failed, completed = [], []
+    stream.where(CompactionFailed).subscribe(lambda event: failed.append(event))
+    stream.where(CompactionCompleted).subscribe(lambda event: completed.append(event))
+    agent = compacting_agent(
+        config,
+        knowledge,
+        middleware=[LLMRetryMiddleware(retries=2, base_delay=0)],
+    )
+    with pytest.raises(ContextBudgetError, match="timed out after 0.05 seconds"):
+        await agent.ask("continue", stream=stream)
+    events = list(await stream.history.get_events())
+    assert len(failed) == 1
+    assert failed[0].error_type == "TimeoutError"
+    assert failed[0].error == "Compaction timed out after 0.05 seconds"
+    assert completed == []
+    assert original in events
+    assert await load_checkpoint(knowledge.store, stream.id) is None
+    assert len(config.requests) == 1
+    provider = CheckpointTestConfig("unreachable", checkpoint=TimeoutError("Provider timed out"))
+    retry_agent = compacting_agent(
+        provider, knowledge, middleware=[LLMRetryMiddleware(retries=2, base_delay=0)]
+    )
+    with pytest.raises(ContextBudgetError, match="Provider timed out"):
+        await retry_agent.ask("retry on a new Turn", stream=stream)
+    assert len(failed) == 2
+    assert failed[-1].error == "Provider timed out"
+    assert len(provider.requests) == 1
 
 
 @pytest.mark.parametrize(

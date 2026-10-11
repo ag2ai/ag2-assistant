@@ -21,6 +21,11 @@ read_compaction_source tool reads pages of the archived original, scoped to the
 current Chat. Images and other binary outputs remain intact. The latest user
 request remains intact.
 
+Archived outputs reuse their bounded projection before the next budget check,
+within a Turn and after a restart. The source archive is written once per result.
+Excerpt-only reductions do not emit history-compaction notifications; lifecycle
+events describe checkpoint creation and failures in preparing the context.
+
 If that is insufficient, a replayable old prefix becomes a versioned checkpoint:
 goal, constraints, decisions, completed work, artifacts, pending work, unknown
 external action outcomes, next action, needed Skills and resource references.
@@ -62,6 +67,8 @@ provider failure, timeout, cancellation and exhausted call budgets fail the
 attempt while retaining source history. CompactionStarted, CompactionCompleted,
 CompactionFailed and UsageEvent(kind="compaction") report lifecycle and cost;
 the model-call count remains accurate when a provider omits usage.
+Deadline failures report the configured timeout explicitly and stop the Turn
+without entering the provider's automatic retry loop.
 
 Source snapshots and the versioned candidate are saved before writing the active
 checkpoint pointer. During a Turn only the model projection is shortened; raw

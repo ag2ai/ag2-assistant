@@ -139,7 +139,7 @@ class CompactionLimits:
 
 
 class ContextBudgetError(ValueError):
-    """The protected context cannot fit the configured estimated input budget."""
+    """The model input cannot be prepared within its configured limits."""
 
 
 def _json_value(value: Any) -> Any:
@@ -199,6 +199,8 @@ class CompactionSession:
     changed: bool = False
     loads: dict[str, tuple[str, str]] = field(default_factory=dict)
     required_skills: set[str] = field(default_factory=set)
+    excerpt_sources: set[str] = field(default_factory=set)
+    excerpts: dict[str, tuple[int, ToolResultEvent]] = field(default_factory=dict)
 
 
 class CheckpointCompact:
@@ -354,13 +356,15 @@ class CheckpointCompact:
             )
         return protected
 
-    async def excerpt(self, events, session, context, available: int):
+    async def excerpt(self, events, session, context, available: int, *, cached_only=False):
         limit = max(256, min(4_096, available * 4 // 8))
         projected: list[BaseEvent] = []
         for event in events:
             if isinstance(event, ToolResultsEvent):
                 group = copy(event)
-                group.results = await self.excerpt(event.results, session, context, available)
+                group.results = await self.excerpt(
+                    event.results, session, context, available, cached_only=cached_only
+                )
                 projected.append(group)
                 continue
             if not isinstance(event, ToolResultEvent) or event.name == "load_skill":
@@ -376,15 +380,25 @@ class CheckpointCompact:
                 projected.append(event)
                 continue
             reference = event_ref(event)
-            await session.store.write(
-                checkpoint_root(context.stream.id) + f"sources/{reference}.txt", text
-            )
+            cached = session.excerpts.get(reference)
+            if cached is not None and cached[0] <= limit:
+                projected.append(cached[1])
+                continue
+            if reference not in session.excerpt_sources:
+                if cached_only:
+                    projected.append(event)
+                    continue
+                await session.store.write(
+                    checkpoint_root(context.stream.id) + f"sources/{reference}.txt", text
+                )
+                session.excerpt_sources.add(reference)
             duplicate = copy(event)
             duplicate.result = ToolResult(
                 text[:limit] + f"\n[Excerpt. Full output: read_compaction_source('{reference}').]",
                 final=event.result.final,
                 metadata=event.result.metadata,
             )
+            session.excerpts[reference] = (limit, duplicate)
             projected.append(duplicate)
         return projected
 
@@ -410,49 +424,53 @@ class CheckpointCompact:
                     )
             raw = list(await context.stream.history.get_events())
         original = self.project(events, session.record)
-        projected = self.deduplicate(original, session)
-        protected = self.skill_events(projected, session)
+        source = self.deduplicate(original, session)
+        protected = self.skill_events(source, session)
         budget = self.limits.max_tokens
+        if budget <= 0:
+            return [*protected, *source]
+        fixed = request_tokens(protected, context.prompt, tools, response_schema)
+        available = budget - fixed
+        projected = await self.excerpt(source, session, context, available, cached_only=True)
         if (
-            budget <= 0
-            or request_tokens([*protected, *projected], context.prompt, tools, response_schema)
+            request_tokens([*protected, *projected], context.prompt, tools, response_schema)
             <= budget
         ):
             return [*protected, *projected]
-        await context.send(
-            CompactionStarted(
-                agent=session.actor, strategy=type(self).__name__, event_count=len(raw)
-            )
-        )
         spent: list[UsageEvent] = []
         calls = [0]
+        deadline = asyncio.timeout(self.limits.timeout_s)
         try:
-            async with asyncio.timeout(self.limits.timeout_s):
-                fixed = request_tokens(protected, context.prompt, tools, response_schema)
-                available = budget - fixed
+            async with deadline:
                 if available <= 0:
                     raise ContextBudgetError(
                         "Instructions and tool schemas exceed the input budget"
                     )
-                reduced = await self.excerpt(projected, session, context, available)
+                reduced = await self.excerpt(source, session, context, available)
                 if (
                     request_tokens([*protected, *reduced], context.prompt, tools, response_schema)
-                    > budget
+                    <= budget
                 ):
-                    reduced = await self.checkpoint(
-                        original,
-                        reduced,
-                        raw,
-                        session,
-                        context,
-                        config,
-                        available,
-                        spent,
-                        calls,
-                        tools,
-                        response_schema,
+                    return [*protected, *reduced]
+                await context.send(
+                    CompactionStarted(
+                        agent=session.actor, strategy=type(self).__name__, event_count=len(original)
                     )
-                    protected = self.skill_events(reduced, session)
+                )
+                reduced = await self.checkpoint(
+                    original,
+                    reduced,
+                    raw,
+                    session,
+                    context,
+                    config,
+                    available,
+                    spent,
+                    calls,
+                    tools,
+                    response_schema,
+                )
+                protected = self.skill_events(reduced, session)
                 if (
                     request_tokens([*protected, *reduced], context.prompt, tools, response_schema)
                     > budget
@@ -461,14 +479,26 @@ class CheckpointCompact:
                         "The latest request and protected context exceed the input budget"
                     )
         except BaseException as exc:
+            error = (
+                f"Compaction timed out after {self.limits.timeout_s:g} seconds"
+                if isinstance(exc, TimeoutError) and deadline.expired()
+                else str(exc)
+                or (
+                    "Compaction cancelled"
+                    if isinstance(exc, asyncio.CancelledError)
+                    else f"Compaction failed ({type(exc).__name__})"
+                )
+            )
             await context.send(
                 CompactionFailed(
                     agent=session.actor,
                     strategy=type(self).__name__,
                     error_type=type(exc).__name__,
-                    error=str(exc) or "Compaction cancelled",
+                    error=error,
                 )
             )
+            if isinstance(exc, TimeoutError):
+                raise ContextBudgetError(error) from exc
             raise
         usage: dict[str, Any] = {}
         for event in spent:
@@ -479,7 +509,7 @@ class CheckpointCompact:
             CompactionCompleted(
                 agent=session.actor,
                 strategy=type(self).__name__,
-                events_before=len(raw),
+                events_before=len(original),
                 events_after=len(reduced),
                 llm_calls=calls[0],
                 usage=usage,
@@ -735,6 +765,11 @@ class CheckpointMiddleware(BaseMiddleware):
         session = CompactionSession(
             self.strategy, store, self.actor, record=await load_checkpoint(store, context.stream.id)
         )
+        session.excerpt_sources = {
+            entry.removesuffix(".txt")
+            for entry in await store.list(checkpoint_root(context.stream.id) + "sources/")
+            if entry.endswith(".txt")
+        }
         context.dependencies[CompactionSession] = session
         reply = await call_next(event, context)
         if session.record is not None:
