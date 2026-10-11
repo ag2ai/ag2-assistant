@@ -364,6 +364,8 @@ llm:
   model: gemini-3.6-flash
   api_key_env: GEMINI_API_KEY
   aggregate_model: gemini-2.5-flash
+  call_timeout_s: 180
+  call_retries: 2
 agent:
   name: ag2-assistant
   system_prompt: You are AG2 Assistant, a helpful personal AI assistant.
@@ -380,6 +382,13 @@ cheaper model than your main one — handy on long chats. On Gemini this
 defaults to `gemini-2.5-flash-lite`; set it explicitly to override, or set it to
 your main model to disable the saving.
 
+`llm.call_retries` retries a failed model call after connection errors, network
+timeouts, interrupted response streams, HTTP 429 and transient HTTP 500/502/503/504
+errors. The default is two retries with exponential backoff; `0` disables them.
+Each attempt gets a fresh `llm.call_timeout_s` window. Previously completed local
+tool calls remain in the conversation. Provider SDKs can also perform their own
+internal retries. Authentication, invalid requests and cancellation are not retried.
+
 ### Environment variable overrides
 
 Every key above also has an env override (these win over `config.yaml`):
@@ -390,6 +399,8 @@ Every key above also has an env override (these win over `config.yaml`):
 | `AG2ASSISTANT_MODEL` | `llm.model` |
 | `AG2ASSISTANT_API_KEY_ENV` | `llm.api_key_env` |
 | `AG2ASSISTANT_AGGREGATE_MODEL` | `llm.aggregate_model` |
+| `AG2ASSISTANT_LLM_TIMEOUT` | `llm.call_timeout_s` |
+| `AG2ASSISTANT_LLM_RETRIES` | `llm.call_retries` |
 | `AG2ASSISTANT_LOCATION` | `agent.location` |
 | `AG2ASSISTANT_REPLY_TIMEOUT` | `gateway.reply_timeout_s` |
 | `AG2ASSISTANT_SANDBOX` | `tools.sandbox` (`local` / `docker`) |

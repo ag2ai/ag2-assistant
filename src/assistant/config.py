@@ -90,11 +90,8 @@ class LLMConfig(BaseModel):
     # "running" forever. The per-call timeout middleware wraps each call and raises
     # after this many seconds so the turn fails cleanly (env: AG2ASSISTANT_LLM_TIMEOUT).
     call_timeout_s: float = 180.0
-    # How many times to RE-TRY a failed LLM call (a per-call timeout or a transient
-    # provider error — 429/5xx) before letting it propagate. 2 retries = up to 3
-    # total attempts, each with its own fresh timeout window. Turns a one-off wedged
-    # or rate-limited call into a hiccup instead of an attempt/task death
-    # (env: AG2ASSISTANT_LLM_RETRIES). 0 disables retrying.
+    # Retries per LLM call for timeouts, connection/stream failures and transient HTTP errors.
+    # Two retries allow three attempts; 0 disables them (env: AG2ASSISTANT_LLM_RETRIES).
     call_retries: int = 2
     # Event-silence watchdog: emit a CRITICAL alert onto the turn's stream when NO
     # event has been seen for this long during an active turn — the trigger-driven

@@ -9,9 +9,61 @@ import json
 from collections.abc import Callable, Mapping
 
 import httpx
+import httpx2
 from ag2.tools.skills.skill_search.client import SkillsClient
 
 Handler = Callable[[httpx.Request], httpx.Response]
+
+
+class InterruptedStream(httpx2.AsyncByteStream):
+    """Send a response prefix, then interrupt its body."""
+
+    def __init__(self, prefix: bytes):
+        self.prefix = prefix
+
+    async def __aiter__(self):
+        yield self.prefix
+        raise httpx2.RemoteProtocolError("peer closed connection (incomplete chunked read)")
+
+
+def sse(payload: Mapping) -> bytes:
+    """Encode a JSON SSE event."""
+    event = f"event: {payload['type']}\n" if "type" in payload else ""
+    return (event + "data: " + json.dumps(payload) + "\n\n").encode()
+
+
+def chat_chunk(*, content=None, calls=None) -> bytes:
+    """Build one OpenAI Chat Completions delta."""
+    delta = {"content": content} if content else {"tool_calls": calls}
+    return sse(
+        {
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "created": 0,
+            "model": "test-model",
+            "choices": [
+                {"index": 0, "delta": delta, "finish_reason": "stop" if content else "tool_calls"}
+            ],
+        }
+    )
+
+
+def response_completed(output) -> bytes:
+    """Build an OpenAI Responses completion event."""
+    return sse(
+        {
+            "type": "response.completed",
+            "sequence_number": 2,
+            "response": {
+                "id": "resp-test",
+                "object": "response",
+                "created_at": 0,
+                "model": "test-model",
+                "status": "completed",
+                "output": output,
+            },
+        }
+    )
 
 
 def client(handler: Handler) -> httpx.Client:
