@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte'
+  import Icon from '../Icon.svelte'
   import { api } from '../../transport/api/index.ts'
   import { thread, profileEpoch, refreshFiles } from '../../store.ts'
   import { openAsideFile } from '../../router.ts'
@@ -69,17 +70,19 @@
   }
 </script>
 
-<div class="instance-save">
-  <button class="open" onclick={open}>Save instance</button>
-  {#if result}
+<button class="instance-save-trigger" onclick={open} title="Save instance" aria-label="Save instance" aria-haspopup="dialog">
+  <Icon name="save" size={16} />
+</button>
+{#if result}
+  <div class="instance-save-result">
     <span role="status">{result.message}</span>
     {#if error}<span role="alert">{error}</span>{/if}
     <button class="open" onclick={() => openAsideFile(result!.path)}>Open</button>
     {#if !result.history_recorded}
       <button class="open" disabled={busy} onclick={save}>{busy ? 'Recording…' : 'Retry confirmation'}</button>
     {/if}
-  {/if}
-</div>
+  </div>
+{/if}
 <dialog class="instance-save-dialog" bind:this={dialog} aria-label="Save instance as" oncancel={(event) => { if (busy) event.preventDefault() }}>
   <form onsubmit={(event) => { event.preventDefault(); save() }}>
     <h2>Save instance as</h2>
@@ -103,7 +106,7 @@
 </dialog>
 
 <style>
-  .instance-save { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 8px 0 16px; font-size: 12px; }
+  .instance-save-result { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 8px 0 16px; font-size: 12px; }
   dialog { color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 16px; width: min(440px, 90vw); padding: 24px; }
   dialog::backdrop { background: #0007; }
   form { display: flex; flex-direction: column; gap: 12px; }

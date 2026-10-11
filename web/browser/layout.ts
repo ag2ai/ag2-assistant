@@ -168,7 +168,7 @@ for (const frameWidth of [280, 620]) {
       const target = document.createElement('section')
       target.className = 'fixture'; target.style.width = `${frameWidth}px`; fixtures.append(target)
       const nodes: A2UIComponent[] = [
-        { id: 'root', component: variant === 'column' ? 'Column' : 'Card', variant: variant === 'feature' ? 'feature' : undefined, child: 'body', children: ['title', 'input', 'value'] },
+        { id: 'root', component: variant === 'column' ? 'Column' : 'Card', variant: variant === 'feature' ? 'feature' : undefined, width: variant === 'card' ? 'content' : 'fill', child: 'body', children: ['title', 'input', 'value'] },
         { id: 'body', component: 'Column', children: ['title', 'input', 'value'] },
         { id: 'title', component: 'Text', text: 'English activity', variant: 'h4' },
         { id: 'input', component: 'TextField', label: 'Note', value: { path: '/note' } },
@@ -187,8 +187,19 @@ for (const frameWidth of [280, 620]) {
       if (target.textContent?.includes('Overview') || target.textContent?.includes('AG2 catalog')) failures.push('Generic header is visible')
       if (target.querySelectorAll('.a2ui-basic-card').length !== (variant === 'column' ? 0 : 1)) failures.push('Authored frame count changed')
       if (target.querySelectorAll('.a2ui-t-h4').length !== 1 || wrapper.getAttribute('aria-label') !== item.title) failures.push('Card title was duplicated or lost')
-      if (!!target.querySelector('.instance-save button') === passive) failures.push('Wrong Save instance visibility')
+      if (!!target.querySelector('.instance-save-trigger') === passive) failures.push('Wrong Save instance visibility')
       const input = target.querySelector<HTMLInputElement>('input')!
+      if (!passive) {
+        const save = target.querySelector<HTMLElement>('.instance-save-trigger')!
+        if (save.title !== 'Save instance' || save.getAttribute('aria-label') !== 'Save instance' || save.textContent?.trim()) failures.push('Save icon or tooltip is incorrect')
+        const bounds = save.getBoundingClientRect(), frame = wrapper.getBoundingClientRect()
+        if (bounds.right > frame.right || Math.abs(frame.right - bounds.right - 7) > 1 || Math.abs(bounds.top - frame.top - 7) > 1) failures.push('Save action is not in the top right corner')
+        const card = wrapper.querySelector('.a2ui-basic-card')?.getBoundingClientRect()
+        if (card && Math.abs(card.right - bounds.right - 7) > 1) failures.push('Save action is detached from the authored Card')
+        save.focus()
+        if (getComputedStyle(save).opacity !== '1') failures.push('Save action is hidden from keyboard focus')
+        save.blur()
+      }
       if (input.disabled !== passive) failures.push('Wrong input disabled state')
       if (!passive) {
         input.value = 'Updated note'; input.dispatchEvent(new Event('input', { bubbles: true }))

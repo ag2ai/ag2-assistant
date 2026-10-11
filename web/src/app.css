@@ -528,8 +528,17 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .note.pending svg { animation: note-spin 900ms linear infinite; }
 @keyframes note-spin { to { transform: rotate(360deg); } }
 
-.a2ui-surface { min-width: 0; max-width: 100%; margin: 8px 0 12px; }
+.a2ui-surface { position: relative; min-width: 0; max-width: 100%; margin: 8px 0 12px; }
 .a2ui-surface > .a2ui-feature { margin: 0; }
+.a2ui-saveable > .a2ui-basic-card > .a2ui-text:first-child,
+.a2ui-saveable > .a2ui-basic-card > .a2ui-basic-col > .a2ui-text:first-child,
+.a2ui-saveable > .a2ui-basic-col > .a2ui-text:first-child { padding-right: 32px; box-sizing: border-box; }
+.instance-save-trigger { position: absolute; top: 7px; right: 7px; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); color: var(--muted); cursor: pointer; opacity: 0; pointer-events: none; }
+.a2ui-surface:hover > .instance-save-trigger,
+.a2ui-surface:focus-within > .instance-save-trigger { opacity: 1; pointer-events: auto; }
+.instance-save-trigger:hover { color: var(--ink); background: var(--panel); }
+@media (hover: none) { .instance-save-trigger { opacity: 1; pointer-events: auto; } }
+
 /* Placeholder while the model is still writing the surface's A2UI payload. */
 .a2ui-composing { max-width: min(100%, 360px); }
 .a2ui-composing-label { display: flex; align-items: center; gap: 7px; margin-bottom: 12px; color: var(--muted); font-size: 12px; }

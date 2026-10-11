@@ -116,12 +116,10 @@
 {#if isComposingUpdate}
   <A2UIComposing />
 {:else if hasLayout}
-  <div class="a2ui-surface" role="group" aria-label={title}>
+  <div class="a2ui-surface" class:a2ui-saveable={!readOnly} style:width={item.component.width === 'content' ? 'fit-content' : undefined} role="group" aria-label={title}>
     <BasicA2UIComponent {sourceIds} {sourceControls} component={item.component} {components} data={inputData} passive={readOnly} onDataChange={setInputValue} onAction={submitAction} />
+    {#if !readOnly}<CardInstanceSave {item} localData={() => inputData} />{/if}
   </div>
-{/if}
-{#if !readOnly && !isComposingUpdate && hasLayout}
-  <CardInstanceSave {item} localData={() => inputData} />
 {/if}
 {#if !readOnly && currentDraft($thread.items, item)}
   <CardDraftSave {item} />
