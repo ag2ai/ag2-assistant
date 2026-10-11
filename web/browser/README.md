@@ -23,7 +23,7 @@ Open `/app/browser/layout.html` on the Vite server to inspect the fixtures visua
 Pass `charts` after the Vite URL for native chart fixtures covering themes, sizing,
 missing values, event markers, legend controls and accessible data tables.
 Pass `thinking <profile-id>` to mount the real Thread and check activity through tool
-rounds, replay, final replies, cancellation and compaction. This fixture reads settings
+rounds, counted tool labels, replay, final replies, cancellation and compaction. It reads settings
 from the running gateway through Vite's API proxy; it sends no chat messages.
 These fixtures are development files. Production ships the app entry and a passive
 preview entry used by the screens skill.

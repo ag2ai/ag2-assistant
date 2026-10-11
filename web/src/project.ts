@@ -29,7 +29,14 @@ function joinText(parts: TextParts): string {
 export function addTool(items: ThreadItem[], name: string, card: ToolCard | null = null): void {
   if (!name) return
   const pretty = prettyToolName(name)
-  const prev = items[items.length - 1]
+  // Group adjacent tool rounds across empty continuing responses.
+  let index = items.length - 1
+  while (index >= 0) {
+    const item = items[index]
+    if (item.kind !== 'agent' || !item.continues || item.streaming || item.text || item.empty) break
+    index--
+  }
+  const prev = items[index]
   let last: ItemOf<'tools'>
   if (prev && prev.kind === 'tools') last = prev
   else {

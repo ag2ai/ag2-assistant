@@ -69,4 +69,31 @@ for (const type of ['TurnCancelled', 'TurnFailed']) {
   emit({ type: `assistant.events.${type}`, data: { reason: 'Stopped', error: 'Timed out' } })
   await check(type, false)
 }
+
+reset()
+emit(request)
+const update: WireEvent = { ...tools, data: { calls: [{ name: 'update_file' }] } }
+const preview: WireEvent = { ...tools, data: { calls: [{ name: 'run_skill_script', arguments: { name: 'screens', script: 'preview' } }] } }
+const rounds: WireEvent[] = []
+for (const batch of [update, update, update, preview, preview]) {
+  rounds.push({ ...response(''), data: { tool_calls: batch.data } }, batch, { type: 'ag2.events.ToolResult', data: {} })
+}
+for (const event of rounds) emit(event)
+await check('grouped tools stay active', true)
+function checkTools(name: string) {
+  const failures: string[] = []
+  const chips = [...target.querySelectorAll('.tools .chip')].map(node => node.textContent?.trim())
+  if (JSON.stringify(chips) !== JSON.stringify(['update file ×3', 'run skill script ×2'])) failures.push(`Wrong grouped labels: ${chips}`)
+  if (target.querySelectorAll('.tools').length !== 1) failures.push('Repeated tool rounds split into separate rows')
+  if (target.querySelectorAll('.toolcards .tcskill').length !== 2) failures.push('Grouped previews lost provenance cards')
+  results.push({ name, failures })
+}
+checkTools('live counted tool labels')
+const grouped: ThreadItem[] = []
+for (const event of [request, ...rounds]) foldEvent(grouped, event)
+thread.update(state => ({ ...state, items: grouped, busy: isBusy(grouped) }))
+await check('replayed grouped tools stay active', true)
+checkTools('replayed counted tool labels')
+emit(response('Updated'))
+await check('grouped tools finish', false)
 Object.assign(window, { layoutResults: results })

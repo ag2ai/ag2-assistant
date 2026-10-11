@@ -79,6 +79,70 @@ test('a tool batch resumes activity after a text-only progress message', () => {
   assert.equal(isBusy(items), false)
 })
 
+for (const streamed of [false, true]) {
+  test(`repeated tool rounds share one counted group, including replay (streamed=${streamed})`, () => {
+    const update: WireEvent = { ...toolCalls, data: { calls: [{ name: 'update_file' }] } }
+    const events = [user('update the view')]
+    for (let i = 0; i < 4; i++) {
+      if (streamed) events.push(chunk(''))
+      events.push({ ...response(''), data: { tool_calls: update.data } }, update, toolResult)
+    }
+    for (let replay = 0; replay < 2; replay++) {
+      const items: ThreadItem[] = []
+      for (const event of events) {
+        foldEvent(items, event)
+        assert.equal(isBusy(items), true)
+      }
+      const groups = items.filter(it => it.kind === 'tools')
+      assert.equal(groups.length, 1)
+      assert.deepEqual(itemOfKind(groups[0], 'tools').names, [{ name: 'update file', n: 4 }])
+      assert.equal(items.some(it => it.kind === 'agent' && (it.text || it.streaming || it.empty)), false)
+      foldEvent(items, response('Updated'))
+      assert.equal(isBusy(items), false)
+    }
+  })
+}
+
+test('grouped skill rounds retain every provenance card and separate visible progress', () => {
+  const preview: WireEvent = { ...toolCalls, data: { calls: [{ name: 'run_skill_script', arguments: { name: 'screens', script: 'preview' } }] } }
+  const items: ThreadItem[] = []
+  const run = () => {
+    foldEvent(items, { ...response(''), data: { tool_calls: preview.data } })
+    foldEvent(items, preview)
+    foldEvent(items, toolResult)
+  }
+  foldEvent(items, user('preview the view'))
+  run(); run()
+  const first = itemOfKind(items.find(it => it.kind === 'tools'), 'tools')
+  assert.deepEqual(first.names, [{ name: 'run skill script', n: 2 }])
+  assert.equal(first.cards.length, 2)
+  assert.equal(new Set(first.cards.map(card => card.id)).size, 2)
+
+  foldEvent(items, response('Adjusting the layout'))
+  run()
+  const second = itemOfKind(items.filter(it => it.kind === 'tools').at(-1), 'tools')
+  assert.notEqual(second.id, first.id)
+  assert.deepEqual(second.names, [{ name: 'run skill script', n: 1 }])
+  assert.equal(second.cards.length, 1)
+  assert.equal(items.filter(it => it.kind === 'tools').length, 2)
+  assert.equal(isBusy(items), true)
+})
+
+test('tool grouping respects alerts and user message boundaries', () => {
+  const items: ThreadItem[] = []
+  const run = () => {
+    foldEvent(items, { ...response(''), data: { tool_calls: toolCalls.data } })
+    foldEvent(items, toolCalls)
+  }
+  foldEvent(items, user('read the data'))
+  run(); run()
+  foldEvent(items, { type: 'assistant.events.ObserverAlert', data: { message: 'Many tool calls' } })
+  run(); run()
+  foldEvent(items, user('now read the other file'))
+  run()
+  assert.deepEqual(items.filter(it => it.kind === 'tools').map(it => itemOfKind(it, 'tools').names[0].n), [2, 2, 1])
+})
+
 for (const ending of [cancelled('Stopped'), failed('Timed out')]) {
   test(`${ending.type} stops activity after tools`, () => {
     const items: ThreadItem[] = []
