@@ -161,6 +161,62 @@ await check('aggregated phase finished', false)
 
 reset()
 emit(request)
+const shell = `python3 -c "import json; from pathlib import Path; data=json.loads(Path('/example/learning/reports/weekly-metrics.json').read_text()); print(data['weeks'][-12:]); print('<img src=x onerror=alert(1)>')"`
+const code = Array.from({ length: 35 }, (_, index) => `print('Week ${index + 1}: <img src=x onerror=alert(1)>')`).join('\n') + '\n'
+append({ ...tools, data: { calls: [
+  { name: 'run_shell_command', arguments: { command: shell } },
+  { name: 'run_shell_command', arguments: { command: 'pwd' } },
+  { name: 'run_shell_command', arguments: { command: shell } },
+  { name: 'run_code', arguments: { code, language: 'python' } },
+  { name: 'run_code', arguments: JSON.stringify({ code, language: 'python' }) },
+  { name: 'run_code', arguments: { code, language: 'bash' } },
+] } })
+await check('execution tools retain activity', true)
+for (const [label, source] of [['run shell command', shell], ['run code', code]]) {
+  const executionTrigger = [...target.querySelectorAll<HTMLButtonElement>('.tool-trigger')].find(node => node.textContent?.trim().startsWith(label))!
+  executionTrigger.dispatchEvent(new PointerEvent('pointerenter', { pointerType: 'mouse' }))
+  await tick()
+  await new Promise(resolve => setTimeout(resolve, 100))
+  const executionPopup = target.querySelector<HTMLDivElement>('.tool-runs:popover-open')!
+  const entries = [...executionPopup.querySelectorAll<HTMLElement>('.execution-entry')]
+  results.push({ name: `${label}/compact previews and grouped counts`, failures: entries.length === 2 && !executionPopup.querySelector('.execution-source') && entries[0].querySelector('.run-count')?.textContent?.trim() === '×2' && entries.every(entry => {
+    const preview = entry.querySelector<HTMLElement>('.execution-preview')!
+    const toggle = entry.querySelector('.detail-toggle')!
+    return preview.getBoundingClientRect().height <= Number.parseFloat(getComputedStyle(preview).lineHeight) + 1 && !preview.textContent?.includes('\n') && toggle.getAttribute('aria-expanded') === 'false' && toggle.getAttribute('aria-label') === 'Show details' && !!toggle.querySelector('svg') && getComputedStyle(toggle.querySelector('svg')!).transform === 'none' && !toggle.textContent?.trim()
+  }) ? [] : ['Execution source is not compact, grouped or collapsed initially'] })
+  const toggle = entries[0].querySelector<HTMLButtonElement>('.detail-toggle')!
+  toggle.click()
+  await tick()
+  await new Promise(resolve => setTimeout(resolve, 100))
+  const full = entries[0].querySelector<HTMLElement>('.execution-source')!
+  const expandedBounds = executionPopup.getBoundingClientRect()
+  results.push({ name: `${label}/complete source expands inside the popover`, failures: full?.textContent === source && full.id === toggle.getAttribute('aria-controls') && toggle.getAttribute('aria-expanded') === 'true' && toggle.getAttribute('aria-label') === 'Hide details' && getComputedStyle(toggle.querySelector('svg')!).transform === 'matrix(-1, 0, 0, -1, 0, 0)' && !entries[1].querySelector('.execution-source') && !executionPopup.querySelector('img') && expandedBounds.left >= 0 && expandedBounds.right <= window.innerWidth && expandedBounds.top >= 0 && expandedBounds.bottom <= window.innerHeight ? [] : ['Complete source, safe rendering, independent expansion or containment failed'] })
+  if (label === 'run code') {
+    full.scrollTop = full.scrollHeight
+    results.push({ name: 'long code remains scrollable to its final line', failures: full.scrollTop > 0 && full.getBoundingClientRect().height <= 220 && entries[0].querySelector('.execution-language')?.textContent === 'python' ? [] : ['Code is not scrollable or its language is missing'] })
+  }
+  toggle.click()
+  await tick()
+  results.push({ name: `${label}/details collapse without closing the run list`, failures: !entries[0].querySelector('.execution-source') && !!entries[0].querySelector('.execution-preview') && toggle.getAttribute('aria-label') === 'Show details' && executionPopup.matches(':popover-open') ? [] : ['Details did not collapse independently'] })
+  toggle.dispatchEvent(new PointerEvent('pointerdown', { pointerType: 'mouse', bubbles: true }))
+  toggle.focus()
+  toggle.click()
+  await tick()
+  executionTrigger.dispatchEvent(new PointerEvent('pointerleave', { pointerType: 'mouse' }))
+  executionPopup.dispatchEvent(new PointerEvent('pointerleave', { pointerType: 'mouse' }))
+  await new Promise(resolve => setTimeout(resolve, 240))
+  results.push({ name: `${label}/pointer focus does not prevent hover dismissal`, failures: executionPopup.matches(':popover-open') ? ['Menu stayed open after leaving a pointer-focused chevron'] : [] })
+  executionTrigger.dispatchEvent(new PointerEvent('pointerenter', { pointerType: 'mouse' }))
+  await tick()
+  results.push({ name: `${label}/reopening starts collapsed`, failures: !executionPopup.querySelector('.execution-source') && executionPopup.querySelector('.detail-toggle')?.getAttribute('aria-expanded') === 'false' ? [] : ['Expanded details survived closing the menu'] })
+  executionTrigger.dispatchEvent(new PointerEvent('pointerleave', { pointerType: 'mouse' }))
+  executionPopup.dispatchEvent(new PointerEvent('pointerleave', { pointerType: 'mouse' }))
+  await new Promise(resolve => setTimeout(resolve, 240))
+  await tick()
+}
+
+reset()
+emit(request)
 append({ ...tools, data: { created_at: 1791711720, calls: [{ name: 'write_file', arguments: { path: 'report.csv' } }] } })
 await check('file controls remain accessible', true)
 const fileTrigger = [...target.querySelectorAll<HTMLButtonElement>('.tool-trigger')].find(node => node.textContent?.includes('write file'))!

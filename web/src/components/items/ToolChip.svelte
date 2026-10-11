@@ -2,6 +2,7 @@
   import Icon from '../Icon.svelte'
   import ToolFile from './ToolFile.svelte'
   import ToolFolder from './ToolFolder.svelte'
+  import ToolExecution from './ToolExecution.svelte'
   import { chats } from '../../store.ts'
   import { go } from '../../router.ts'
   import { fmtClock, fmtStamp } from '../../lib/time.ts'
@@ -17,6 +18,7 @@
   let opened = $state(false)
   let pinned = false
   let restoringFocus = false
+  let pointerFocus = false
   let timer: ReturnType<typeof setTimeout> | undefined
   let left = $state(12)
   let top = $state(12)
@@ -29,7 +31,8 @@
     keepOpen()
     timer = setTimeout(() => {
       if (pinned || panel?.matches(':hover') || button?.matches(':hover')) return
-      if (document.activeElement === button || panel?.contains(document.activeElement)) return
+      if (!pointerFocus && document.activeElement?.matches(':focus-visible') &&
+          (document.activeElement === button || panel?.contains(document.activeElement))) return
       close()
     }, 180)
   }
@@ -73,13 +76,15 @@
   popovertarget={id}
   aria-haspopup="dialog" aria-expanded={opened} aria-controls={id}
   onpointerenter={(event) => { if (event.pointerType !== 'touch') open() }}
-  onpointerleave={scheduleClose} onfocus={() => { if (!restoringFocus) open() }} onblur={scheduleClose}
+  onpointerdown={() => pointerFocus = true} onkeydown={() => pointerFocus = false}
+  onpointerleave={scheduleClose} onfocus={() => { if (button?.matches(':focus-visible')) pointerFocus = false; if (!restoringFocus) open() }} onblur={scheduleClose}
   onclick={(event) => { event.preventDefault(); if (pinned) close(); else { pinned = true; open() } }}>
   <Icon name="zap" size={12} /> {label}{runs.length > 1 ? ' ×' + runs.length : ''}
 </button>
 <div bind:this={panel} {id} class="tool-runs" popover="auto" role="dialog" tabindex="-1" aria-label="{label} runs"
   style:left="{left}px" style:top="{top}px"
   onpointerenter={keepOpen} onpointerleave={scheduleClose} onfocusin={keepOpen} onfocusout={scheduleClose}
+  onpointerdown={() => pointerFocus = true} onkeydown={() => pointerFocus = false}
   onbeforetoggle={(event) => {
     if (event.newState === 'closed' && panel?.contains(document.activeElement)) {
       restoringFocus = true; button?.focus(); restoringFocus = false
@@ -106,6 +111,8 @@
               <ToolFile file={run.card} {count} onopen={close} />
             {:else if run.card?.kind === 'folder'}
               <ToolFolder path={run.card.path} {count} onopen={close} />
+            {:else if run.card?.kind === 'execution'}
+              {#if opened}<ToolExecution text={run.card.text} language={run.card.language} {count} />{/if}
             {:else if run.card?.kind === 'chat'}
               {@const chatId = run.card.chatId}
               {@const chat = $chats.find(chat => chat.chat_id === chatId)}

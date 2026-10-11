@@ -8,6 +8,7 @@ export type ToolCard =
   | { kind: 'search'; query: string }
   | { kind: 'skill'; name: string; script?: string; ran?: boolean }
   | { kind: 'image'; prompt: string; edit: boolean }
+  | { kind: 'execution'; text: string; language?: string }
 
 // A tool call's arguments — JSON on the wire, already decoded on some events.
 type ToolArgs = Record<string, unknown>
@@ -42,6 +43,15 @@ REGISTRY.list_folder = (a) =>
 REGISTRY.read_chat = (a) =>
   typeof a.chat_id === 'string' && a.chat_id ? { kind: 'chat', chatId: a.chat_id } : null
 
+for (const name of ['run_shell_command', 'run_shell_local', 'run_shell_sandboxed'])
+  REGISTRY[name] = (a) =>
+    typeof a.command === 'string' && a.command ? { kind: 'execution', text: a.command } : null
+for (const name of ['run_code', 'run_code_local', 'run_code_sandboxed'])
+  REGISTRY[name] = (a) =>
+    typeof a.code === 'string' && a.code
+      ? { kind: 'execution', text: a.code, language: typeof a.language === 'string' ? a.language : undefined }
+      : null
+
 // Skill provenance: the agent consulting a skill (load_skill) or running one of its
 // scripts (run_skill_script) — surface which skill, from the call's `name` arg.
 REGISTRY.load_skill = (a) => (typeof a.name === 'string' && a.name ? { kind: 'skill', name: a.name } : null)
@@ -75,6 +85,7 @@ export function toolDetail(name: string, args: unknown): string {
   if (card?.kind === 'chat') return card.chatId
   if (card?.kind === 'search') return card.query
   if (card?.kind === 'image') return card.prompt
+  if (card?.kind === 'execution') return [card.language, card.text].filter(Boolean).join('\n')
   return [values.name, values.resource, values.path, values.command, values.query, values.url]
     .filter(value => typeof value === 'string' && value).join(' · ')
 }
