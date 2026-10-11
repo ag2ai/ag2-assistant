@@ -191,10 +191,16 @@ for (const frameWidth of [280, 620]) {
       if (target.querySelectorAll('.a2ui-t-h4').length !== 1 || wrapper.getAttribute('aria-label') !== item.title) failures.push('Card title was duplicated or lost')
       if (!!target.querySelector('.instance-save-trigger') === passive) failures.push('Wrong Save instance visibility')
       const input = target.querySelector<HTMLInputElement>('input')!
+      const copy = target.querySelector<HTMLButtonElement>('.card-image-copy')!
+      if (!copy || copy.title !== 'Copy as image') failures.push('Copy image action is missing')
+      copy.focus()
+      if (getComputedStyle(copy).opacity !== '1') failures.push('Copy action is hidden from keyboard focus')
+      copy.blur()
       if (!passive) {
         const save = target.querySelector<HTMLElement>('.instance-save-trigger')!
         if (save.title !== 'Save instance' || save.getAttribute('aria-label') !== 'Save instance' || save.textContent?.trim()) failures.push('Save icon or tooltip is incorrect')
         const bounds = save.getBoundingClientRect(), frame = wrapper.getBoundingClientRect()
+        if (copy.getBoundingClientRect().right > bounds.left) failures.push('Copy and Save actions overlap')
         if (bounds.right > frame.right || Math.abs(frame.right - bounds.right - 7) > 1 || Math.abs(bounds.top - frame.top - 7) > 1) failures.push('Save action is not in the top right corner')
         const card = wrapper.querySelector('.a2ui-basic-card')?.getBoundingClientRect()
         if (card && Math.abs(card.right - bounds.right - 7) > 1) failures.push('Save action is detached from the authored Card')
@@ -247,6 +253,8 @@ for (const width of [280, 620]) {
       if (getComputedStyle(definition).opacity !== '1' || definition.title !== 'Save definition') failures.push('Definition action is not permanently visible with its tooltip')
       const instance = target.querySelector<HTMLElement>('.instance-save-trigger')!.getBoundingClientRect()
       if (instance.right > definition.getBoundingClientRect().left) failures.push('Save actions overlap')
+      const copy = target.querySelector<HTMLElement>('.card-image-copy')!.getBoundingClientRect()
+      if (copy.right > instance.left) failures.push('Copy and Save definition actions overlap')
       definition.scrollIntoView({ block: 'center' }); definition.click()
       await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
       const menu = target.querySelector<HTMLElement>('[popover][aria-label="Save definition"]')!

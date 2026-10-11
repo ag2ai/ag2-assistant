@@ -1,11 +1,5 @@
 <script lang="ts">
-  // The ChoiceCard — inline rendering of a durable HITL inquiry on the thread.
-  // Not an A2UI surface: the question IS the inquiry (restart-proof, answerable
-  // from any channel); this card is just its projection, styled to sit alongside
-  // the editorial A2UI surfaces. Options render as tappable chips; free-text
-  // stays available. A retired card keeps the chosen chip highlighted (if answered)
-  // and says HOW it resolved — answered / expired / cancelled — with its buttons
-  // disabled, so a timed-out or task-ended prompt never leaves dead live controls.
+  // Inline HITL inquiries show choices while pending and their result once resolved.
   import { answer } from '../../controller.ts'
   import { runInfo } from '../../store.ts'
   import type { ThreadItem } from '../../schemas/events.ts'
@@ -19,20 +13,13 @@
   function pick(opt: string) { answer(item.inquiryId, opt) }
   function submit() { if (text.trim()) { answer(item.inquiryId, text.trim()); text = '' } }
 
-  // A card is retired once its inquiry resolves OR its owning task reaches a
-  // terminal state (belt-and-suspenders: catches prompts stranded before the
-  // resolution event existed — answering them is a server-side no-op anyway).
+  // Resolved inquiries and prompts belonging to a terminal task cannot be answered.
   let onTerminalTask = $derived(!!$runInfo && TERMINAL.has($runInfo.status))
   let retired = $derived(!!item.resolved || onTerminalTask)
-  // How it resolved: explicit resolution wins; a real answer implies "answered";
-  // otherwise a retired-by-terminal-task prompt was simply never answered.
-  // Named `resolution`, not `state`: `$state` is a rune, so a `state` binding reads
-  // as a store subscription in a typed component.
+  // Explicit resolution wins; a terminal task retires a stranded prompt as unanswered.
   let resolution = $derived(
     item.resolution || (item.resolved ? 'answered' : retired ? 'unanswered' : null)
   )
-  // An unrecognised backend resolution has no label — the header then renders empty,
-  // exactly as before typing.
   const LABEL: Record<string, string | undefined> = {
     answered: 'You answered',
     expired: 'Expired · not answered in time',
@@ -50,7 +37,11 @@
 <div class="choice" class:resolved={retired} class:unanswered={retired && !answered}>
   <div class="ck">
     <span class="cdot"></span>
-    {header}
+    {#if answered}
+      <span class="answer-label" role="status">{item.answer}</span>
+    {:else}
+      {header}
+    {/if}
   </div>
   <div class="cq">{item.question}</div>
   {#if item.detail}
@@ -64,16 +55,17 @@
     {/if}
   {/if}
   {#if item.options && item.options.length}
-    <div class="copts">
-      {#each item.options as o}
-        <button
-          class="chip"
-          class:picked={answered && item.answer === o}
-          disabled={retired}
-          onclick={() => pick(o)}
-        >{o}</button>
-      {/each}
-    </div>
+    {#if !answered}
+      <div class="copts">
+        {#each item.options as o}
+          <button
+            class="chip"
+            disabled={retired}
+            onclick={() => pick(o)}
+          >{o}</button>
+        {/each}
+      </div>
+    {/if}
     {#if answered && !item.options.includes(item.answer ?? '')}
       <div class="cans">→ {item.answer}</div>
     {/if}
@@ -95,16 +87,17 @@
   }
   .choice.resolved { border-color: var(--line); background: transparent; }
   .choice.resolved .cdot { animation: none; opacity: .4; }
-  /* An expired/cancelled/unanswered prompt reads as a muted, dimmed record — it
-     asked for something it never got, so it shouldn't look like a done deal. */
+  /* Unanswered prompts render as muted records. */
   .choice.unanswered { opacity: .72; }
   .choice.unanswered .cdot { background: var(--muted); }
 
   .ck { display: flex; align-items: center; gap: 7px; font-family: var(--code, ui-monospace, monospace); font-size: 9.5px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: var(--accent); }
   .choice.resolved .ck { color: var(--muted); }
 
-  .detail-toggle { margin-top: 9px; padding: 0; background: none; border: none; color: var(--muted); font-family: var(--code, ui-monospace, monospace); font-size: 11px; letter-spacing: .04em; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
-  .detail-toggle:hover { color: var(--ink); }
+  .detail-toggle { margin-top: 9px; padding: 4px 9px; background: var(--bg); border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font: inherit; font-size: 11px; cursor: pointer; }
+  .detail-toggle:hover { color: var(--ink); border-color: var(--muted); }
+  .detail-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .answer-label { display: inline-flex; min-width: 0; max-width: 100%; padding: 3px 8px; border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--line)); border-radius: 999px; background: color-mix(in srgb, var(--accent) 8%, transparent); color: var(--accent); font-family: var(--sans, inherit); font-size: 11px; font-weight: 600; line-height: 1.5; letter-spacing: normal; text-transform: none; overflow-wrap: anywhere; }
   .cdot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: choice-pulse 1.6s infinite; }
   @keyframes choice-pulse {
     0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); }
@@ -131,7 +124,6 @@
   }
   .chip:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
   .chip:disabled { cursor: default; opacity: .45; }
-  .chip.picked { opacity: 1; border-color: var(--accent); background: var(--accent); color: var(--text-on-accent, #fff); }
 
   .cans { margin-top: 9px; font-family: var(--code, ui-monospace, monospace); font-size: 12.5px; color: var(--muted); }
 

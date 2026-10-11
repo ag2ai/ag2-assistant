@@ -12,6 +12,7 @@
   import A2UIComposing from './A2UIComposing.svelte'
   import CardDraftSave from './CardDraftSave.svelte'
   import CardInstanceSave from './CardInstanceSave.svelte'
+  import CardImageCopy from './CardImageCopy.svelte'
   import { currentDraft } from '../../lib/cardDrafts.ts'
   import { a2uiComposingSurfaceId, str, withA2UIValue, SURFACE_TITLE } from '../../lib/a2ui.ts'
   import type { A2UIAction, A2UIData } from '../../lib/a2ui.ts'
@@ -41,6 +42,7 @@
   let edits: Record<string, unknown> = {}
   const seenSourceUpdates = new Map<string, number | undefined>()
   let inputData: A2UIData = $state({})
+  let surface: HTMLDivElement | undefined = $state()
 
   $effect(() => {
     const latestData = data
@@ -116,8 +118,9 @@
 {#if isComposingUpdate}
   <A2UIComposing />
 {:else if hasLayout}
-  <div class="a2ui-surface" class:a2ui-saveable={!readOnly} class:a2ui-has-definition={!readOnly && currentDraft($thread.items, item)} style:width={item.component.width === 'content' ? 'fit-content' : undefined} role="group" aria-label={title}>
+  <div bind:this={surface} class="a2ui-surface a2ui-copyable" class:a2ui-saveable={!readOnly} class:a2ui-has-definition={!readOnly && currentDraft($thread.items, item)} style:width={item.component.width === 'content' ? 'fit-content' : undefined} role="group" aria-label={title}>
     <BasicA2UIComponent {sourceIds} {sourceControls} component={item.component} {components} data={inputData} passive={readOnly} onDataChange={setInputValue} onAction={submitAction} />
+    <CardImageCopy target={() => surface} />
     {#if !readOnly}
       <CardInstanceSave {item} localData={() => inputData} />
       {#if currentDraft($thread.items, item)}<CardDraftSave {item} />{/if}
