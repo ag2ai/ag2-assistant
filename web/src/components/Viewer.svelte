@@ -29,7 +29,7 @@
   const kind = $derived(path ? viewerKind(name) : 'markdown')
   // The open Thread's scope token (lib/threadScope.js) scopes a Folder (absolute) file's
   // Grant resolution (ADR 0013); a Files-space (relative) path ignores it, per rawQuery.
-  const chatId = $derived($threadScope)
+  const chatId = $derived(path && isFolderPath(path) ? $threadScope : '')
   const url = $derived(path ? api.fileUrl(path, false, chatId) : '')
   const downloadUrl = $derived(path ? api.fileUrl(path, true, chatId) : '')
   const native = $derived(kind === 'html' || kind === 'pdf' || kind === 'image')

@@ -35,7 +35,7 @@ test('content Tabs restore their selected Pages while Files keeps the current Pa
     switchTab(tab)
     const filePage = before.name === 'screen' ? '/s/' + before.id : '/' + before.kind + '/' + before.id
     assert.equal(location.pathname, tab === 'files' ? '/app/work/files' + filePage : expected[tab])
-    assert.equal(get(route).aside, null)
+    assert.deepEqual(get(route).aside, { kind: 'file', path: 'notes/selected.md' })
   }
 })
 
@@ -128,15 +128,16 @@ test('closing a file preview is remembered when returning to Files', () => {
   assert.equal(get(route).aside, null)
 })
 
-test('switching Tabs can be cancelled when restoring a Page would discard a file edit', () => {
+test('switching Drawer Tabs keeps a dirty editor without a discard prompt', () => {
   navigate('/app/dirty/chats/c/chat-1')
   switchTab('files')
   openAsideFile('notes.md')
-  Object.defineProperty(globalThis, 'confirm', { value: () => false, configurable: true })
+  Object.defineProperty(globalThis, 'confirm', { value: () => { throw new Error('Unexpected discard prompt') }, configurable: true })
   setUnsavedGuard(() => true)
   try {
     switchTab('chats')
-    assert.equal(get(route).tab, 'files')
+    assert.equal(get(route).tab, 'chats')
+    assert.equal(get(route).id, 'chat-1')
     assert.deepEqual(get(route).aside, { kind: 'file', path: 'notes.md' })
   } finally {
     setUnsavedGuard(null)
@@ -185,5 +186,25 @@ test('Files keeps a dirty editor without prompting to discard it', () => {
   } finally {
     setUnsavedGuard(null)
     Reflect.deleteProperty(globalThis, 'confirm')
+  }
+})
+
+test('the selected file stays in the right rail across all Drawer Tabs', () => {
+  navigate('/app/independent-preview/chats/c/chat-1')
+  switchTab('tasks')
+  go('/t/task-1')
+  switchTab('screens')
+  go('/screens/s/dashboard')
+  switchTab('chats')
+  switchTab('files')
+  openAsideFile('selected.md')
+  for (const tab of ['chats', 'tasks', 'screens', 'files', 'chats'] as const) {
+    switchTab(tab)
+    assert.deepEqual(get(route).aside, { kind: 'file', path: 'selected.md' })
+  }
+  closeAside()
+  for (const tab of ['tasks', 'screens', 'files', 'chats'] as const) {
+    switchTab(tab)
+    assert.equal(get(route).aside, null)
   }
 })

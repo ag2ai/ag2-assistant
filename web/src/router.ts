@@ -32,23 +32,23 @@ export const route: Writable<Route> = writable(read())
 const selectedPages = new Map<string, string>()
 const selectionKey = (pid: string, tab: Tab): string => 'ag2-selected-page:' + pid + ':' + tab
 
-function selectedPage(pid: string, tab: Tab): { pathname: string; aside: Aside | null } | null {
+function selectedPage(pid: string, tab: Tab): string | null {
   try {
     const key = selectionKey(pid, tab)
     const saved = selectedPages.get(key) ?? sessionStorage.getItem(key)
     if (!saved) return null
     const [pathname, hash = ''] = saved.split('#')
     const r = parse(pathname, hash)
-    if (r.pid === pid && r.tab === tab) return { pathname, aside: r.aside }
+    if (r.pid === pid && r.tab === tab) return pathname
   } catch {}
   return null
 }
 
-// Remember each profile's last Page and aside in every Tab; Modals stay global.
+// Remember content selections per profile; the right rail and Modals stay independent.
 route.subscribe((r) => {
-  if (!r.pid) return
+  if (!r.pid || r.tab === 'files') return
   const key = selectionKey(r.pid, r.tab)
-  const page = resolve(current(), { type: 'closeOverlay' })
+  const page = location.pathname
   selectedPages.set(key, page)
   try { sessionStorage.setItem(key, page) } catch {}
 })
@@ -81,7 +81,7 @@ export function go(path: string, pid: string = currentPid()): void {
   route.set(read())
 }
 
-// Files changes only the Drawer; other Tabs restore their last Page and aside.
+// Files changes only the Drawer; other Tabs restore content and keep the right rail.
 export function switchTab(tab: Tab, pid: string = currentPid()): void {
   const r = read()
   if (r.pid === pid && r.tab === tab) return
@@ -89,11 +89,7 @@ export function switchTab(tab: Tab, pid: string = currentPid()): void {
   const selected = selectedPage(pid, tab)
   let full: string
   if (selected) {
-    const sameFile = r.aside?.kind === 'file' && selected.aside?.kind === 'file'
-      && r.aside.path === selected.aside.path
-    if (!sameFile && !confirmDiscard()) return
-    full = resolve({ pathname: selected.pathname, hash: location.hash },
-      { type: 'replaceAside', aside: selected.aside })
+    full = selected + location.hash
   } else {
     full = resolve(current(), { type: 'goTab', tab, pid })
   }

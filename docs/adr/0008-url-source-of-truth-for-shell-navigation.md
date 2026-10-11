@@ -11,8 +11,9 @@ location — profile, Tab, and the optional open Thread — as
 `/app/{pid}/{tab}[/{c|t}/{id}]`. The Tab is an **outer** segment that is preserved
 when a Thread opens or closes. Explicit navigation, including Reveal in Files, can
 preserve the Thread suffix when changing Tabs. The Drawer's Tab buttons restore
-the destination Tab's last Page and aside, except **Files**, which changes only
-the Drawer and preserves the current Thread or Screen and aside. Selections are
+the destination Tab's last central content, except **Files**, which changes only
+the Drawer and preserves the current Thread or Screen. The right-rail preview
+stays open independently across every Tab switch. Selections are
 scoped to the Profile in browser session storage; the URL remains authoritative
 for the visible Page.
 The transient **Modal** layer lives in the URL **hash** as a single overlay
@@ -40,9 +41,10 @@ single source of truth.
 
 - Back closes an open Modal and walks Tab/Thread history; refresh and shared links
   restore the full shell state.
-- Chats, Tasks and Screens remember their selected Page and file preview.
+- Chats, Tasks and Screens remember their selected central content.
   Returning restores that selection; explicitly closing an item remembers the empty Page.
-  Files keeps the current central content and preview, including on repeated visits.
+  Files keeps the current central content, including on repeated visits.
+  Switching any Drawer Tab preserves the right-rail file preview and dirty editor.
 - Modal state is invisible to the gateway (it is in the hash) — intended; the server
   routes the path, the client owns the overlay.
 - The Modal slot is single and mutually exclusive, matching existing behaviour

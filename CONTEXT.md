@@ -279,9 +279,10 @@ _Avoid_: screen, route, view
 **Tab**:
 The Drawer's top-level switch between **Chats**, **Tasks**, **Files**, and **Screens** — which
 list or tree fills the left rail. Exactly one Tab is active. **Files** changes only
-the left rail, preserving the open Thread or Screen and aside. Other Tabs restore
-their last **Page** and aside, independently for each Profile. These selections
-survive a refresh within the browser tab; the URL addresses the visible Page.
+the left rail, preserving the open Thread or Screen. Other Tabs restore their last
+central content, independently for each Profile. The right-rail file preview stays
+open across all Tab switches. Selections survive a refresh within the browser tab;
+the URL addresses the visible Page.
 _Avoid_: section (Settings' nav), page (a Tab is only half of a Page), view
 
 **Thread**:
