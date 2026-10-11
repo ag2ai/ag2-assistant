@@ -99,8 +99,11 @@
         </div>
         <div class="run-entry">
           <div class="run-heading">
-            <p>{run.detail}{#if count > 1}<span class="run-count"> ×{count}</span>{/if}</p>
-            {#if run.card?.kind === 'file'}<ToolFile file={run.card} onopen={close} />{/if}
+            {#if run.card?.kind === 'file'}
+              <ToolFile file={run.card} {count} onopen={close} />
+            {:else}
+              <p>{run.detail}{#if count > 1}<span class="run-count"> ×{count}</span>{/if}</p>
+            {/if}
           </div>
         </div>
       </li>

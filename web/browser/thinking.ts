@@ -167,10 +167,10 @@ const fileTrigger = [...target.querySelectorAll<HTMLButtonElement>('.tool-trigge
 fileTrigger.dispatchEvent(new PointerEvent('pointerenter', { pointerType: 'mouse' }))
 await check('hover exposes file actions', true)
 const filePopup = target.querySelector<HTMLDivElement>('.tool-runs:popover-open')!
-results.push({ name: 'file artifact actions', failures: filePopup?.querySelector('p')?.textContent === 'report.csv' && filePopup.querySelector('[aria-label="Open file report.csv"]') && filePopup.querySelector('[aria-label="Download file report.csv"]') ? [] : ['File actions disappeared'] })
-const fileButtons = [...filePopup.querySelectorAll<HTMLButtonElement>('.file-actions button')]
-const fileNameBounds = filePopup.querySelector('p')!.getBoundingClientRect()
-results.push({ name: 'file actions are icons beside the filename', failures: fileButtons.length === 2 && fileButtons.every(button => !button.textContent?.trim() && button.querySelector('svg') && button.title && button.getBoundingClientRect().left >= fileNameBounds.right && button.parentElement?.parentElement === filePopup.querySelector('.run-heading')) ? [] : ['File controls are not inline accessible icons'] })
+results.push({ name: 'filename opens the file', failures: filePopup?.querySelector('button.file-name')?.textContent === 'report.csv' && filePopup.querySelector('[aria-label="Open file report.csv"]') && filePopup.querySelector('[aria-label="Download file report.csv"]') ? [] : ['Filename or download action disappeared'] })
+const fileButtons = [...filePopup.querySelectorAll<HTMLButtonElement>('.file-entry .iconbtn')]
+const fileNameBounds = filePopup.querySelector('.file-name')!.getBoundingClientRect()
+results.push({ name: 'only download stays an icon beside the filename', failures: fileButtons.length === 1 && fileButtons[0].getAttribute('aria-label') === 'Download file report.csv' && !fileButtons[0].textContent?.trim() && fileButtons[0].querySelector('svg') && fileButtons[0].title && fileButtons[0].getBoundingClientRect().left >= fileNameBounds.right ? [] : ['Separate preview icon remains or download moved'] })
 const fileTime = filePopup.querySelector('time')!
 results.push({ name: 'call time replaces numbering in the left column', failures: !filePopup.querySelector('.run-index') && fileTime.getBoundingClientRect().right < fileNameBounds.left && !filePopup.querySelector('.run-entry time') ? [] : ['Time remains below the file or numbering remains'] })
 results.push({ name: 'file artifacts have one timeline label', failures: target.querySelector('.toolcards') || target.querySelectorAll('.tools .chip').length !== 1 ? ['Duplicate file badge remains'] : [] })

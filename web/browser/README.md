@@ -24,8 +24,8 @@ Pass `charts` after the Vite URL for native chart fixtures covering themes, sizi
 missing values, event markers, legend controls and accessible data tables.
 Pass `thinking <profile-id>` to mount the real Thread and check activity through tool
 rounds, aggregated run labels, counted repeated details and hover/focus/tap lists, replay, final replies, cancellation
-and compaction. Long run lists must scroll without escaping the viewport. Written files expose inline
-Open/Download icons within their run list, without an extra timeline badge.
+and compaction. Long run lists must scroll without escaping the viewport. Written files expose
+clickable filenames and an inline Download icon within their run list, without an extra timeline badge.
 Tools with no meaningful parameters retain their counted chip without an empty popover. It reads settings
 from the running gateway through Vite's API proxy; it sends no chat messages.
 These fixtures are development files. Production ships the app entry and a passive
