@@ -37,7 +37,7 @@ from assistant.settings import profile_settings
 from assistant.tools import docker_sandbox
 from assistant.tools.approval import require_command_approval
 from assistant.tools.ask import ask_user
-from assistant.tools.files import list_folder, read_file, write_file
+from assistant.tools.files import list_folder, read_file, update_file, write_file
 from assistant.tools.google import build_google_tools
 from assistant.tools.image_gen import build_image_tool
 from assistant.tools.mcp import build_mcp_tools
@@ -261,16 +261,16 @@ def build_agent_tools(
         tools.append(build_image_tool(config, workspace_dir))
 
     if want("files"):
-        # Host FS, Grant-gated (CONTEXT.md "Folders"): read_file/list_folder need a
-        # read Grant, write_file a read+write Grant; the profile's own workspace is
-        # implicit. write_file also serves the workspace (relative paths), so the
-        # toolkit's write_file is dropped alongside its read_file (name clashes).
-        tools += [read_file, list_folder, write_file]
+        # Host reads and mutations check folder grants; the workspace is implicit.
+        # Keep the toolkit's remaining workspace-only tools.
+        tools += [read_file, list_folder, write_file, update_file]
         if workspace_dir:
             wd = Path(workspace_dir).expanduser()
             wd.mkdir(parents=True, exist_ok=True)
             fk = FilesystemToolkit(base_path=wd)
-            tools += [t for t in fk.tools if t.name not in ("read_file", "write_file")]
+            tools += [
+                t for t in fk.tools if t.name not in ("read_file", "write_file", "update_file")
+            ]
 
     # Google tools (only when signed in AND the [google] extra is installed),
     # per requested group. Registering them without the libs would hand the model
@@ -316,6 +316,7 @@ __all__ = [
     "read_file",
     "list_folder",
     "write_file",
+    "update_file",
     "web_fetch",
     "web_fetch_tool",
 ]

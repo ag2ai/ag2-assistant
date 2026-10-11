@@ -46,7 +46,8 @@ def test_build_agent_tools_has_core_capabilities():
     assert "ask_user" in names  # chat-only: option-carrying HITL questions
     assert "code_with_cli_agent" in names  # ACP: drive host CLI coding agents
     assert "list_coding_agents" in names
-    assert len(tools) == 10
+    assert "update_file" in names
+    assert len(tools) == 11
 
 
 @pytest.mark.parametrize("ctype", ["gemini", "anthropic", "openai_responses", "openai", ""])
@@ -135,7 +136,7 @@ def test_capability_scoping_limits_tools():
     assert "duckduckgo_search" not in code
 
     files = {t.name for t in build_agent_tools("gemini", capabilities=["files"])}
-    assert files == {"read_file", "list_folder", "write_file"}
+    assert files == {"read_file", "list_folder", "write_file", "update_file"}
 
     assert build_agent_tools("gemini", capabilities=[]) == []  # no caps → no tools
 
@@ -386,8 +387,8 @@ def test_no_workspace_dir_means_no_fs_tools():
     AG2 FS toolkit, since it has no workspace to be scoped to)."""
     tools = build_agent_tools("gemini", capabilities=["files"], workspace_dir=None)
     names = [t.name for t in tools if getattr(t, "name", None)]
-    assert {"read_file", "list_folder", "write_file"} <= set(names)
-    assert "update_file" not in names  # no workspace → no AG2 FS toolkit
+    assert {"read_file", "list_folder", "write_file", "update_file"} <= set(names)
+    assert "find_files" not in names  # no workspace → no AG2 FS toolkit
 
 
 def test_no_tool_tells_the_model_about_cards():

@@ -76,7 +76,7 @@ def test_an_empty_search_path_means_no_docker():
 def test_build_tools_falls_back_when_docker_is_not_on_the_search_path():
     with pytest.warns(UserWarning, match="Docker sandbox requested"):
         tools = tools_mod.build_agent_tools("gemini", sandbox="docker")
-    assert len(tools) == 10  # incl. chat-only ask_user + the two coding-agent tools
+    assert len(tools) == 11  # incl. chat-only ask_user + the two coding-agent tools
     local = [t for t in tools if t.name in ("run_shell_command", "run_code")]
     assert len(local) == 2
     # the local fallback keeps the approval gate, one middleware shared by both tools

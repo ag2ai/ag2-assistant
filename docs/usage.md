@@ -546,6 +546,39 @@ If `--sandbox docker` is requested but Docker isn't running, AG2 Assistant falls
 the local backend (with approval prompts) and warns. `read_file` always stays
 permission-gated regardless of backend, since it reads your **host** files.
 
+## Local files — reading, updating and writing
+
+The text tools follow Pi's line-based reads and block replacements, with smaller
+read caps and an additional warning before overwriting a file.
+
+`read_file(path)` returns complete lines, capped at **500 lines or 10 KiB
+(10,240 UTF-8 bytes)**, whichever comes first. `offset` is the first line to read,
+starting at `1`; `limit` requests a number of lines and cannot bypass either cap.
+For example, `read_file(path="notes.md", offset=501, limit=100)` reads up to 100
+lines starting at line 501. Relative paths resolve inside the assistant's workspace.
+
+The response footer reports the file's size, returned lines/bytes/characters,
+remaining lines, and the next call needed to continue. The assistant can follow
+that offset to read the information it needs. The footer never modifies the source.
+The tool counts the file in bounded blocks. A single line larger than 10 KiB
+produces a diagnostic directing the assistant to read a bounded portion with the
+shell. PDFs and images remain visual inputs and do not accept pagination arguments.
+
+`update_file(path, edits=[{"oldText": "old block", "newText": "new block"}])`
+matches all blocks against the original file. Every match must be unique, and
+matches must not overlap. A failed match, ambiguous match, overlap or no-op leaves
+the file untouched. Matching normalizes line endings and tolerates trailing
+whitespace, Unicode quotes, dashes, spaces and compatibility characters. Untouched
+lines retain their text; the file's BOM and original LF/CRLF style are preserved.
+Successful updates return a numbered diff, with a unified patch and first changed
+line in result metadata.
+
+`write_file(path, content)` creates parent folders and writes UTF-8 text. If the
+file exists, it returns a warning **without writing**. A deliberate second call
+with `overwrite=true` replaces the whole file; use `update_file` for block edits.
+Each read, update and write checks folder permission, including continuation calls
+and explicitly requested overwrites.
+
 ## Google (Gmail / Calendar / Drive)
 
 AG2 Assistant can read and search your Gmail, manage your Calendar events, and read your Drive.
