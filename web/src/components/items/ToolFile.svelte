@@ -1,18 +1,17 @@
 <script lang="ts">
   import { openAsideFile } from '../../router.ts'
   import { api } from '../../transport/api/index.ts'
+  import { resolveToolPath } from '../../lib/toolPaths.ts'
+  import { threadScope } from '../../lib/threadScope.ts'
   import Icon from '../Icon.svelte'
   import type { ToolCard } from '../../schemas/events.ts'
 
   let { file, count, onopen }: { file: Extract<ToolCard, { kind: 'file' }>; count: number; onopen: () => void } = $props()
   let gone = $state(false)
 
-  // Resolve workspace-relative files and task-relative paths against the live list.
   async function livePath() {
     try {
-      const { files } = await api.files()
-      const hit = files.find(f => f.path === file.path) || files.find(f => f.path.endsWith('/' + file.path))
-      return hit ? hit.path : null
+      return await resolveToolPath(file.path, api)
     } catch {
       return null
     }
@@ -25,13 +24,9 @@
   }
 
   async function downloadFile() {
-    let path: string | null = file.path
-    let response = await fetch(api.fileUrl(path, true)).catch(() => null)
-    if (!response || !response.ok) {
-      path = await livePath()
-      response = path ? await fetch(api.fileUrl(path, true)).catch(() => null) : null
-      if (!response || !response.ok) { gone = true; return }
-    }
+    const path = await livePath()
+    const response = path ? await fetch(api.fileUrl(path, true, $threadScope)).catch(() => null) : null
+    if (!response || !response.ok) { gone = true; return }
     const url = URL.createObjectURL(await response.blob())
     const link = document.createElement('a')
     link.href = url

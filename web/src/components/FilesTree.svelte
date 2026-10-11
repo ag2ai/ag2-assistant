@@ -275,7 +275,7 @@
   // module-scoped guard stops a lingering request re-firing on a plain tab (re)open.
   $effect(() => {
     const { path, kind, epoch } = $reveal
-    if (!path || epoch === handledRevealEpoch) return
+    if (path === null || epoch === handledRevealEpoch) return
     handledRevealEpoch = epoch
     revealInTree(path, kind)
   })

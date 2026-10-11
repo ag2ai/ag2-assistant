@@ -162,7 +162,7 @@ export function openThreadRow(row: MentionRow | null | undefined): void {
 // also opens the directory itself so its contents are visible. A folder has no preview
 // rail (it isn't a file), so a mentioned folder browses here instead (ADR 0012).
 export function revealFolder(path: string | null | undefined): void {
-  if (!path) return
+  if (path == null) return
   reveal.update((r) => ({ path, kind: 'directory', epoch: r.epoch + 1 }))
   go('/files')
 }

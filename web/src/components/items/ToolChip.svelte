@@ -1,6 +1,8 @@
 <script lang="ts">
   import Icon from '../Icon.svelte'
   import ToolFile from './ToolFile.svelte'
+  import ToolFolder from './ToolFolder.svelte'
+  import { chats } from '../../store.ts'
   import { fmtClock, fmtStamp } from '../../lib/time.ts'
   import { groupToolRuns } from '../../lib/toolRuns.ts'
   import type { ToolRun } from '../../schemas/events.ts'
@@ -101,6 +103,14 @@
           <div class="run-heading">
             {#if run.card?.kind === 'file'}
               <ToolFile file={run.card} {count} onopen={close} />
+            {:else if run.card?.kind === 'folder'}
+              <ToolFolder path={run.card.path} {count} onopen={close} />
+            {:else if run.card?.kind === 'chat'}
+              {@const chatId = run.card.chatId}
+              {@const chat = $chats.find(chat => chat.chat_id === chatId)}
+              <p>{chat?.title || chat?.preview || run.card.chatId}{#if count > 1}<span class="run-count"> ×{count}</span>{/if}
+                {#if chat?.title || chat?.preview}<span class="chat-id">{run.card.chatId}</span>{/if}
+              </p>
             {:else}
               <p>{run.detail}{#if count > 1}<span class="run-count"> ×{count}</span>{/if}</p>
             {/if}
@@ -129,5 +139,6 @@
   .run-heading { display: flex; align-items: center; gap: 8px; }
   p { min-width: 0; flex: 1; margin: 0; font-size: 12px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
   .run-count { color: var(--muted); white-space: nowrap; }
+  .chat-id { display: block; color: var(--muted); font-size: 11px; }
   time span { display: block; overflow-wrap: anywhere; }
 </style>

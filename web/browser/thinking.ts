@@ -1,6 +1,6 @@
 import { mount, tick } from 'svelte'
 import Thread from '../src/components/Thread.svelte'
-import { thread } from '../src/store.ts'
+import { chats, thread } from '../src/store.ts'
 import { setActiveProfileId } from '../src/lib/profile.ts'
 import { foldEvent, isBusy } from '../src/project.ts'
 import type { ThreadItem, WireEvent } from '../src/schemas/events.ts'
@@ -183,4 +183,29 @@ append({ ...tools, data: { calls: [{ name: 'remember' }, { name: 'remember' }] }
 await check('tools with no details keep their counter', true)
 const rememberChip = [...target.querySelectorAll('.tools .chip')].find(node => node.textContent?.trim() === 'remember ×2')
 results.push({ name: 'no empty or repeated-name popover', failures: rememberChip?.tagName === 'SPAN' && !target.querySelector('[aria-label="remember runs"]') ? [] : ['Tool without meaningful details still opens a popover'] })
+reset()
+emit(request)
+append({ ...tools, data: { calls: [{ name: 'read_file', arguments: { path: '~/Desktop/english/plan.md' } }] } })
+await check('read file has file actions', true)
+const readTrigger = [...target.querySelectorAll<HTMLButtonElement>('.tool-trigger')].find(node => node.textContent?.includes('read file'))!
+readTrigger.dispatchEvent(new PointerEvent('pointerenter', { pointerType: 'mouse' }))
+await check('read file hover', true)
+const readPopup = target.querySelector('.tool-runs:popover-open')!
+results.push({ name: 'read filenames open previews and retain download', failures: readPopup.querySelector('.file-name')?.textContent === '~/Desktop/english/plan.md' && readPopup.querySelector('[aria-label="Download file plan.md"]') ? [] : ['Read file has no preview or download'] })
+reset()
+emit(request)
+append({ ...tools, data: { calls: [{ name: 'list_folder', arguments: { path: '/home/user/english/reports' } }] } })
+await check('list folder has a directory target', true)
+target.querySelector<HTMLButtonElement>('.tool-trigger')!.dispatchEvent(new PointerEvent('pointerenter', { pointerType: 'mouse' }))
+await check('list folder hover', true)
+results.push({ name: 'folder path is a navigation action', failures: target.querySelector('.tool-runs:popover-open .folder-name')?.getAttribute('aria-label') === 'Open folder /home/user/english/reports' ? [] : ['Directory cannot be opened'] })
+chats.set([{ chat_id: 'web-history', title: 'English study plan', preview: 'Weekly goals', turns: 4, updated: '2026-10-11T12:00:00Z', starred: false }])
+reset()
+emit(request)
+append({ ...tools, data: { calls: [{ name: 'read_chat', arguments: { chat_id: 'web-history' } }, { name: 'read_chat', arguments: { chat_id: 'web-deleted' } }] } })
+await check('read chat has conversation details', true)
+target.querySelector<HTMLButtonElement>('.tool-trigger')!.dispatchEvent(new PointerEvent('pointerenter', { pointerType: 'mouse' }))
+await check('read chat hover', true)
+const chatPopup = target.querySelector('.tool-runs:popover-open')!
+results.push({ name: 'read chat shows title and identifier with unavailable-chat fallback', failures: chatPopup.textContent?.includes('English study plan') && chatPopup.querySelector('.chat-id')?.textContent === 'web-history' && chatPopup.textContent?.includes('web-deleted') ? [] : ['Conversation title, identifier or fallback missing'] })
 Object.assign(window, { layoutResults: results })

@@ -3,6 +3,8 @@
 // Metadata shown in the run list for a tool call.
 export type ToolCard =
   | { kind: 'file'; path: string; name: string }
+  | { kind: 'folder'; path: string }
+  | { kind: 'chat'; chatId: string }
   | { kind: 'search'; query: string }
   | { kind: 'skill'; name: string; script?: string; ran?: boolean }
   | { kind: 'image'; prompt: string; edit: boolean }
@@ -23,20 +25,22 @@ const parse = (args: unknown): ToolArgs => {
 
 const baseName = (p: string): string => (p || '').split('/').pop() || p
 
-// Tools whose calls produce a file the user can open/download. The reported path
-// is relative to the tool's sandbox root (workspace_dir for chat → matches the
-// Files API; a per-task folder for subagents → the card's view falls back to the
-// Files browser when the direct fetch 404s).
-const FILE_WRITE = ['write_file', 'append_file', 'edit_file', 'update_file']
+// Tools naming a file the user can preview or download.
+const FILE = ['read_file', 'write_file', 'append_file', 'edit_file', 'update_file']
 // Tools whose calls are a web/data search — surface what was searched.
 const SEARCH = ['duckduckgo_search', 'gmail_search', 'drive_search']
 
 const REGISTRY: Record<string, (a: ToolArgs) => ToolCard | null> = {}
-for (const name of FILE_WRITE)
+for (const name of FILE)
   REGISTRY[name] = (a) =>
     typeof a.path === 'string' && a.path ? { kind: 'file', path: a.path, name: baseName(a.path) } : null
 for (const name of SEARCH)
   REGISTRY[name] = (a) => (typeof a.query === 'string' && a.query ? { kind: 'search', query: a.query } : null)
+
+REGISTRY.list_folder = (a) =>
+  typeof a.path === 'string' && a.path ? { kind: 'folder', path: a.path } : null
+REGISTRY.read_chat = (a) =>
+  typeof a.chat_id === 'string' && a.chat_id ? { kind: 'chat', chatId: a.chat_id } : null
 
 // Skill provenance: the agent consulting a skill (load_skill) or running one of its
 // scripts (run_skill_script) — surface which skill, from the call's `name` arg.
@@ -67,7 +71,8 @@ export function toolDetail(name: string, args: unknown): string {
     const path = parse(values.args).path
     return [card.name, script, path].filter(value => typeof value === 'string' && value).join(' · ')
   }
-  if (card?.kind === 'file') return card.path
+  if (card?.kind === 'file' || card?.kind === 'folder') return card.path
+  if (card?.kind === 'chat') return card.chatId
   if (card?.kind === 'search') return card.query
   if (card?.kind === 'image') return card.prompt
   return [values.name, values.resource, values.path, values.command, values.query, values.url]
