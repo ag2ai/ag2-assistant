@@ -182,8 +182,8 @@ export function parse(pathname: string, hash: string | null | undefined): Route 
   if ((m = p.match(/^\/app\/([^/]+)\/screens\/?$/))) {
     return { name: 'screens', tab: 'screens', kind: null, id: null, pid: dec(m[1]), ...o }
   }
-  if ((m = p.match(/^\/app\/([^/]+)\/screens\/s\/(.+?)\/?$/))) {
-    return { name: 'screen', tab: 'screens', kind: null, id: dec(m[2]), pid: dec(m[1]), ...o }
+  if ((m = p.match(/^\/app\/([^/]+)\/(screens|files)\/s\/(.+?)\/?$/))) {
+    return { name: 'screen', tab: m[2] as Tab, kind: null, id: dec(m[3]), pid: dec(m[1]), ...o }
   }
   if ((m = p.match(/^\/app\/([^/]+)\/(chats|tasks|files)(?:\/(c|t|r)\/(.+?))?\/?$/))) {
     // The regex alternation IS the validation — these groups can only be those words.
@@ -217,6 +217,9 @@ export function scopeToken(r: Pick<Route, 'kind' | 'id'> | null | undefined): st
 //     the CURRENT Tab, so every existing go('/c/'…)/go('/t/'…)/go('/r/'…) call
 //     site keeps working.
 function normalizePath(path: string, r: Route): string {
+  if (path === '/files' && r.name === 'screen' && r.id) {
+    return '/files/s/' + encodeURIComponent(r.id)
+  }
   if (path === '/chats' || path === '/tasks' || path === '/files') {
     return path + (r.kind && r.id ? '/' + r.kind + '/' + r.id : '')
   }

@@ -278,17 +278,19 @@ _Avoid_: screen, route, view
 
 **Tab**:
 The Drawer's top-level switch between **Chats**, **Tasks**, **Files**, and **Screens** — which
-list or tree fills the left rail. Exactly one Tab is active. A Tab is orthogonal to
-the open **Thread**; the two together compose the current **Page**. Switching Tabs
-changes only the rail, never the main pane.
+list or tree fills the left rail. Exactly one Tab is active. **Files** changes only
+the left rail, preserving the open Thread or Screen and aside. Other Tabs restore
+their last **Page** and aside, independently for each Profile. These selections
+survive a refresh within the browser tab; the URL addresses the visible Page.
 _Avoid_: section (Settings' nav), page (a Tab is only half of a Page), view
 
 **Thread**:
 A **Chat** or a **Task** as opened in the main pane — the union of the two openable,
-conversation-like items. At most one Thread is open. Orthogonal to the active Tab
-(opening the Files Tab does not close the open Thread); together with the Tab it
-composes the current **Page**. Not a synonym for Chat: a Chat is the persisted
-entity, whereas a Thread is whichever Chat *or* Task is currently on screen.
+conversation-like items. At most one Thread is open. The URL addresses the Thread
+independently of the Tab; opening **Files** or using **Reveal** keeps the current
+Thread open. Together they compose the current **Page**. Not a synonym for
+Chat: a Chat is the persisted entity, whereas a Thread is whichever Chat *or* Task
+is currently on screen.
 _Avoid_: conversation, tab
 
 **Modal**:

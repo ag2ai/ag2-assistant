@@ -12,6 +12,7 @@
   import BasicA2UIComponent from './items/BasicA2UIComponent.svelte'
   import CardSourceControls from './items/CardSourceControls.svelte'
 
+  const screenPath = $derived($route.id)
   let screen: Screen | null = $state(null)
   let error = $state('')
   let states: Record<string, CardSourceEvent> = $state({})
@@ -23,7 +24,7 @@
     screen = { ...screen }
   }
   $effect(() => {
-    const path = $route.id
+    const path = screenPath
     const epoch = $profileEpoch
     let stale = false
     screen = null; error = ''; states = {}

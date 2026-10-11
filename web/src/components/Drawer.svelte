@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { get } from 'svelte/store'
   import { chats, tasks, listsLoaded, profiles, profileEpoch, pendingTaskEdit } from '../store.ts'
-  import { route, go, goTab, newChatId, openOverlay } from '../router.ts'
+  import { route, go, goTab, switchTab, newChatId, openOverlay } from '../router.ts'
   import { api } from '../transport/api/index.ts'
   import { switchProfile } from '../controller.ts'
   import Icon from './Icon.svelte'
@@ -469,10 +469,10 @@
   {/if}
 
   <div class="segbar" role="tablist" aria-label="View">
-    <button class="seg" class:on={$route.tab === 'chats'} role="tab" aria-selected={$route.tab === 'chats'} onclick={() => go('/chats')}><Icon name="message" size={14} /> Chats</button>
-    <button class="seg" class:on={$route.tab === 'tasks'} role="tab" aria-selected={$route.tab === 'tasks'} onclick={() => go('/tasks')}><Icon name="list" size={14} /> Tasks</button>
-    <button class="seg" class:on={$route.tab === 'files'} role="tab" aria-selected={$route.tab === 'files'} onclick={() => go('/files')}><Icon name="folder" size={14} /> Files</button>
-    <button class="seg" class:on={$route.tab === 'screens'} role="tab" aria-selected={$route.tab === 'screens'} onclick={() => goTab('screens')}>Screens</button>
+    <button class="seg" class:on={$route.tab === 'chats'} role="tab" aria-selected={$route.tab === 'chats'} onclick={() => switchTab('chats')}><Icon name="message" size={14} /> Chats</button>
+    <button class="seg" class:on={$route.tab === 'tasks'} role="tab" aria-selected={$route.tab === 'tasks'} onclick={() => switchTab('tasks')}><Icon name="list" size={14} /> Tasks</button>
+    <button class="seg" class:on={$route.tab === 'files'} role="tab" aria-selected={$route.tab === 'files'} onclick={() => switchTab('files')}><Icon name="folder" size={14} /> Files</button>
+    <button class="seg" class:on={$route.tab === 'screens'} role="tab" aria-selected={$route.tab === 'screens'} onclick={() => switchTab('screens')}>Screens</button>
   </div>
 
   {#snippet chatRow(s: ChatRow)}

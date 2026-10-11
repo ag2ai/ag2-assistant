@@ -29,6 +29,30 @@ function current(): { pathname: string; hash: string } {
 
 export const route: Writable<Route> = writable(read())
 
+const selectedPages = new Map<string, string>()
+const selectionKey = (pid: string, tab: Tab): string => 'ag2-selected-page:' + pid + ':' + tab
+
+function selectedPage(pid: string, tab: Tab): { pathname: string; aside: Aside | null } | null {
+  try {
+    const key = selectionKey(pid, tab)
+    const saved = selectedPages.get(key) ?? sessionStorage.getItem(key)
+    if (!saved) return null
+    const [pathname, hash = ''] = saved.split('#')
+    const r = parse(pathname, hash)
+    if (r.pid === pid && r.tab === tab) return { pathname, aside: r.aside }
+  } catch {}
+  return null
+}
+
+// Remember each profile's last Page and aside in every Tab; Modals stay global.
+route.subscribe((r) => {
+  if (!r.pid) return
+  const key = selectionKey(r.pid, r.tab)
+  const page = resolve(current(), { type: 'closeOverlay' })
+  selectedPages.set(key, page)
+  try { sessionStorage.setItem(key, page) } catch {}
+})
+
 // Settings modal open/closed — DERIVED from the route (the open Modal lives in the
 // URL hash, `#settings=<section>`), so the URL is the single source of truth and
 // there's no store↔URL drift. Re-exported from store.ts for consumers. Lives here,
@@ -57,10 +81,27 @@ export function go(path: string, pid: string = currentPid()): void {
   route.set(read())
 }
 
-// Navigate to a bare Tab, CLOSING the open Thread — go('/tasks') would keep it
-// (that contract exists so Tab switches don't close your chat); deleting/leaving
-// a thread needs the opposite: land on the Tab's own empty page, not back on the
-// (now-gone) Thread. Preserves the hash, same as go().
+// Files changes only the Drawer; other Tabs restore their last Page and aside.
+export function switchTab(tab: Tab, pid: string = currentPid()): void {
+  const r = read()
+  if (r.pid === pid && r.tab === tab) return
+  if (tab === 'files' && r.pid === pid) { go('/files', pid); return }
+  const selected = selectedPage(pid, tab)
+  let full: string
+  if (selected) {
+    const sameFile = r.aside?.kind === 'file' && selected.aside?.kind === 'file'
+      && r.aside.path === selected.aside.path
+    if (!sameFile && !confirmDiscard()) return
+    full = resolve({ pathname: selected.pathname, hash: location.hash },
+      { type: 'replaceAside', aside: selected.aside })
+  } else {
+    full = resolve(current(), { type: 'goTab', tab, pid })
+  }
+  if (location.pathname + location.hash !== full) history.pushState({}, '', full)
+  route.set(read())
+}
+
+// Explicitly close the current item and remember the Tab's empty Page.
 export function goTab(tab: Tab, pid: string = currentPid()): void {
   const full = resolve(current(), { type: 'goTab', tab, pid })
   if (location.pathname + location.hash !== full) history.pushState({}, '', full)
