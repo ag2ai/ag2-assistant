@@ -3,6 +3,7 @@
   import ToolFile from './ToolFile.svelte'
   import ToolFolder from './ToolFolder.svelte'
   import { chats } from '../../store.ts'
+  import { go } from '../../router.ts'
   import { fmtClock, fmtStamp } from '../../lib/time.ts'
   import { groupToolRuns } from '../../lib/toolRuns.ts'
   import type { ToolRun } from '../../schemas/events.ts'
@@ -108,7 +109,8 @@
             {:else if run.card?.kind === 'chat'}
               {@const chatId = run.card.chatId}
               {@const chat = $chats.find(chat => chat.chat_id === chatId)}
-              <p>{chat?.title || chat?.preview || run.card.chatId}{#if count > 1}<span class="run-count"> ×{count}</span>{/if}
+              {@const title = chat?.title || chat?.preview || chatId}
+              <p><button type="button" class="chat-name" aria-label="Open chat {title}" onclick={() => { go('/c/' + encodeURIComponent(chatId)); close() }}>{title}</button>{#if count > 1}<span class="run-count"> ×{count}</span>{/if}
                 {#if chat?.title || chat?.preview}<span class="chat-id">{run.card.chatId}</span>{/if}
               </p>
             {:else}
@@ -140,5 +142,7 @@
   p { min-width: 0; flex: 1; margin: 0; font-size: 12px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
   .run-count { color: var(--muted); white-space: nowrap; }
   .chat-id { display: block; color: var(--muted); font-size: 11px; }
+  .chat-name { max-width: 100%; border: none; background: none; padding: 0; color: var(--accent); cursor: pointer; font: inherit; text-align: left; text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; }
+  .chat-name:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: 2px; }
   time span { display: block; overflow-wrap: anywhere; }
 </style>
