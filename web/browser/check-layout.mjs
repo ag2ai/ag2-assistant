@@ -25,6 +25,7 @@ const send = (method, params = {}) => new Promise((resolve, reject) => {
 })
 try {
   await Promise.all([send('Runtime.enable'), send('Page.enable'), send('Network.enable')])
+  await send('Emulation.setFocusEmulationEnabled', { enabled: true })
   await send('Network.setCacheDisabled', { cacheDisabled: true })
   await send('Page.navigate', { url: `${vite}/browser/layout.html` })
   let results

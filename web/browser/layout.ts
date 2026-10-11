@@ -2,6 +2,7 @@ import { mount } from 'svelte'
 import BasicA2UIComponent from '../src/components/items/BasicA2UIComponent.svelte'
 import A2UISurface from '../src/components/items/A2UISurface.svelte'
 import A2UIComposing from '../src/components/items/A2UIComposing.svelte'
+import SelectFixture from './SelectFixture.svelte'
 import { thread } from '../src/store.ts'
 import type { ThreadItem } from '../src/schemas/events.ts'
 import type { A2UIComponent } from '../src/lib/a2ui.ts'
@@ -266,4 +267,37 @@ for (const width of [280, 620]) {
     draftMenus.push({ name: `definition-menu/${width}/${state}`, failures, scrollWidth: target.scrollWidth, clientWidth: target.clientWidth })
   }
 }
-Object.assign(window, { layoutResults: [...results, ...sizing, ...calendars, ...metrics, ...surfaces, ...draftMenus] })
+const selects: Result[] = []
+for (const width of [160, 340]) {
+  for (const disabled of [false, true]) {
+    const target = document.createElement('section')
+    target.className = 'fixture'; target.style.width = `${width}px`; fixtures.append(target)
+    mount(SelectFixture, { target, props: { disabled } })
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+    const failures: string[] = []
+    const select = target.querySelector<HTMLSelectElement>('select')!
+    const form = target.querySelector<HTMLFormElement>('form')!
+    const style = getComputedStyle(select)
+    if (target.querySelector<HTMLSelectElement>('[data-test="default"]')?.value !== 'first') failures.push('Unbound Select lost its native default selection')
+    if (style.appearance !== 'none' || style.backgroundImage === 'none' || style.backgroundPosition !== 'calc(100% - 10px) 50%' || style.paddingRight !== '32px') failures.push('Shared Select lost its chevron spacing')
+    if (target.scrollWidth > target.clientWidth + 1) failures.push('Select escapes its container')
+    if (select.labels?.[0]?.textContent?.trim().startsWith('Directory') !== true || select.dataset.test !== 'directory' || !select.required || select.disabled !== disabled) failures.push('Native select attributes or label were lost')
+    if (disabled) {
+      select.focus()
+      if (document.activeElement === select || new FormData(form).has('directory')) failures.push('Disabled Select accepts focus or submits a value')
+    } else {
+      if (form.checkValidity()) failures.push('Required Select accepts its empty option')
+      select.value = 'drafts'; select.dispatchEvent(new Event('change', { bubbles: true }))
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      if (target.querySelector('[data-selection]')?.textContent !== 'drafts' || target.querySelector('[data-change]')?.textContent !== 'drafts' || new FormData(form).get('directory') !== 'drafts' || !form.checkValidity()) failures.push('Selection binding, change event or form value was lost')
+      target.querySelector<HTMLButtonElement>('button')!.click()
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      if (select.value !== '') failures.push('Select ignores external bound value changes')
+      select.focus()
+      if (document.activeElement !== select || getComputedStyle(select).boxShadow === 'none') failures.push('Select has no visible keyboard focus')
+      select.blur()
+    }
+    selects.push({ name: `select/${width}/${disabled}`, failures, scrollWidth: target.scrollWidth, clientWidth: target.clientWidth })
+  }
+}
+Object.assign(window, { layoutResults: [...results, ...sizing, ...calendars, ...metrics, ...surfaces, ...draftMenus, ...selects] })

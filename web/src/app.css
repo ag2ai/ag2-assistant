@@ -28,7 +28,6 @@
 .chpick,
 .settings .keyrow select,
 .settings .llmfield select,
-.card-save-menu select,
 .pfield select {
   appearance: none; -webkit-appearance: none;
   background-image: var(--select-chevron);

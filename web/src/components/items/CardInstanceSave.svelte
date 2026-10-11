@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte'
+  import Select from '../Select.svelte'
   import CardSaveMenu from './CardSaveMenu.svelte'
   import { api } from '../../transport/api/index.ts'
   import { thread, profileEpoch, refreshFiles } from '../../store.ts'
@@ -83,10 +84,10 @@
   <form onsubmit={(event) => { event.preventDefault(); save() }}>
     <h2>Save instance</h2>
     <label>Directory
-      <select value={directory} onchange={changeDirectory} disabled={busy || loading}>
+      <Select value={directory} onchange={changeDirectory} disabled={busy || loading}>
         <option value="">Files</option>
         {#each directories as dir}<option value={dir}>{dir}</option>{/each}
-      </select>
+      </Select>
     </label>
     <label>Filename
       <input bind:value={filename} oninput={() => { pending = null; error = '' }} disabled={busy || loading} required />
