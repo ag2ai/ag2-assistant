@@ -6,7 +6,9 @@ Rows, Cards and Lists. Wide tables must scroll to their last column without over
 any ancestor. Short tables must fit without scrolling and share a Row when space allows.
 Sizing fixtures check equal Grid tracks and content/fill modes. Calendar fixtures cover
 compact monthly and scrollable annual ranges, three square sizes, English/Russian labels,
-accessible tooltips and distinct unknown/analysis/activity states.
+accessible tooltips and distinct unknown/analysis/activity states. Surface fixtures check
+ordinary, feature and unframed cards without generic chrome, editable/read-only bindings,
+save controls, and the composing placeholder on narrow and wide chat layouts.
 
 Start Vite with `npm --prefix web run dev -- --host 127.0.0.1 --port 5186`, then launch
 a **dedicated** Chrome with `--remote-debugging-port=9360` and a temporary

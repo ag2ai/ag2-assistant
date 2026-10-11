@@ -31,8 +31,6 @@
   const rootKind = $derived(str(item.component.component).toLowerCase())
   // A surface with no layout has nothing to draw — a record that carried data alone.
   const hasLayout = $derived(!!rootKind)
-  // A feature Card draws its own frame and heading; the generic chrome is skipped.
-  const isFeature = $derived(rootKind === 'card' && str(item.component.variant) === 'feature')
   const title = $derived(item.title || SURFACE_TITLE)
   const isComposingUpdate = $derived(!readOnly && $thread.items.some(
     (entry) => entry.kind === 'agent' && entry.streaming && a2uiComposingSurfaceId(entry.text) === item.surfaceId
@@ -117,21 +115,10 @@
 
 {#if isComposingUpdate}
   <A2UIComposing />
-{:else if isFeature}
-  <BasicA2UIComponent {sourceIds} {sourceControls} component={item.component} {components} data={inputData} passive={readOnly} onDataChange={setInputValue} onAction={submitAction} />
 {:else if hasLayout}
-<div class="a2ui">
-  <div class="a2ui-head">
-    <span class="a2ui-mark"><Icon name="sparkles" size={15} /></span>
-    <span class="a2ui-headtext">
-      <span class="a2ui-eyebrow">Overview</span>
-      <span class="a2ui-title">{title}</span>
-    </span>
-    <span class="a2ui-catalog" title={item.catalogId}>AG2 catalog</span>
+  <div class="a2ui-surface" role="group" aria-label={title}>
+    <BasicA2UIComponent {sourceIds} {sourceControls} component={item.component} {components} data={inputData} passive={readOnly} onDataChange={setInputValue} onAction={submitAction} />
   </div>
-
-  <BasicA2UIComponent {sourceIds} {sourceControls} component={item.component} {components} data={inputData} passive={readOnly} onDataChange={setInputValue} onAction={submitAction} />
-</div>
 {/if}
 {#if !readOnly && !isComposingUpdate && hasLayout}
   <CardInstanceSave {item} localData={() => inputData} />

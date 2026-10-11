@@ -1,5 +1,8 @@
 import { mount } from 'svelte'
 import BasicA2UIComponent from '../src/components/items/BasicA2UIComponent.svelte'
+import A2UISurface from '../src/components/items/A2UISurface.svelte'
+import A2UIComposing from '../src/components/items/A2UIComposing.svelte'
+import type { ThreadItem } from '../src/schemas/events.ts'
 import type { A2UIComponent } from '../src/lib/a2ui.ts'
 import '../src/design/styles.css'
 import '../src/app.css'
@@ -158,4 +161,53 @@ for (const [value, expected] of [[17, '17'], [0, '0'], [1234, '1,234'], [17.5, '
   if (target.querySelector('.a2ui-metric-delta')?.textContent !== '▲+2') failures.push('Metric change has fractional padding')
   metrics.push({ name: `metric/${value}`, failures, scrollWidth: target.scrollWidth, clientWidth: target.clientWidth })
 }
-Object.assign(window, { layoutResults: [...results, ...sizing, ...calendars, ...metrics] })
+const surfaces: Result[] = []
+for (const frameWidth of [280, 620]) {
+  for (const variant of ['card', 'feature', 'column']) {
+    for (const passive of [false, true]) {
+      const target = document.createElement('section')
+      target.className = 'fixture'; target.style.width = `${frameWidth}px`; fixtures.append(target)
+      const nodes: A2UIComponent[] = [
+        { id: 'root', component: variant === 'column' ? 'Column' : 'Card', variant: variant === 'feature' ? 'feature' : undefined, child: 'body', children: ['title', 'input', 'value'] },
+        { id: 'body', component: 'Column', children: ['title', 'input', 'value'] },
+        { id: 'title', component: 'Text', text: 'English activity', variant: 'h4' },
+        { id: 'input', component: 'TextField', label: 'Note', value: { path: '/note' } },
+        { id: 'value', component: 'Text', text: { path: '/note' } },
+      ]
+      const item: Extract<ThreadItem, { kind: 'a2ui' }> = {
+        id: 1, kind: 'a2ui', surfaceId: `native-${frameWidth}-${variant}-${passive}`,
+        title: 'English activity', catalogId: 'test-catalog', component: nodes[0], components: nodes, data: { note: 'Initial note' },
+      }
+      mount(A2UISurface, { target, props: { item, passive } })
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      const failures: string[] = []
+      const wrapper = target.querySelector<HTMLElement>('.a2ui-surface')!
+      const style = getComputedStyle(wrapper)
+      if (style.borderTopWidth !== '0px' || style.backgroundColor !== 'rgba(0, 0, 0, 0)' || style.paddingLeft !== '0px' || style.boxShadow !== 'none') failures.push('Surface has decorative chrome')
+      if (target.textContent?.includes('Overview') || target.textContent?.includes('AG2 catalog')) failures.push('Generic header is visible')
+      if (target.querySelectorAll('.a2ui-basic-card').length !== (variant === 'column' ? 0 : 1)) failures.push('Authored frame count changed')
+      if (target.querySelectorAll('.a2ui-t-h4').length !== 1 || wrapper.getAttribute('aria-label') !== item.title) failures.push('Card title was duplicated or lost')
+      if (!!target.querySelector('.instance-save button') === passive) failures.push('Wrong Save instance visibility')
+      const input = target.querySelector<HTMLInputElement>('input')!
+      if (input.disabled !== passive) failures.push('Wrong input disabled state')
+      if (!passive) {
+        input.value = 'Updated note'; input.dispatchEvent(new Event('input', { bubbles: true }))
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+        if (!Array.from(target.querySelectorAll('.a2ui-text')).some(el => el.textContent === 'Updated note')) failures.push('Input data binding stopped updating')
+      }
+      if (wrapper.scrollWidth > wrapper.clientWidth + 1 || target.scrollWidth > target.clientWidth + 1) failures.push('Surface overflows')
+      surfaces.push({ name: `surface/${frameWidth}/${variant}/${passive}`, failures, scrollWidth: target.scrollWidth, clientWidth: target.clientWidth })
+    }
+  }
+}
+const composingTarget = document.createElement('section')
+composingTarget.className = 'fixture'; composingTarget.style.width = '280px'; fixtures.append(composingTarget)
+mount(A2UIComposing, { target: composingTarget })
+await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+const composing = composingTarget.querySelector<HTMLElement>('[role="status"]')!
+const composingStyle = getComputedStyle(composing)
+const composingFailures: string[] = []
+if (composingStyle.borderTopWidth !== '0px' || composingStyle.backgroundColor !== 'rgba(0, 0, 0, 0)' || composing.textContent?.includes('Overview')) composingFailures.push('Composing placeholder has generic chrome')
+if (composingTarget.scrollWidth > composingTarget.clientWidth + 1) composingFailures.push('Composing placeholder overflows')
+surfaces.push({ name: 'surface/composing', failures: composingFailures, scrollWidth: composingTarget.scrollWidth, clientWidth: composingTarget.clientWidth })
+Object.assign(window, { layoutResults: [...results, ...sizing, ...calendars, ...metrics, ...surfaces] })

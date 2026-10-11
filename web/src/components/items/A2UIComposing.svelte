@@ -5,15 +5,12 @@
   import Icon from '../Icon.svelte'
 </script>
 
-<div class="a2ui a2ui-composing" role="status" aria-label="Composing a view">
-  <div class="a2ui-head">
-    <span class="a2ui-mark"><Icon name="sparkles" size={15} /></span>
-    <span class="a2ui-headtext">
-      <span class="a2ui-eyebrow">Overview</span>
-      <span class="a2ui-title">Composing a view…</span>
-    </span>
+<div class="a2ui-surface a2ui-composing" role="status" aria-label="Composing a view">
+  <div class="a2ui-composing-label">
+    <Icon name="sparkles" size={15} />
+    <span>Composing a view…</span>
   </div>
-  <div class="a2ui-skeleton">
+  <div class="a2ui-skeleton" aria-hidden="true">
     <span style="width: 62%"></span>
     <span style="width: 100%"></span>
     <span style="width: 88%"></span>
