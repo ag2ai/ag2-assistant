@@ -1,19 +1,27 @@
-# Issue tracker: Local Markdown
+# Issue tracker: GitHub
 
-Issues and specs (you may know a spec as a PRD) for this repo live as markdown files in `.scratch/` (local-only, git ignored).
+GitHub Issues in `ag2ai/ag2-assistant` are the source of truth for tasks and specs
+(you may know a spec as a PRD). Publish new issues, specifications, triage state
+and discussion on GitHub.
 
-## Conventions
+## Local work buffers
 
-- One feature per directory: `.scratch/<feature-slug>/`
-- The spec is `.scratch/<feature-slug>/spec.md`
-- Implementation issues are one file per ticket at `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01` — never a single combined tickets file
-- Triage state is recorded as a `Status:` line near the top of each issue file (see `triage-labels.md` for the role strings)
-- Comments and conversation history append to the bottom of the file under a `## Comments` heading
+- `.scratch/` is local-only and git ignored. Use it only for tasks currently being
+  worked on, never as a backlog or a permanent issue archive.
+- Keep one feature per directory: `.scratch/<feature-slug>/`.
+- Temporary specs may use `spec.md`; temporary ticket files may use
+  `issues/<NN>-<slug>.md`, numbered from `01`, with a link to their GitHub issue.
+- Local notes and status are working buffers; GitHub holds the authoritative
+  issue description, labels and discussion (see `triage-labels.md`).
+- After the work is merged and the GitHub issue is closed, delete its local
+  copies and completed work buffers.
 
 ## When a skill says "publish to the issue tracker"
 
-Create a new file under `.scratch/<feature-slug>/` (creating the directory if needed).
+Create or update the issue on GitHub. A local draft alone does not publish an issue.
 
 ## When a skill says "fetch the relevant ticket"
 
-Read the file at the referenced path. The user will normally pass the path or the issue number directly.
+Read the current issue and its relevant comments from GitHub using its number or
+URL. A local buffer may help navigate active work, but does not replace fetching
+the authoritative ticket.
