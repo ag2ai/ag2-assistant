@@ -6,15 +6,20 @@ import json
 import pytest
 from ag2 import tool
 from ag2.compact import CompactionSummary
+from ag2.config.openai.events import OpenAIReasoningEvent
 from ag2.context import ConversationContext
 from ag2.events import (
     CompactionCompleted,
     CompactionFailed,
     CompactionStarted,
+    DataInput,
+    ImageInput,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     ToolCallEvent,
+    ToolCallsEvent,
+    ToolResult,
     ToolResultEvent,
     ToolResultsEvent,
     UsageEvent,
@@ -23,7 +28,9 @@ from ag2.knowledge import MemoryKnowledgeStore
 from ag2.middleware import Middleware
 from ag2.stream import MemoryStream
 from ag2.tools.skills import LocalRuntime, SkillPlugin
+from openai.types.responses import ResponseReasoningItem
 
+from assistant.agent import create_agent
 from assistant.compaction import (
     CHECKPOINT_SCHEMA,
     CompactionLimits,
@@ -35,6 +42,7 @@ from assistant.compaction import (
     load_checkpoint,
     request_tokens,
 )
+from assistant.config import Config
 from assistant.gateway.history import ChatEventLog
 from assistant.memory import build_compaction_config
 from assistant.middleware import LLMRetryMiddleware
@@ -195,6 +203,168 @@ async def test_excerpt_projection_is_reused_between_rounds_and_turns_without_not
         await store.read(checkpoint_root(stream.id) + f"sources/{event_ref(original)}.txt")
         == original.result.parts[0].content
     )
+
+
+async def test_mixed_tool_output_excerpts_keep_media_data_and_original_text():
+    image = ImageInput(data=b"preview", media_type="image/png")
+    bounds = DataInput({"width": 1280, "height": 720})
+    text = "Measured preview bounds " + "x" * 40_000 + " ending"
+
+    @tool
+    def preview() -> ToolResult:
+        return ToolResult(text, image, bounds, metadata={"preview": True})
+
+    knowledge = build_compaction_config(max_tokens=4_000)
+    config = CheckpointTestConfig(ToolCallEvent(name="preview"), "done")
+    stream = MemoryStream()
+    await compacting_agent(config, knowledge, tools=[preview]).ask("preview", stream=stream)
+    messages = config.requests[-1][0]
+    result = next(
+        result
+        for event in messages
+        if isinstance(event, ToolResultsEvent)
+        for result in event.results
+        if result.name == "preview"
+    )
+    assert image in result.result.parts
+    assert bounds in result.result.parts
+    assert result.result.metadata == {"preview": True}
+    assert len(result.result.parts[0].content) < len(text)
+    original = next(
+        event
+        for event in await stream.history.get_events()
+        if isinstance(event, ToolResultEvent) and event.name == "preview"
+    )
+    assert original.result.parts[0].content == text
+    assert (
+        await knowledge.store.read(
+            checkpoint_root(stream.id) + f"sources/{event_ref(original)}.txt"
+        )
+        == text
+    )
+
+
+async def test_checkpoint_uses_native_images_and_bounded_unique_tool_fragments():
+    image = ImageInput(data=b"preview image" * 40_000, media_type="image/png")
+    text = "Measured bounds " + "x" * 40_000 + " exact original ending"
+    call = ToolCallEvent(name="preview")
+    result = ToolResultEvent(parent_id=call.id, name="preview", result=ToolResult(text, image))
+    original = [
+        ModelRequest.ensure_request(["Create a Screen with verified bounds " + "x" * 20_000]),
+        ModelResponse(tool_calls=ToolCallsEvent(calls=[call])),
+        call,
+        result,
+        ToolResultsEvent(results=[result]),
+        ModelResponse(ModelMessage("Preview completed; layout still needs verification")),
+        ModelRequest.ensure_request(["Keep working notes " + "y" * 20_000]),
+        ModelResponse(ModelMessage("Notes retained")),
+    ]
+    stream = MemoryStream()
+    await stream.history.replace(original)
+    evidence = json.loads(checkpoint_json())
+    evidence["completed"] = [
+        {"description": "Preview produced; verification is pending", "refs": [event_ref(result)]}
+    ]
+    config = CheckpointTestConfig("done", checkpoint=json.dumps(evidence))
+    knowledge = build_compaction_config(max_tokens=6_000)
+    await compacting_agent(config, knowledge).ask(
+        "Continue without repeating saved work", stream=stream
+    )
+    summaries = [
+        messages[0]
+        for messages, _, options in config.requests
+        if options.get("response_schema") is CHECKPOINT_SCHEMA
+    ]
+    assert sum(part == image for request in summaries for part in request.parts) == 1
+    source_text = "\n".join(
+        part.content for request in summaries for part in request.parts if hasattr(part, "content")
+    )
+    assert "__bytes__" not in source_text
+    assert "exact original ending" not in source_text
+    assert source_text.count("Measured bounds") == 1
+    assert event_ref(result) in source_text
+    assert source_text.count('"name": "preview"') == 2
+    assert "read_compaction_source" in source_text
+    assert all(
+        request_tokens([request], [], response_schema=CHECKPOINT_SCHEMA) <= 6_000
+        for request in summaries
+    )
+    record = await load_checkpoint(knowledge.store, stream.id)
+    assert record.data.completed[0].refs == [event_ref(result)]
+    replay = await ChatEventLog(knowledge.store).replay(
+        stream.id, await stream.history.get_events()
+    )
+    assert result in replay
+    assert result.result.parts[0].content == text
+
+
+async def test_summary_keeps_latest_attachment_native_and_opaque_reasoning_archived():
+    image = ImageInput(data=b"latest screenshot" * 40_000, media_type="image/png")
+    opaque = "encrypted reasoning " * 20_000
+    reasoning = OpenAIReasoningEvent(
+        "The layout needs verification",
+        item=ResponseReasoningItem(
+            id="reasoning-1", type="reasoning", summary=[], encrypted_content=opaque
+        ),
+    )
+    original = [ModelRequest.ensure_request(["old " + "x" * 20_000]), reasoning]
+    stream = MemoryStream()
+    await stream.history.replace(original)
+    config = CheckpointTestConfig("done")
+    knowledge = build_compaction_config(max_tokens=6_000)
+    await compacting_agent(config, knowledge).ask(
+        "Continue from this screenshot", image, stream=stream
+    )
+    summaries = [
+        messages[0]
+        for messages, _, options in config.requests
+        if options.get("response_schema") is CHECKPOINT_SCHEMA
+    ]
+    assert summaries
+    assert all(image in request.parts for request in summaries)
+    text = "\n".join(
+        part.content for request in summaries for part in request.parts if hasattr(part, "content")
+    )
+    assert "__bytes__" not in text
+    assert "encrypted reasoning" not in text
+    assert "The layout needs verification" in text
+    assert all(
+        request_tokens([request], [], response_schema=CHECKPOINT_SCHEMA) <= 6_000
+        for request in summaries
+    )
+    assert reasoning in await ChatEventLog(knowledge.store).replay(
+        stream.id, await stream.history.get_events()
+    )
+    assert any(
+        isinstance(event, ModelRequest) and image in event.parts for event in config.requests[-1][0]
+    )
+
+
+@pytest.mark.parametrize("memory", [False, True])
+async def test_configured_summary_size_limit_keeps_source_on_overflow(paths, memory):
+    config = Config.for_paths(
+        paths,
+        memory={"compact_max_tokens": 6_000, "compact_summary_max_tokens": 128},
+    )
+    model = CheckpointTestConfig("unreachable", checkpoint=checkpoint_json(goal="x" * 600))
+    store = MemoryKnowledgeStore()
+    agent = create_agent(
+        config,
+        memory=memory,
+        skills=False,
+        capabilities=[],
+        compact=True,
+        knowledge_store=store,
+        compaction_store=store,
+        model_factory=lambda config, model_name=None: model,
+    )
+    original = ModelRequest.ensure_request(["old " + "x" * 40_000])
+    stream = MemoryStream()
+    await stream.history.replace([original])
+    with pytest.raises(ContextBudgetError, match="Checkpoint exceeds"):
+        await agent.ask("continue", stream=stream)
+    assert original in await stream.history.get_events()
+    assert await load_checkpoint(store, stream.id) is None
 
 
 async def test_compaction_timeout_is_explicit_and_not_retried_as_a_provider_timeout():

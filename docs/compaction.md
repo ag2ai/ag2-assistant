@@ -20,6 +20,8 @@ and replaces large text tool results with bounded excerpts. The
 read_compaction_source tool reads pages of the archived original, scoped to the
 current Chat. Images and other binary outputs remain intact. The latest user
 request remains intact.
+Mixed image/text results keep their media and structured data while their large
+text portions become excerpts.
 
 Archived outputs reuse their bounded projection before the next budget check,
 within a Turn and after a restart. The source archive is written once per result.
@@ -44,7 +46,8 @@ currently held runtime, respecting Enable/Disable and profile Suppression. A
 checkpoint cannot make an unavailable Skill available.
 
 The initial retention policy reserves half the remaining input budget for growth.
-The checkpoint is limited to one quarter of the remaining budget; the recent tail
+The checkpoint is limited to one quarter of the remaining budget and the configured
+summary limit (2,000 estimated tokens by default); the recent tail
 uses the other quarter, capped at 60 conversational events and snapped to AG2's
 replay boundaries. The latest request is retained even when its earlier tool rounds
 are summarized. If causal dependencies or protected content cannot fit, Assistant
@@ -52,7 +55,11 @@ reports an error before calling the provider rather than silently dropping event
 
 Summary input is processed in bounded fragments with a separate client from the
 current Turn's resolved model. It receives no tools and cannot recursively enter
-the budget wrapper. Schema, size, Skill identifiers, resource references and
+the budget wrapper. It reuses archived tool excerpts and includes each exact
+protocol event once, with references to its contained calls/results. Source media
+and current-request attachments use native AG2 inputs, counted in the same budget;
+their base64 and opaque encrypted provider reasoning are excluded from source text.
+Schema, size, Skill identifiers, resource references and
 evidence references are checked locally. Limits can be configured under memory
 in the profile's config.yaml:
 
@@ -61,6 +68,7 @@ memory:
   compact_max_tokens: 50000
   compact_max_calls: 8
   compact_timeout_s: 60
+  compact_summary_max_tokens: 2000
 ~~~
 
 The call limit and timeout apply to one compaction attempt. Malformed output,

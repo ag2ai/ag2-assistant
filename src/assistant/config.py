@@ -174,6 +174,7 @@ class MemoryConfig(BaseModel):
     compact_max_tokens: int = 50_000
     compact_max_calls: int = Field(default=8, gt=0)
     compact_timeout_s: float = Field(default=60, gt=0)
+    compact_summary_max_tokens: int = Field(default=2_000, gt=0)
 
 
 # The Config sections a profile's config.yaml may overlay. Settings keys in the same

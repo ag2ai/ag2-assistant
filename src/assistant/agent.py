@@ -717,6 +717,7 @@ def create_agent(
                 max_tokens=config.memory.compact_max_tokens,
                 max_calls=config.memory.compact_max_calls,
                 timeout_s=config.memory.compact_timeout_s,
+                summary_max_tokens=config.memory.compact_summary_max_tokens,
             ),
             compaction_store=compaction_store,
         )
@@ -730,6 +731,7 @@ def create_agent(
                 max_tokens=config.memory.compact_max_tokens,
                 max_calls=config.memory.compact_max_calls,
                 timeout_s=config.memory.compact_timeout_s,
+                summary_max_tokens=config.memory.compact_summary_max_tokens,
             ),
         )
 
