@@ -5,9 +5,9 @@ Mirrors web/src/schemas/chat.ts. Field lists come from that file, which was
 validated against real responses.
 """
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class TranscriptMessageOut(BaseModel):
@@ -69,3 +69,16 @@ class MessageResponse(BaseModel):
 
     reply: str
     chat_id: str
+
+
+class ChatEventOut(BaseModel):
+    type: str
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+class ChatEventsResponse(BaseModel):
+    """A chronological page of complete turns from the typed event stream."""
+
+    events: list[ChatEventOut]
+    before: str | None
+    start: str | None

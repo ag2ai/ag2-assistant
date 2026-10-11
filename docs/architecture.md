@@ -439,6 +439,14 @@ links); favicon/`*.svg`; catch-all routes unknown `/api/*` → 404, else → `/a
 `{type:"answer", id, answer}`, `{type:"feedback", target_id, target_kind, sentiment,
 reason, content?, request?}`.
 
+The SPA connects to `/api/p/{pid}/stream?chat=<id>&history_limit=10` for the
+latest ten complete turns. `ready.history` supplies `start` and the exclusive
+`before` cursor; `ready.busy` reports current turn activity. Scrolling up fetches
+`GET /api/p/{pid}/chats/{id}/events?before=<cursor>&limit=10` and preserves the
+visible scroll anchor. Reconnects pass `history_from=<start>` to restore the
+loaded range. Without `history_limit`, stream clients receive the full replay.
+The model switcher reads `/chats/{id}?limit=1` to avoid downloading the transcript.
+
 **`/api/voice`** — server sends `{type:"ready"|"transcript"|"turn_end"|"error"}`,
 `{event:{type,data}}` (delegated agent events), and binary 24 kHz PCM. Client sends
 binary 16 kHz mono PCM mic frames.

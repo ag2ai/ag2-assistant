@@ -37,7 +37,7 @@
 
   async function load(id: string) {
     try {
-      const body = await api.chat(id)
+      const body = await api.chat(id, 1)
       let patch: string | null = null
       chatModel.update((s) => {
         const next = loadedChat(s, id, body)

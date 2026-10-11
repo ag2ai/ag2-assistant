@@ -1,5 +1,6 @@
 // Chats: the drawer rows and the display transcript a reopened chat restores.
 import { z } from 'zod'
+import { WireEvent } from './events.ts'
 
 // gateway/core.py writes {role, text} pairs; role is 'user' or 'agent'.
 export const TranscriptMessage = z.object({
@@ -47,3 +48,10 @@ export type Transcript = z.infer<typeof Transcript>
 // POST /message — the only route with a declared response_model (MessageResponse).
 export const MessageReply = z.object({ reply: z.string(), chat_id: z.string() })
 export type MessageReply = z.infer<typeof MessageReply>
+
+export const ChatEvents = z.object({
+  events: z.array(WireEvent),
+  before: z.string().nullable(),
+  start: z.string().nullable(),
+})
+export type ChatEvents = z.infer<typeof ChatEvents>

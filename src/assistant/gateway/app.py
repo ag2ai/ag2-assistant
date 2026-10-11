@@ -614,7 +614,21 @@ def create_app(
         # this transport needs no per-task branch here; every turn gets the same
         # surface a normal chat would.
         default_surface = _SURFACES.get(websocket.query_params.get("surface", ""), "")
-        bridge = StreamBridge(gateway, websocket, chat_id)
+        history_limit = websocket.query_params.get("history_limit")
+        try:
+            page_limit = int(history_limit) if history_limit is not None else None
+            if page_limit is not None and not 1 <= page_limit <= 50:
+                raise ValueError("Invalid history limit")
+        except ValueError:
+            await websocket.close(code=1008, reason="invalid-history-limit")
+            return
+        bridge = StreamBridge(
+            gateway,
+            websocket,
+            chat_id,
+            history_limit=page_limit,
+            history_from=websocket.query_params.get("history_from"),
+        )
 
         try:
             await bridge.open()

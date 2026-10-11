@@ -141,7 +141,12 @@ export type HandledEvent = (typeof HANDLED_EVENTS)[number]
 export const EventFrame = z.object({ event: WireEvent })
 export type EventFrame = z.infer<typeof EventFrame>
 
-export const ReadyFrame = z.object({ type: z.literal('ready'), chat: z.string().optional() })
+export const ReadyFrame = z.object({
+  type: z.literal('ready'),
+  chat: z.string().optional(),
+  busy: z.boolean().optional(),
+  history: z.object({ before: z.string().nullable(), start: z.string().nullable() }).optional(),
+})
 export type ReadyFrame = z.infer<typeof ReadyFrame>
 
 // `role` comes from the voice socket, which reuses this frame (app.py:3565).

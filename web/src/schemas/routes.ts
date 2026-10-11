@@ -6,7 +6,7 @@
 // so a new route cannot be added without a decision about its schema.
 import type { z } from 'zod'
 import { AcpListener, AcpListenerCreated, AcpListenerList, AcpListenerTokenRotated } from './acp.ts'
-import { ChatList, MessageReply, Transcript } from './chat.ts'
+import { ChatEvents, ChatList, MessageReply, Transcript } from './chat.ts'
 import { CardSave } from './card.ts'
 import { CardSourceResponse } from './card_source.ts'
 import { CardInstance, CardInstanceSave } from './card_instance.ts'
@@ -116,6 +116,7 @@ export const ROUTES: Record<string, z.ZodTypeAny> = {
   'POST /api/onboarded': Ok,
   'GET /api/p/{pid}/chats': ChatList,
   'GET /api/p/{pid}/chats/{chat_id}': Transcript,
+  'GET /api/p/{pid}/chats/{chat_id}/events': ChatEvents,
   'PATCH /api/p/{pid}/chats/{chat_id}': Ok,
   'DELETE /api/p/{pid}/chats/{chat_id}': Ok,
   // Owner's kill switch on a live ACP chat: drops the client, keeps

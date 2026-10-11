@@ -1,9 +1,11 @@
 """The event bridge replays history, forwards live events as {type,data}, skips
 binary audio, and runs turns through the gateway."""
 
+from ag2.events import ModelMessage, ModelRequest, ModelResponse
 from ag2.events.voice import SynthesizedAudioEvent
 
 from assistant.events import TaskCreated
+from assistant.gateway.history import event_cursor
 from assistant.gateway.stream_bridge import StreamBridge
 
 
@@ -50,6 +52,9 @@ class _GW:
 
     async def replay_events(self, sid):
         return await self._stream.history.get_events()
+
+    def is_running(self, sid):
+        return False
 
     catalog = _Catalog()
     card_sources = None
@@ -100,3 +105,51 @@ async def test_bridge_skips_binary_audio_events():
     await bridge.open()
     await stream.sub(SynthesizedAudioEvent(b"\x00\x01"))
     assert _events(ws) == []  # audio never forwarded as {type,data}
+
+
+async def test_paginated_bridge_replays_complete_turns_and_forwards_events_during_replay():
+    history = []
+    for index in range(6):
+        history.extend(
+            [
+                ModelRequest.ensure_request([f"question {index}"]),
+                ModelResponse(ModelMessage(f"reply {index}")),
+            ]
+        )
+    stream = _Stream(history)
+    live = TaskCreated("during-replay", title="During replay")
+
+    class RacingSocket(_WS):
+        async def send_json(self, obj):
+            self.sent.append(obj)
+            if len(self.sent) == 1:
+                await stream.sub(history[-1])
+                await stream.sub(live)
+
+    ws = RacingSocket()
+    bridge = StreamBridge(_GW(stream), ws, "s1", history_limit=2)
+    await bridge.open()
+    bridge.close()
+    assert [frame["event"]["data"] for frame in _events(ws)] == [
+        event.to_dict() for event in [*history[-4:], live]
+    ]
+    ready_index = next(i for i, frame in enumerate(ws.sent) if frame.get("type") == "ready")
+    assert ready_index == 4
+    assert ws.sent[ready_index]["history"] == {
+        "before": event_cursor(history[-4]),
+        "start": event_cursor(history[-4]),
+    }
+    assert ws.sent[ready_index]["busy"] is False
+
+
+async def test_reconnect_replays_the_previously_loaded_range():
+    events = [ModelRequest.ensure_request([str(index)]) for index in range(8)]
+    ws = _WS()
+    bridge = StreamBridge(
+        _GW(_Stream(events)), ws, "s1", history_limit=2, history_from=event_cursor(events[2])
+    )
+    await bridge.open()
+    bridge.close()
+    assert [frame["event"]["data"] for frame in _events(ws)] == [
+        event.to_dict() for event in events[2:]
+    ]
