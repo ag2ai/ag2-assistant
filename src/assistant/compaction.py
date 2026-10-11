@@ -17,6 +17,7 @@ from ag2.context import ConversationContext
 from ag2.events import (
     BaseEvent,
     BinaryInput,
+    BuiltinToolResultEvent,
     CompactionCompleted,
     CompactionFailed,
     CompactionStarted,
@@ -185,7 +186,13 @@ def summary_parts(event: BaseEvent) -> list[BinaryInput | UrlInput | FileIdInput
         if isinstance(event, ModelRequest)
         else ()
     )
-    return [part for part in parts if isinstance(part, (BinaryInput, UrlInput, FileIdInput))]
+    # A provider tool's URLs are citations, such as search results, not source media.
+    media = (
+        (BinaryInput, FileIdInput)
+        if isinstance(event, BuiltinToolResultEvent)
+        else (BinaryInput, UrlInput, FileIdInput)
+    )
+    return [part for part in parts if isinstance(part, media)]
 
 
 def summary_refs(event: BaseEvent) -> list[str]:
