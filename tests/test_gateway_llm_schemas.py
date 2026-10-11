@@ -17,6 +17,8 @@ import ag2.testing
 import pytest
 from fastapi.testclient import TestClient
 
+from assistant import llm_configs
+from assistant.config import update_global_section
 from assistant.secrets import SecretStore
 from tests.support.apps import make_manager, make_paths, make_profile_app, write_codex_session
 
@@ -31,6 +33,7 @@ LLM_CONFIG_KEYS = {
     "host",
     "options",
     "builtin_tools",
+    "params",
     "secret_id",
     "secret",
     "secret_missing",
@@ -165,6 +168,252 @@ def test_a_saved_llm_config_declares_every_field_the_row_renders(client):
     assert saved["secret"] is None
     assert set(saved["shared_key"]) == {"env", "set", "hint"}
     assert saved["key_source"] in {"secret", "shared", "not_needed", "none", "subscription"}
+
+
+def test_a_saved_parameter_comes_back_on_the_config(client):
+    saved = _save_llm(client, params={"reasoning_effort": "high"})
+    assert saved["params"] == {"reasoning_effort": "high"}
+    listed = client.get("/api/llm-configs").json()["configs"][0]
+    assert listed["params"] == {"reasoning_effort": "high"}
+
+
+@pytest.mark.parametrize(
+    "params,expected",
+    [
+        (None, {}),
+        (["high"], {}),
+        ({"temperature": float("nan"), "max_tokens": 2048}, {"max_tokens": 2048}),
+        ({"reasoning_effort": "max", "temperature": 0.3}, {"temperature": 0.3}),
+    ],
+)
+def test_malformed_stored_parameters_can_be_loaded_and_corrected(client, paths, params, expected):
+    saved = _save_llm(client)
+    entry = {**llm_configs.LlmConfigStore(paths).get_config(saved["id"]), "params": params}
+    update_global_section(paths, "llm_configs", {"configs": [entry], "active": None})
+    response = client.get("/api/llm-configs")
+    assert response.status_code == 200
+    listed = response.json()["configs"][0]
+    assert listed["params"] == expected
+    response = client.post(f"/api/llm-configs/{saved['id']}", json=listed)
+    assert response.status_code == 200
+    assert llm_configs.LlmConfigStore(paths).get_config(saved["id"])["params"] == expected
+
+
+def test_a_parameter_the_provider_does_not_have_is_a_client_error(client):
+    body = {"name": "Main", "type": "openai", "model": "gpt-4o"}
+    r = client.post("/api/llm-configs", json={**body, "params": {"reasoning_effort": "max"}})
+    assert r.status_code == 400
+    assert "reasoning_effort" in r.json()["error"]
+
+
+def test_a_draft_test_refuses_a_parameter_a_save_would_refuse(client):
+    body = {"name": "Main", "type": "openai", "model": "gpt-4o"}
+    r = client.post("/api/llm-configs/test", json={**body, "params": {"reasoning_effort": "max"}})
+    assert r.status_code == 400
+    assert "reasoning_effort" in r.json()["error"]
+
+
+def test_a_draft_test_refuses_tool_options_a_save_would_refuse(client):
+    both = {"allowed_domains": ["a.example"], "blocked_domains": ["b.example"]}
+    body = {"name": "Main", "type": "anthropic", "model": "claude"}
+    r = client.post("/api/llm-configs/test", json={**body, "builtin_tools": {"web_fetch": both}})
+    assert r.status_code == 400
+    assert "allowed_domains" in r.json()["error"]
+
+
+@pytest.mark.parametrize("endpoint", ["/api/llm-configs", "/api/llm-configs/test"])
+@pytest.mark.parametrize("tool_id", ["web_search", "web_fetch"])
+def test_an_empty_array_is_not_a_valid_usage_limit(client, endpoint, tool_id):
+    response = client.post(
+        endpoint,
+        json={
+            "name": "Anthropic",
+            "type": "anthropic",
+            "model": "claude",
+            "builtin_tools": {tool_id: {"max_uses": [], "allowed_domains": ["example.com"]}},
+        },
+    )
+    assert response.status_code == 400
+    assert "max_uses" in response.json()["error"]
+    assert client.get("/api/llm-configs").json()["configs"] == []
+
+
+@pytest.mark.parametrize("endpoint", ["/api/llm-configs", "/api/llm-configs/test"])
+def test_gemini_refuses_domain_filters_unsupported_by_the_developer_api(client, endpoint):
+    response = client.post(
+        endpoint,
+        json={
+            "name": "Gemini",
+            "type": "gemini",
+            "model": "gemini-2.5-flash",
+            "builtin_tools": {"web_search": {"blocked_domains": ["example.com"]}},
+        },
+    )
+    assert response.status_code == 400
+    assert "blocked_domains" in response.json()["error"]
+    assert client.get("/api/llm-configs").json()["configs"] == []
+    assert (
+        client.get("/api/llm-configs").json()["builtin_options_by_type"]["gemini"]["web_search"]
+        == []
+    )
+
+
+@pytest.mark.parametrize("endpoint", ["/api/llm-configs", "/api/llm-configs/test"])
+@pytest.mark.parametrize("limit", [1, 15])
+def test_responses_refuses_output_limits_below_the_api_minimum(client, endpoint, limit):
+    body = {
+        "name": "Responses",
+        "type": "openai_responses",
+        "model": "gpt-4o",
+        "params": {"max_output_tokens": limit},
+    }
+    response = client.post(endpoint, json=body)
+    assert response.status_code == 400
+    assert "max_output_tokens must be at least 16" in response.json()["error"]
+    assert client.get("/api/llm-configs").json()["configs"] == []
+
+
+def test_responses_saves_and_describes_the_minimum_output_limit(client, paths):
+    saved = _save_llm(client, type="openai_responses", params={"max_output_tokens": 16})
+    assert llm_configs.LlmConfigStore(paths).get_config(saved["id"])["params"] == {
+        "max_output_tokens": 16
+    }
+    params = client.get("/api/llm-configs").json()["params_by_type"]["openai_responses"]
+    limit = next(param for param in params if param["id"] == "max_output_tokens")
+    assert limit["minimum"] == 16
+
+
+def test_a_stored_responses_limit_below_the_minimum_can_be_corrected(client, paths):
+    saved = _save_llm(client, type="openai_responses", params={"max_output_tokens": 16})
+    store = llm_configs.LlmConfigStore(paths)
+    entry = {**store.get_config(saved["id"]), "params": {"max_output_tokens": 1}}
+    update_global_section(paths, "llm_configs", {"configs": [entry], "active": None})
+    listed = client.get("/api/llm-configs").json()["configs"][0]
+    assert listed["params"] == {}
+    response = client.post(
+        f"/api/llm-configs/{saved['id']}", json={**listed, "params": {"max_output_tokens": 16}}
+    )
+    assert response.status_code == 200
+    assert store.get_config(saved["id"])["params"] == {"max_output_tokens": 16}
+
+
+@pytest.mark.parametrize("endpoint", ["/api/llm-configs", "/api/llm-configs/test"])
+@pytest.mark.parametrize(
+    "domains",
+    [
+        ["https://example.com"],
+        ["*.example.com"],
+        ["example.com/blog"],
+        [f"site{i}.example.com" for i in range(101)],
+    ],
+)
+def test_responses_refuses_invalid_domain_filters(client, endpoint, domains):
+    response = client.post(
+        endpoint,
+        json={
+            "name": "Responses",
+            "type": "openai_responses",
+            "model": "gpt-4o",
+            "builtin_tools": {"web_search": {"allowed_domains": domains}},
+        },
+    )
+    assert response.status_code == 400
+    assert "allowed_domains" in response.json()["error"]
+    assert client.get("/api/llm-configs").json()["configs"] == []
+
+
+def test_responses_retains_the_maximum_valid_domain_filter(client, paths):
+    domains = [f"site{i}.example.com" for i in range(100)]
+    saved = _save_llm(
+        client, type="openai_responses", builtin_tools={"web_search": {"allowed_domains": domains}}
+    )
+    assert saved["builtin_tools"] == {"web_search": {"allowed_domains": domains}}
+    assert llm_configs.LlmConfigStore(paths).get_config(saved["id"])["builtin_tools"] == {
+        "web_search": {"allowed_domains": domains}
+    }
+
+
+@pytest.mark.parametrize("endpoint", ["/api/llm-configs", "/api/llm-configs/test"])
+@pytest.mark.parametrize("tool_id", ["web_search", "web_fetch"])
+@pytest.mark.parametrize("option", ["allowed_domains", "blocked_domains"])
+@pytest.mark.parametrize("domain", ["https://example.com", "*.example.com", "ex*.com"])
+def test_anthropic_refuses_invalid_domain_filters(client, endpoint, tool_id, option, domain):
+    body = {
+        "name": "Anthropic",
+        "type": "anthropic",
+        "model": "claude",
+        "builtin_tools": {tool_id: {option: [domain]}},
+    }
+    response = client.post(endpoint, json=body)
+    assert response.status_code == 400
+    assert option in response.json()["error"]
+    assert client.get("/api/llm-configs").json()["configs"] == []
+
+
+@pytest.mark.parametrize("tool_id", ["web_search", "web_fetch"])
+@pytest.mark.parametrize("option", ["allowed_domains", "blocked_domains"])
+def test_anthropic_retains_valid_domain_filters(client, paths, tool_id, option):
+    domains = ["example.com", "docs.example.com"]
+    if tool_id == "web_search":
+        domains += ["example.com/blog", "example.com/*/articles"]
+    saved = _save_llm(client, type="anthropic", builtin_tools={tool_id: {option: domains}})
+    assert saved["builtin_tools"] == {tool_id: {option: domains}}
+    assert llm_configs.LlmConfigStore(paths).get_config(saved["id"])["builtin_tools"] == {
+        tool_id: {option: domains}
+    }
+
+
+def test_anthropic_fetch_refuses_a_domain_filter_with_an_ineffective_path(client):
+    response = client.post(
+        "/api/llm-configs",
+        json={
+            "name": "Anthropic",
+            "type": "anthropic",
+            "model": "claude",
+            "builtin_tools": {"web_fetch": {"allowed_domains": ["example.com/blog"]}},
+        },
+    )
+    assert response.status_code == 400
+    assert "allowed_domains" in response.json()["error"]
+
+
+def test_the_list_describes_the_parameters_of_every_type(client):
+    """Every type is described, not just the configured ones."""
+    by_type = client.get("/api/llm-configs").json()["params_by_type"]
+    assert set(by_type) == set(llm_configs.TYPES)
+    assert by_type["gemini"][0] == {
+        "id": "thinking_level",
+        "kind": "choice",
+        "choices": ["low", "medium", "high"],
+        "minimum": None,
+        "maximum": None,
+    }
+    assert by_type["anthropic"] == [
+        {"id": "temperature", "kind": "float", "choices": [], "minimum": 0, "maximum": 1},
+        {"id": "max_tokens", "kind": "int", "choices": [], "minimum": 1, "maximum": None},
+    ]
+    assert by_type["codex"] == []
+
+
+def test_the_list_names_the_options_each_provider_tool_takes(client):
+    by_type = client.get("/api/llm-configs").json()["builtin_options_by_type"]
+    assert set(by_type) == set(llm_configs.TYPES)
+    assert by_type["openai_responses"] == {
+        "web_search": [{"id": "allowed_domains", "kind": "domains"}],
+        "code_execution": [],
+    }
+    assert by_type["anthropic"]["web_fetch"][0] == {"id": "max_uses", "kind": "int"}
+    assert by_type["ollama"] == {}
+
+
+def test_a_provider_tool_option_round_trips_through_a_save(client):
+    saved = _save_llm(
+        client,
+        type="openai_responses",
+        model="gpt-5",
+        builtin_tools={"web_search": {"allowed_domains": ["example.com"]}},
+    )
+    assert saved["builtin_tools"] == {"web_search": {"allowed_domains": ["example.com"]}}
 
 
 def test_a_config_pointing_at_a_secret_embeds_that_secret_s_trimmed_view(client):

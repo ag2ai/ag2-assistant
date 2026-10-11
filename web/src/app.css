@@ -360,6 +360,8 @@
 .settings .llmtool input[type="checkbox"] { min-width: 0; width: auto; margin-top: 2px; flex: none; accent-color: var(--accent); }
 .settings .llmtoolbody { display: flex; flex-direction: column; gap: 2px; }
 .settings .llmtoolname { font-size: 13px; color: var(--ink); }
+.settings .llmtoolopts { display: flex; flex-direction: column; gap: 5px; margin-left: 22px; }
+.settings .llmtoolopts > label { font-size: 12px; font-weight: 600; color: var(--muted); }
 .settings .advtoggle { align-self: flex-start; color: var(--accent); }
 .settings .advtoggle:hover { color: var(--accent); }
 .settings .llmadv { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-family: var(--mono); font-size: 12px; min-height: 82px; resize: vertical; background: var(--bg); color: var(--ink); }
