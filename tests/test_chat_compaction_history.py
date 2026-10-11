@@ -1,7 +1,6 @@
 """Compaction bounds model context while keeping the complete client history."""
 
 import pytest
-from ag2 import Agent
 from ag2.compact import CompactionSummary
 from ag2.events import (
     CompactionCompleted,
@@ -21,7 +20,8 @@ from assistant.events import A2UISurface
 from assistant.gateway.core import Gateway
 from assistant.gateway.stream_bridge import StreamBridge
 from assistant.memory import build_compaction_config, build_knowledge_config
-from tests.support.fakes import fake_agent_factory
+from tests.support.apps import compacting_agent
+from tests.support.fakes import CheckpointTestConfig, fake_agent_factory
 
 
 class _WebSocket:
@@ -54,7 +54,7 @@ async def test_large_history_compacts_below_budget_then_skips_small_turn(tmp_pat
         if profile_memory
         else build_compaction_config(max_tokens=4_000)
     )
-    agent = Agent("chat", config=TestConfig("short reply"), knowledge=knowledge)
+    agent = compacting_agent(CheckpointTestConfig("short reply"), knowledge)
     completed = []
 
     async def collect(event: CompactionCompleted):

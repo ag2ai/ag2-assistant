@@ -326,7 +326,7 @@ Every model-backed call in the backend. Two model tiers: **main**
 | 6 | **Image generation**    | `tools/image_gen.py`         | provider | `generate_image` tool call          | — (emits `ImageGenerated`)   |
 | 7 | **Memory aggregator**   | `memory.py` (AG2 `WorkingMemoryAggregate`) | aggregate | every N turns / on end | — (markdown profile) |
 | 8 | **CLI single-shot**     | `agent.py` (`ask`)           | main  | `ag2-assistant agent "…"`             | —                            |
-| 9 | **History compaction**  | `memory.py` (`ConversationCompact`) | main | stream exceeds the compaction threshold; uses the current Turn's resolved model configuration | — (conversation summary) |
+| 9 | **History compaction**  | `compaction.py` (`CheckpointCompact`) | main | estimated full input exceeds the per-profile budget before a model call; uses the current Turn's resolved model configuration | versioned task checkpoint + recent replayable events |
 
 A task run is not a distinct agent — it's the same universal agent (row 1),
 optionally pinned to the task's own model via a cached per-model agent

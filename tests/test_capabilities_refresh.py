@@ -35,6 +35,7 @@ from assistant.cards import CARDS_DIR
 from assistant.channels.base import InboundMessage
 from assistant.channels.router import Reply
 from assistant.codex_auth import CodexAuth
+from assistant.compaction import CheckpointData, request_tokens
 from assistant.events import TurnCancelled, TurnFailed
 from assistant.gateway.tasks_service import TaskService
 from assistant.live_configs import LiveConfigStore
@@ -51,6 +52,7 @@ from tests.support.cards import write_card
 from tests.support.fakes import (
     ScriptedModels,
     StatefulEnvironment,
+    checkpoint_json,
     fake_summary_factory,
 )
 from tests.support.http import client
@@ -1326,7 +1328,7 @@ async def test_cancelled_turn_keeps_work_when_another_gateway_changes_the_chat_l
 
 
 async def test_changed_compaction_threshold_emits_compaction_and_uses_chat_model(config):
-    models = ScriptedModels(script=lambda cfg, model: [model or cfg.llm.model])
+    models = ScriptedModels(script=lambda cfg, model: [checkpoint_json(model or cfg.llm.model)] * 8)
     config.memory.aggregate_every_n_turns = 0
     config.memory.compact_max_tokens = 0
     gateway = real_gateway(config, onboard=False, model_factory=models)
@@ -1340,23 +1342,26 @@ async def test_changed_compaction_threshold_emits_compaction_and_uses_chat_model
     (await gateway.stream_for("existing")).subscribe(collect)
     try:
         for index in range(32):
-            await gateway.send_message(f"history turn {index}", chat_id="existing")
+            await gateway.send_message(f"history turn {index} " + "x" * 1_000, chat_id="existing")
         assert events == []
-        config.memory.compact_max_tokens = 1
+        config.memory.compact_max_tokens = (
+            request_tokens([], models.requests[-1][1], models.requests[-1][2]) + 3_000
+        )
         await gateway.send_message("apply new threshold", chat_id="existing")
         assert events and events[-1].events_before > events[-1].events_after
         history = await (await gateway.stream_for("existing")).history.get_events()
         summary = next(event for event in history if isinstance(event, CompactionSummary))
-        assert summary.summary == config.llm.model
+        assert CheckpointData.model_validate_json(summary.summary).goal == config.llm.model
         assert any(
-            message["text"] == "history turn 0" for message in await gateway.transcript("existing")
+            message["text"].startswith("history turn 0")
+            for message in await gateway.transcript("existing")
         )
     finally:
         await gateway.close()
 
 
 async def test_compaction_follows_concurrent_chat_overrides_and_model_changes(config):
-    models = ScriptedModels(script=lambda cfg, model: [model or cfg.llm.model])
+    models = ScriptedModels(script=lambda cfg, model: [checkpoint_json(model or cfg.llm.model)] * 8)
     config.llm.aggregate_model = "aggregate-only"
     config.memory.aggregate_every_n_turns = 0
     config.memory.compact_max_tokens = 0
@@ -1370,12 +1375,14 @@ async def test_compaction_follows_concurrent_chat_overrides_and_model_changes(co
     try:
         for index in range(32):
             await asyncio.gather(
-                gateway.send_message(f"first history {index}", chat_id="first"),
-                gateway.send_message(f"second history {index}", chat_id="second"),
+                gateway.send_message(f"first history {index} " + "x" * 1_000, chat_id="first"),
+                gateway.send_message(f"second history {index} " + "x" * 1_000, chat_id="second"),
             )
         for chat_id, entry in zip(("first", "second"), entries, strict=True):
             await gateway.update_chat(chat_id, model=entry["id"])
-        config.memory.compact_max_tokens = 1
+        config.memory.compact_max_tokens = (
+            request_tokens([], models.requests[-1][1], models.requests[-1][2]) + 3_000
+        )
         await asyncio.gather(
             gateway.send_message("compact first", chat_id="first"),
             gateway.send_message("compact second", chat_id="second"),
@@ -1383,12 +1390,13 @@ async def test_compaction_follows_concurrent_chat_overrides_and_model_changes(co
         for chat_id, entry in zip(("first", "second"), entries, strict=True):
             history = await (await gateway.stream_for(chat_id)).history.get_events()
             summary = next(event for event in history if isinstance(event, CompactionSummary))
-            assert summary.summary == entry["model"]
+            assert CheckpointData.model_validate_json(summary.summary).goal == entry["model"]
 
         await gateway.update_chat("first", model=entries[1]["id"])
-        await gateway.send_message("compact after switching", chat_id="first")
+        for index in range(12):
+            await gateway.send_message("compact after switching " + "x" * 1_000, chat_id="first")
         history = await (await gateway.stream_for("first")).history.get_events()
         summary = next(event for event in history if isinstance(event, CompactionSummary))
-        assert summary.summary == "chat-two"
+        assert CheckpointData.model_validate_json(summary.summary).goal == "chat-two"
     finally:
         await gateway.close()

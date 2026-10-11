@@ -170,8 +170,10 @@ class MemoryConfig(BaseModel):
 
     # Distil the profile every N conversation turns (an LLM call each time).
     aggregate_every_n_turns: int = 4
-    # Summarise older history when its estimated token count crosses this threshold.
+    # Budget the estimated full model input; zero disables new compaction.
     compact_max_tokens: int = 50_000
+    compact_max_calls: int = Field(default=8, gt=0)
+    compact_timeout_s: float = Field(default=60, gt=0)
 
 
 # The Config sections a profile's config.yaml may overlay. Settings keys in the same

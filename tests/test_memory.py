@@ -1,14 +1,13 @@
 """Tests for AG2 Assistant persistent user-profile memory."""
 
 import pytest
-from ag2 import Agent
 from ag2.compact import CompactionSummary
 from ag2.knowledge import SqliteKnowledgeStore
 from ag2.stream import MemoryStream
-from ag2.testing import TestConfig
 
 import assistant.agent as agent_mod
 from assistant.agent import ask
+from assistant.compaction import CheckpointData
 from assistant.config import Config, LLMConfig, load_config
 from assistant.memory import (
     PROFILE_PATH,
@@ -21,6 +20,8 @@ from assistant.memory import (
     read_universal,
     write_universal,
 )
+from tests.support.apps import compacting_agent
+from tests.support.fakes import CheckpointTestConfig, checkpoint_json
 
 
 def test_profile_prompt_includes_platform():
@@ -115,14 +116,20 @@ def test_explicit_aggregate_model_wins(paths):
 
 async def test_compaction_without_profile_memory_uses_invocation_model():
     stream = MemoryStream()
-    agent = Agent(
-        "chat", config=TestConfig("default-model"), knowledge=build_compaction_config(max_tokens=1)
+    agent = compacting_agent(
+        CheckpointTestConfig("default-model"), build_compaction_config(max_tokens=3_000)
     )
     for index in range(32):
-        await agent.ask(f"history turn {index}", stream=stream, config=TestConfig("selected-model"))
+        await agent.ask(
+            f"history turn {index} " + "x" * 1_000,
+            stream=stream,
+            config=CheckpointTestConfig(
+                "selected-model", checkpoint=checkpoint_json("selected-model")
+            ),
+        )
     history = await stream.history.get_events()
     summary = next(event for event in history if isinstance(event, CompactionSummary))
-    assert summary.summary == "selected-model"
+    assert CheckpointData.model_validate_json(summary.summary).goal == "selected-model"
 
 
 async def test_read_profile_empty(tmp_path):

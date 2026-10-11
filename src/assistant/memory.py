@@ -24,20 +24,16 @@ There are TWO memory layers:
 """
 
 import sqlite3
-from contextvars import ContextVar
 from pathlib import Path
-from typing import cast
 
 from ag2 import KnowledgeConfig
 from ag2.aggregate import AggregateTrigger, WorkingMemoryAggregate
-from ag2.annotations import Context
-from ag2.compact import CompactTrigger, SummarizeCompact
+from ag2.compact import CompactTrigger
 from ag2.config import ModelConfig
-from ag2.events import BaseEvent, estimated_tokens, is_conversational
 from ag2.knowledge import KnowledgeStore, MemoryKnowledgeStore, SqliteKnowledgeStore
 from ag2.policies import ConversationPolicy, WorkingMemoryPolicy
-from ag2.utils import MODEL_CONFIG_CONTEXT_DEPENDENCY_KEY
 
+from assistant.compaction import CheckpointCompact, CompactionLimits
 from assistant.config import load_config
 
 # Path inside the knowledge store where the rolling profile lives.
@@ -226,44 +222,6 @@ def _default_aggregate_config() -> ModelConfig:
     return model_config(config, cheap_model(config))
 
 
-class ConversationCompact:
-    """Summarize history with the current invocation's model configuration."""
-
-    def __init__(self, target: int = 60, max_tokens: int = 50_000) -> None:
-        self._target = target
-        self._max_tokens = max_tokens
-        self._usage: ContextVar[dict] = ContextVar("compaction_usage")
-
-    @property
-    def last_usage(self) -> dict:
-        return self._usage.get({})
-
-    def _tail_target(self, events: list[BaseEvent]) -> int:
-        """Keep a recent tail within half the trigger budget, capped by event count."""
-        count = tokens = 0
-        for event in reversed(events):
-            if not is_conversational(event):
-                continue
-            size = estimated_tokens(event, 4)
-            if count and (
-                count >= self._target
-                or (self._max_tokens > 0 and tokens + size > self._max_tokens // 2)
-            ):
-                break
-            count += 1
-            tokens += size
-        return max(1, count)
-
-    async def compact(
-        self, events: list[BaseEvent], context: Context, store: KnowledgeStore | None
-    ) -> list[BaseEvent]:
-        config = cast(ModelConfig, context.dependencies[MODEL_CONFIG_CONTEXT_DEPENDENCY_KEY])
-        strategy = SummarizeCompact(target=self._tail_target(events), config=config)
-        compacted = await strategy.compact(events, context, store)
-        self._usage.set(strategy.last_usage)
-        return compacted
-
-
 def build_knowledge_config(
     platform: str = "cli",
     store_path: Path | None = None,
@@ -273,6 +231,8 @@ def build_knowledge_config(
     on_end: bool = False,
     compact: bool = False,
     compact_max_tokens: int = 50_000,
+    compaction_limits: CompactionLimits | None = None,
+    compaction_store: KnowledgeStore | None = None,
 ) -> KnowledgeConfig:
     """Learn profile memory with the aggregation model and compact with the Turn's model."""
     if store is None:
@@ -286,8 +246,11 @@ def build_knowledge_config(
     compact_kwargs: dict = {}
     if compact:
         compact_kwargs = {
-            "compact": ConversationCompact(max_tokens=compact_max_tokens),
-            "compact_trigger": CompactTrigger(max_tokens=compact_max_tokens),
+            "compact": CheckpointCompact(
+                compaction_limits or CompactionLimits(max_tokens=compact_max_tokens),
+                compaction_store,
+            ),
+            "compact_trigger": CompactTrigger(),
         }
 
     return KnowledgeConfig(
@@ -306,15 +269,18 @@ def build_knowledge_config(
 
 def build_compaction_config(
     max_tokens: int = 50_000,
+    *,
+    store: KnowledgeStore | None = None,
+    limits: CompactionLimits | None = None,
 ) -> KnowledgeConfig:
     """Bound history with the Turn's model without persisting profile memory."""
 
     return KnowledgeConfig(
-        store=MemoryKnowledgeStore(),
+        store=store if store is not None else MemoryKnowledgeStore(),
         expose_tool=False,
         write_event_log=False,
-        compact=ConversationCompact(max_tokens=max_tokens),
-        compact_trigger=CompactTrigger(max_tokens=max_tokens),
+        compact=CheckpointCompact(limits or CompactionLimits(max_tokens=max_tokens), store),
+        compact_trigger=CompactTrigger(),
     )
 
 

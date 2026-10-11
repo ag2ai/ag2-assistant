@@ -12,12 +12,15 @@ from ag2.knowledge import KnowledgeStore
 from ag2.knowledge.constants import LOG_PREFIX
 from ag2.knowledge.log import EventLogWriter
 
+from assistant.compaction import checkpoint_root, recover_checkpoint_history
+
 
 class ChatEventLog(EventLogWriter):
     """Read current context separately from archived events used for display."""
 
     async def load_current(self, stream_id: StreamId) -> list[BaseEvent]:
-        return await self._load_file(f"{LOG_PREFIX}{stream_id}.jsonl")
+        current = await self._load_file(f"{LOG_PREFIX}{stream_id}.jsonl")
+        return await recover_checkpoint_history(self._store, stream_id, current)
 
     async def replay(
         self,
@@ -51,6 +54,10 @@ class ChatEventLog(EventLogWriter):
                 if await store.exists(path):
                     await store.delete(path)
                     removed = True
+            root = checkpoint_root(stream_id)
+            for entry in await store.list(root):
+                await store.delete(root + entry)
+                removed = True
         return removed
 
 

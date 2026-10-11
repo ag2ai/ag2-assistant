@@ -17,6 +17,7 @@ from typing import Protocol
 from ag2.context import ConversationContext
 from ag2.exceptions import SkillNotFoundError
 
+from assistant.compaction import SkillTextLoaded
 from assistant.state_store import ORIGIN_BUNDLED, ORIGIN_GLOBAL, ORIGIN_PROFILE, StateStore
 
 
@@ -85,11 +86,15 @@ class FilteredSkillRuntime:
 
     async def read(self, name: str, context: ConversationContext) -> str:
         self._guard(name)
-        return await self._inner.read(name, context)
+        text = await self._inner.read(name, context)
+        await context.send(SkillTextLoaded(name=name, resource="SKILL.md", text=text))
+        return text
 
     async def read_resource(self, name: str, resource: str, context: ConversationContext) -> str:
         self._guard(name)
-        return await self._inner.read_resource(name, resource, context)
+        text = await self._inner.read_resource(name, resource, context)
+        await context.send(SkillTextLoaded(name=name, resource=resource, text=text))
+        return text
 
     async def execute(self, name: str, script: str, context: ConversationContext, args=None) -> str:
         self._guard(name)

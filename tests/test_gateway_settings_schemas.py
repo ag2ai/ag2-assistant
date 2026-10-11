@@ -24,7 +24,6 @@ from ag2.events import (
     estimated_tokens,
     is_conversational,
 )
-from ag2.testing import TestConfig
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
@@ -32,6 +31,7 @@ from assistant.gateway.app import create_app
 from assistant.hitl import Question
 from assistant.profiles import ProfileRegistry
 from tests.support.apps import api, make_manager, make_paths, make_profile_app
+from tests.support.fakes import CheckpointTestConfig
 
 
 async def _live_ok(_provider, _key):
@@ -248,7 +248,10 @@ async def test_compaction_setting_applies_to_existing_chat_and_survives_restart(
     for meta in (a, b):
         paths.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
     manager = make_manager(
-        paths, persist=True, memory=True, model_factory=lambda cfg, model=None: TestConfig("done")
+        paths,
+        persist=True,
+        memory=True,
+        model_factory=lambda cfg, model=None: CheckpointTestConfig("done"),
     )
     app = create_app(manager)
     async with app.router.lifespan_context(app):

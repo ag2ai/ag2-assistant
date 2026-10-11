@@ -49,7 +49,7 @@
   </label>
   <button class="open" disabled={ctx.busy} onclick={saveCompactionThreshold}>Save</button>
 </div>
-<p class="muted">Summarize older messages when the model's conversation context exceeds this estimated size. The full chat history stays available.</p>
+<p class="muted">Budget the estimated full model input, including instructions, tools, memory, skills, and messages. Older messages are summarized before a model call when needed. The full chat history stays available.</p>
 
 <div class="setgroup">Turn budget</div>
 <div class="setrowwrap">

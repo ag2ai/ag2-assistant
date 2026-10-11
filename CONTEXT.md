@@ -554,6 +554,14 @@ Grant a reference), access rule
 
 ## Memory
 
+**Conversation checkpoint**:
+A single Chat's versioned working state after older events leave model context:
+goal, constraints, decisions, completed work, artifacts, pending work, unknown
+outcomes, next action and Skill/resource references. Distinct from Persona memory,
+which records durable preferences across Chats. Full Skill instructions and the
+original event archive remain separate; a checkpoint grants no capabilities.
+_Avoid_: profile memory, transcript, Skill summary
+
 **Persona memory** (profile memory):
 A single Profile's learned-and-curated memory — preferences and context for that
 persona only, which the agent keeps refining as you chat and the user edits freely.

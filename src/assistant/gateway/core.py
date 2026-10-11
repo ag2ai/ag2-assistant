@@ -411,7 +411,7 @@ class Gateway:
         return fingerprint(
             [
                 cfg.agent.name,
-                cfg.memory.model_dump() if self._memory else None,
+                cfg.memory.model_dump(),
                 background,
                 cfg.llm.silence_alert_s,
                 cfg.llm.silence_halt_s,
@@ -426,7 +426,8 @@ class Gateway:
                 memory=self._memory,
                 platform=self._platform,
                 knowledge_store=self._knowledge_store,
-                compact=self._memory,
+                compact=True,
+                compaction_store=self._event_store,
                 invocation_only=True,
                 model_factory=lambda config, model=None: (
                     RefreshingModelConfig(config, self._model_factory or model_config, model)

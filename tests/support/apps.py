@@ -7,8 +7,16 @@ on fixtures — the fixtures in ``conftest.py`` are thin wrappers over these.
 import json
 import time
 
+from ag2.middleware import Middleware
+
 from assistant.agent import create_agent
 from assistant.codex_auth import CodexAuthError
+from assistant.compaction import (
+    BudgetedModelConfig,
+    CheckpointMiddleware,
+    CompactingAgent,
+    read_compaction_source,
+)
 from assistant.config import load_config
 from assistant.gateway.app import create_app
 from assistant.gateway.core import Gateway
@@ -21,6 +29,22 @@ from tests.support.fakes import (
     fake_summary_factory,
     fake_title_factory,
 )
+
+
+def compacting_agent(config, knowledge, *, tools=(), **options):
+    agent = CompactingAgent(
+        "chat",
+        config=BudgetedModelConfig(config),
+        knowledge=knowledge,
+        tools=[read_compaction_source, *tools],
+        **options,
+    )
+    agent.insert_middleware(
+        Middleware(
+            CheckpointMiddleware, strategy=knowledge.compact, store=knowledge.store, actor="chat"
+        )
+    )
+    return agent
 
 
 def make_paths(root) -> Paths:

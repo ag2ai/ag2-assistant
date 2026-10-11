@@ -6,14 +6,63 @@ its own stand-in instead of patching a module attribute.
 """
 
 import asyncio
+import json
 import types
 from contextlib import asynccontextmanager
 from pathlib import PurePosixPath
 
+from ag2.events import ModelMessage, ModelResponse
 from ag2.knowledge import SqliteKnowledgeStore
 from ag2.testing import TestClient, TestConfig
 from ag2.tools.sandbox.base import ExecResult
 from fast_depends import Provider
+
+from assistant.compaction import CHECKPOINT_SCHEMA
+
+
+def checkpoint_json(goal="Continue the task", needed_skills=()):
+    return json.dumps(
+        {
+            "goal": goal,
+            "constraints": ["Keep the user's current constraints"],
+            "decisions": [],
+            "completed": [],
+            "artifacts": [],
+            "pending": [],
+            "unknown_outcomes": [],
+            "next_action": "Continue",
+            "needed_skills": list(needed_skills),
+            "resource_refs": [],
+        }
+    )
+
+
+class CheckpointTestConfig(TestConfig):
+    """A scripted model with a separate, configurable checkpoint response."""
+
+    def __init__(self, *events, checkpoint=None, before_call=None, **kwargs):
+        super().__init__(*events, **kwargs)
+        self.checkpoint = checkpoint or checkpoint_json()
+        self.before_call = before_call
+        self.requests = []
+
+    def create(self):
+        return CheckpointTestClient(self, super().create())
+
+
+class CheckpointTestClient:
+    def __init__(self, config, client):
+        self.config, self.client = config, client
+
+    async def __call__(self, messages, context, **options):
+        self.config.requests.append((tuple(messages), tuple(context.prompt), options))
+        if self.config.before_call is not None:
+            await self.config.before_call(messages, context, options)
+        if options.get("response_schema") is CHECKPOINT_SCHEMA:
+            if isinstance(self.config.checkpoint, BaseException):
+                raise self.config.checkpoint
+            return ModelResponse(ModelMessage(self.config.checkpoint))
+        return await self.client(messages, context, **options)
 
 
 class FakeReply:

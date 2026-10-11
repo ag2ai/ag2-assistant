@@ -14,6 +14,7 @@ from ag2.config import (
     OpenAIResponsesConfig,
 )
 from ag2.config.gemini import GeminiConfig
+from ag2.middleware import Middleware
 from ag2.policies import AlertPolicy
 from ag2.tools import LocalEnvironment, SkillSearchToolkit
 from ag2.tools.skills import LocalRuntime, SkillPlugin
@@ -24,6 +25,15 @@ from assistant.a2ui_skill import A2UISkillRuntime
 from assistant.card_author import CardAuthorRuntime
 from assistant.codex_auth import BACKEND_BASE, CodexAuth, default_headers
 from assistant.coding import acp_provider
+from assistant.compaction import (
+    BudgetedModelConfig,
+    CheckpointMiddleware,
+    CompactingAgent,
+    CompactionLimits,
+    SkillCatalogMiddleware,
+    SkillResolver,
+    read_compaction_source,
+)
 from assistant.config import Config, load_config
 from assistant.folders import FolderStore
 from assistant.hitl import Asker, build_hitl_hook
@@ -334,6 +344,9 @@ def build_skills_plugin(
         views = resolve_a2ui_skill(config)
         files = resolve_skills(config, runtime)
     plugin = SkillPlugin(author, screens, views, files)
+    plugin.add_middleware(
+        Middleware(SkillCatalogMiddleware, resolver=SkillResolver([author, screens, views, files]))
+    )
     # Keep AG2's catalog and activation tools with context-aware reading instructions.
     plugin._system_prompt = [
         SKILL_USAGE_GUIDANCE + part[part.index("<available_skills>") :]
@@ -657,6 +670,7 @@ def create_agent(
     default_model=None,
     resources: ProfileResources | None = None,
     environment_factory: Callable = docker_environment,
+    compaction_store=None,
 ) -> Agent:
     """Construct a standalone Agent or a Profile base with invocation-supplied capabilities.
     Standalone resource ownership is available through dependencies or ``agent_session``."""
@@ -699,12 +713,24 @@ def create_agent(
             on_end=single_shot,
             compact=compact,
             compact_max_tokens=config.memory.compact_max_tokens,
+            compaction_limits=CompactionLimits(
+                max_tokens=config.memory.compact_max_tokens,
+                max_calls=config.memory.compact_max_calls,
+                timeout_s=config.memory.compact_timeout_s,
+            ),
+            compaction_store=compaction_store,
         )
         assembly = profile_assembly()
     elif compact:
         # Memory-less agents (task subagents) still get their context bounded.
         knowledge = build_compaction_config(
             max_tokens=config.memory.compact_max_tokens,
+            store=compaction_store,
+            limits=CompactionLimits(
+                max_tokens=config.memory.compact_max_tokens,
+                max_calls=config.memory.compact_max_calls,
+                timeout_s=config.memory.compact_timeout_s,
+            ),
         )
 
     tools = (
@@ -757,6 +783,8 @@ def create_agent(
     # schedule included; the chat agent no longer needs a separate start_task tool).
     if extra_tools:
         tools.extend(extra_tools)
+    if compact:
+        tools.append(read_compaction_source)
 
     # When the profile memory is on, let the agent commit an explicit "remember
     # this" immediately (the passive aggregator alone is slow and may filter it).
@@ -801,22 +829,39 @@ def create_agent(
     # turn even on the memory-less subagents that hang in the incident.
     assembly = list(assembly) + [AlertPolicy()]
 
-    agent = Agent(
+    middleware = [] if invocation_only else _build_middleware(config)
+    selected_model = default_model or llm_config
+    if compact:
+        assert knowledge is not None
+        if selected_model is not None:
+            selected_model = BudgetedModelConfig(selected_model)
+    agent_cls = CompactingAgent if compact else Agent
+    agent = agent_cls(
         config.agent.name,
         prompt=BEHAVIOR_GUIDANCE if invocation_only else config.agent.system_prompt,
-        config=default_model or llm_config,
+        config=selected_model,
         tools=tools,
         plugins=[*plugins, *(extra_plugins or [])],
         knowledge=knowledge,
         assembly=assembly,
         hitl_hook=hitl_hook,
         dependencies=dependencies,
-        middleware=[] if invocation_only else _build_middleware(config),
+        middleware=middleware,
         observers=build_observers(  # stuck-turn + wedged-turn guards → stream alerts
             silence_alert_s=config.llm.silence_alert_s,
             silence_halt_s=config.llm.silence_halt_s,
         ),
     )
+    if compact:
+        assert knowledge is not None
+        agent.insert_middleware(
+            Middleware(
+                CheckpointMiddleware,
+                strategy=knowledge.compact,
+                actor=config.agent.name,
+                store=knowledge.store,
+            )
+        )
 
     return agent
 
@@ -843,7 +888,7 @@ async def ask(
     if config is None:
         config = load_config()
     async with agent_session(
-        config, memory=memory, platform=platform, asker=asker, single_shot=True
+        config, memory=memory, platform=platform, asker=asker, single_shot=True, compact=True
     ) as agent:
         reply = await agent.ask(message, prompt=turn_prompt(config))
         return reply.body
