@@ -5,7 +5,9 @@ import pytest
 from assistant.agent import bundled_skills_dir
 from assistant.config import Config
 from assistant.folders import READ, READ_WRITE, FolderStore
+from assistant.live_configs import LiveConfigStore
 from assistant.permissions import PermissionManager
+from assistant.secrets import SecretStore
 from assistant.self_tools import build_self_tools
 from assistant.settings import profile_settings
 from tests.support.apps import make_paths
@@ -135,6 +137,27 @@ async def test_missing_directory_is_repointable_not_an_error(tmp_path):
 async def test_describe_settings_states_model_is_install_wide(tmp_path):
     out = await _run(_tools(tmp_path)["describe_settings"])
     assert "install-wide" in out
+    assert "unavailable (no API key)" in out
+
+
+async def test_describe_settings_reports_the_selected_voice_model(config):
+    settings = profile_settings(config.data_dir)
+    store = LiveConfigStore(config.paths)
+    inherited = store.save_config({"name": "Inherited", "provider": "gemini"})
+    store.set_active(inherited["id"])
+    secret = SecretStore(config.paths).create_secret("Voice", "private-voice-key")
+    selected = store.save_config(
+        {"name": "Selected", "provider": "openai", "voice": "cedar", "secret_id": secret["id"]}
+    )
+    settings.set_live_override(selected["id"])
+    tools = {t.name: t for t in build_self_tools(config, settings)}
+    out = await _run(tools["describe_settings"])
+    assert "Voice: cedar (openai)" in out
+    assert "unavailable" not in out
+    assert "private-voice-key" not in out
+    SecretStore(config.paths).delete_secret(secret["id"])
+    out = await _run(tools["describe_settings"])
+    assert "Voice: cedar (openai) — unavailable (no API key)" in out
 
 
 @pytest.mark.asyncio

@@ -21,7 +21,7 @@ from assistant.agent import ask
 from assistant.config import Config
 from assistant.permissions import ALLOW_ONCE
 from assistant.settings import Settings
-from assistant.tools import CAPABILITIES, build_agent_tools, web_fetch_tool
+from assistant.tools import CAPABILITIES, available_capabilities, build_agent_tools, web_fetch_tool
 from assistant.tools.mcp import (
     NamespacedMCPToolkit,
     describe_mcp_error,
@@ -44,10 +44,10 @@ def test_build_agent_tools_has_core_capabilities():
     assert "get_weather" not in names
     assert "get_quotes" not in names
     assert "ask_user" in names  # chat-only: option-carrying HITL questions
-    assert "code_with_cli_agent" in names  # ACP: drive host CLI coding agents
+    assert "code_with_cli_agent" not in names
     assert "list_coding_agents" in names
     assert "update_file" in names
-    assert len(tools) == 11
+    assert len(tools) == 10
 
 
 @pytest.mark.parametrize("ctype", ["gemini", "anthropic", "openai_responses", "openai", ""])
@@ -172,6 +172,19 @@ def test_mcp_tools_are_namespaced_to_avoid_native_name_collisions(paths, tmp_pat
     mcp_only = build_agent_tools("gemini", capabilities=["mcp"], config=config)
     assert len(mcp_only) == 1
     assert isinstance(mcp_only[0], NamespacedMCPToolkit)
+
+
+def test_disabled_mcp_servers_and_unconfigured_images_are_not_available(config):
+    settings = Settings(config.data_dir / "config.yaml")
+    assert "images" not in available_capabilities(config)
+    assert "mcp" not in available_capabilities(config)
+    server = {"name": "disabled", "command": "missing-mcp-command", "enabled": False}
+    settings.upsert_mcp_server(server)
+    assert "mcp" not in available_capabilities(config)
+    assert build_agent_tools(capabilities=["mcp"], config=config) == []
+    settings.upsert_mcp_server({**server, "enabled": True})
+    assert "mcp" in available_capabilities(config)
+    assert len(build_agent_tools(capabilities=["mcp"], config=config)) == 1
 
 
 class FakeMcpSession:
@@ -369,6 +382,7 @@ def test_images_capability_adds_generate_image(paths, tmp_path):
     (it needs the provider/keys)."""
 
     cfg = Config.for_paths(paths)
+    cfg.secret_env = {"GEMINI_API_KEY": "test-key"}
     with_cfg = {
         t.name
         for t in build_agent_tools(

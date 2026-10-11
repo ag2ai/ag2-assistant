@@ -3,16 +3,77 @@
 import json
 import time
 
+import pytest
+
 from assistant import codex_auth
 from assistant.config import Config
 from assistant.llm_configs import LlmConfigStore
-from assistant.tools.image_gen import _image_agent, _workspace_file_url, build_image_tool
+from assistant.secrets import SecretStore
+from assistant.tools.image_gen import (
+    _image_agent,
+    _workspace_file_url,
+    build_image_tool,
+    image_available,
+)
 
 
 def _cfg(provider: str, paths) -> Config:
     c = Config.for_paths(paths)
     c.llm.provider = provider
+    c.secret_env = {"GEMINI_API_KEY": "test-gemini", "OPENAI_API_KEY": "test-openai"}
     return c
+
+
+@pytest.mark.parametrize("provider", ["gemini", "openai"])
+def test_images_need_credentials(paths, provider):
+    config = _cfg(provider, paths)
+    config.secret_env = {}
+    assert not image_available(config)
+    assert _image_agent(config) is None
+
+
+def test_subscription_images_need_sign_in(paths):
+    store = LlmConfigStore(paths)
+    entry = store.save_config({"name": "Sub", "type": "openai_subscription", "model": "gpt"})
+    store.set_active(entry["id"])
+    assert not image_available(_cfg("openai", paths))
+
+
+def test_images_use_the_resolved_chat_model_and_its_secret(paths):
+    store = LlmConfigStore(paths)
+    active = store.save_config({"name": "Global", "type": "gemini", "model": "global"})
+    store.set_active(active["id"])
+    secret = SecretStore(paths).create_secret("Chat key", "chat-key")
+    chat = store.save_config(
+        {"name": "Chat", "type": "openai_responses", "model": "chat", "secret_id": secret["id"]}
+    )
+    config = _cfg("gemini", paths)
+    config.secret_env = {}
+    store.derive_onto(config, chat)
+    agent = _image_agent(config)
+    assert agent is not None
+    assert agent.config.model == "chat"
+    assert agent.config.api_key == "chat-key"
+    incompatible = store.save_config({"name": "Claude", "type": "anthropic", "model": "cl"})
+    store.derive_onto(config, incompatible)
+    assert not image_available(config)
+
+
+@pytest.mark.parametrize("ctype", ["openai", "openai_responses"])
+def test_custom_openai_endpoint_does_not_offer_native_images(paths, ctype):
+    config = _cfg("openai", paths)
+    config.llm.config_type = ctype
+    config.llm.provider_options = {"openai": {"base_url": "http://localhost:8000/v1"}}
+    assert not image_available(config)
+
+
+def test_image_availability_honors_the_environment_model_pin(paths):
+    store = LlmConfigStore(paths)
+    entry = store.save_config({"name": "Claude", "type": "anthropic", "model": "cl"})
+    store.set_active(entry["id"])
+    config = _cfg("gemini", paths)
+    config.llm.env_pinned = True
+    assert image_available(config)
 
 
 def test_image_agent_built_for_gemini_and_openai(paths):

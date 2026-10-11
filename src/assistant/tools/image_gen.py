@@ -24,46 +24,60 @@ from pydantic import Field
 
 from assistant.attachments import build_input
 from assistant.codex_auth import BACKEND_BASE, CodexAuth, default_headers
+from assistant.config import Config
 from assistant.events import ImageGenerated
-from assistant.llm_configs import PROVIDER_OF, LlmConfigStore
-from assistant.secrets import KEY_ENV, SecretStore
+from assistant.llm_configs import LlmConfigStore, image_capable
+from assistant.secrets import KEY_ENV
 from assistant.workspace import resolve, write_image
 
 # Default image models (overridable via env so they track provider deprecations).
 DEFAULT_GEMINI_IMAGE_MODEL = "gemini-3.1-flash-lite-image"
 
 
-def _image_agent(config):
-    """A one-shot image-capable Agent, or None if none is available.
+def _image_config(config: Config) -> Config | None:
+    """Resolve an image-capable configuration with credentials, using only local state."""
+    if not config.llm.config_type and not config.llm.env_pinned:
+        store = LlmConfigStore(config.paths)
+        if store.list_configs():
+            entry = store.image_entry()
+            if entry is None:
+                return None
+            config = config.model_copy(deep=True)
+            store.derive_onto(config, entry)
+    provider = (config.llm.provider or "gemini").lower()
+    provider = "gemini" if provider == "google" else provider
+    ctype = config.llm.config_type or provider
+    if provider == "openai" and config.llm.auth_mode == "subscription":
+        ctype = "openai_subscription"
+    options = config.llm.provider_options.get(provider, {})
+    if not image_capable({"type": ctype, "base_url": options.get("base_url")}):
+        return None
+    if provider == "openai" and options.get("base_url"):
+        return None
+    if ctype == "openai_subscription":
+        return config if CodexAuth(config.paths).status()["signed_in"] else None
+    key = options.get("api_key") or config.secret_env.get(KEY_ENV.get(provider, ""), "")
+    return config if key else None
 
-    Images follow the SELECTED configuration: the active entry runs them iff its type
-    is image-capable (``llm_configs.image_entry()``), with its referenced Secret
-    (falling back to the provider's env key). No fallback hunting through the list —
-    switching the active model never silently routes images through another config.
-    When the store is empty, falls back to the flat ``config.llm.provider`` with the
-    provider's env key. Built directly (not via model_config) to sidestep an import
-    cycle."""
-    store = LlmConfigStore(config.paths)
-    entry = None
-    if store.list_configs():
-        entry = store.image_entry()
-        if entry is None:
-            return None  # the ACTIVE config can't generate images
-        provider = PROVIDER_OF[entry["type"]]
-        model = entry["model"]
-    else:
-        provider = (config.llm.provider or "gemini").lower()
-        if provider in ("google", ""):
-            provider = "gemini"
-        model = config.llm.model
 
-    def _key(name: str) -> str:
-        # Prefer the entry's referenced Secret; fall back to the provider key the
-        # resolved config carries (a Default Secret contributes it via secret_env).
-        own = SecretStore(config.paths).secret_value(entry.get("secret_id", "")) if entry else ""
-        return own or config.secret_env.get(KEY_ENV.get(name, ""), "")
+def image_available(config: Config) -> bool:
+    """Whether the selected model can generate images with its configured credentials."""
+    return _image_config(config) is not None
 
-    if entry is not None and entry["type"] == "openai_subscription":
+
+def _image_agent(config: Config):
+    """A one-shot image-capable Agent, or None when the selected configuration cannot run."""
+    selected = _image_config(config)
+    if selected is None:
+        return None
+    config = selected
+    provider = (config.llm.provider or "gemini").lower()
+    provider = "gemini" if provider == "google" else provider
+    model = config.llm.model
+    options = config.llm.provider_options.get(provider, {})
+    key = options.get("api_key") or config.secret_env.get(KEY_ENV.get(provider, ""), "")
+
+    if config.llm.auth_mode == "subscription" and provider == "openai":
         # ChatGPT subscription: the backend runs the native image tool too (verified
         # live — AG2 captures the streamed image on reply.files). Same construction
         # rules as model_config's subscription branch: token as bearer, Codex headers,
@@ -82,11 +96,11 @@ def _image_agent(config):
     if provider == "gemini":
         image_model = config.image_model or DEFAULT_GEMINI_IMAGE_MODEL
         gemini_cfg = GeminiConfig(
-            model=image_model, api_key=_key("gemini"), response_modalities=["TEXT", "IMAGE"]
+            model=image_model, api_key=key, response_modalities=["TEXT", "IMAGE"]
         )
         return Agent("imager", config=gemini_cfg)
     if provider == "openai":
-        cfg = OpenAIResponsesConfig(model=model, api_key=_key("openai"))
+        cfg = OpenAIResponsesConfig(model=model, api_key=key)
         return Agent("imager", config=cfg, tools=[ImageGenerationTool()])
     return None  # anthropic / ollama: no image generation
 

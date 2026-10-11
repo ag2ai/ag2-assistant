@@ -37,6 +37,7 @@ from assistant.channels.router import Reply
 from assistant.codex_auth import CodexAuth
 from assistant.events import TurnCancelled, TurnFailed
 from assistant.gateway.tasks_service import TaskService
+from assistant.live_configs import LiveConfigStore
 from assistant.llm_configs import LlmConfigStore
 from assistant.memory import read_profile_sync
 from assistant.pairing import PairingStore
@@ -54,6 +55,75 @@ from tests.support.fakes import (
 )
 from tests.support.http import client
 from tests.support.stubs import acp_counter, mcp_counter, write_skill, write_stub
+
+
+async def test_voice_tool_schemas_refresh_when_the_selected_model_loses_its_key(config):
+    models = ScriptedModels()
+    tasks = TaskService(config, summary_factory=fake_summary_factory())
+    gateway = real_gateway(
+        config, memory=False, onboard=False, model_factory=models, task_service=tasks
+    )
+    tasks.set_gateway(gateway)
+    await tasks.start(scheduler=False)
+    await gateway.start()
+
+    def offered():
+        return {s.function.name for s in models.requests[-1][2] if getattr(s, "function", None)}
+
+    try:
+        await gateway.send_message("first", chat_id="existing")
+        assert not {"list_voices", "set_voice"} & offered()
+        assert {"describe_settings", "describe_integrations"} <= offered()
+        secret = SecretStore(config.paths).create_secret("Voice", "voice-key")
+        store = LiveConfigStore(config.paths)
+        entry = store.save_config(
+            {"name": "Voice", "provider": "openai", "secret_id": secret["id"]}
+        )
+        store.set_active(entry["id"])
+        await gateway.send_message("second", chat_id="existing")
+        assert {"list_voices", "set_voice"} <= offered()
+        SecretStore(config.paths).delete_secret(secret["id"])
+        await gateway.send_message("third", chat_id="existing")
+        assert not {"list_voices", "set_voice"} & offered()
+        assert {"describe_settings", "describe_integrations"} <= offered()
+    finally:
+        await gateway.close()
+        await tasks.close()
+
+
+async def test_image_and_cli_schemas_follow_the_current_chat_capabilities(config, tmp_path):
+    models = ScriptedModels()
+    gateway = real_gateway(config, memory=False, onboard=False, model_factory=models)
+    await gateway.start()
+
+    def offered():
+        return {s.function.name for s in models.requests[-1][2] if getattr(s, "function", None)}
+
+    try:
+        await gateway.send_message("first", chat_id="existing")
+        assert not {"generate_image", "code_with_cli_agent"} & offered()
+        assert "list_coding_agents" in offered()
+        secret = SecretStore(config.paths).create_secret("Images", "image-key")
+        store = LlmConfigStore(config.paths)
+        images = store.save_config(
+            {"name": "Images", "type": "gemini", "model": "gm", "secret_id": secret["id"]}
+        )
+        other = store.save_config({"name": "Other", "type": "anthropic", "model": "cl"})
+        store.set_active(other["id"])
+        adapter = write_stub(tmp_path / "codex-acp")
+        config.search_path = [tmp_path]
+        await gateway.send_message("second", chat_id="existing", llm_config_id=images["id"])
+        assert {"generate_image", "code_with_cli_agent"} <= offered()
+        adapter.unlink()
+        await gateway.send_message("third", chat_id="existing", llm_config_id=other["id"])
+        assert not {"generate_image", "code_with_cli_agent"} & offered()
+        await gateway.send_message("fourth", chat_id="existing", llm_config_id=images["id"])
+        assert "generate_image" in offered()
+        SecretStore(config.paths).delete_secret(secret["id"])
+        await gateway.send_message("fifth", chat_id="existing")
+        assert "generate_image" not in offered()
+    finally:
+        await gateway.close()
 
 
 async def test_existing_chat_discovers_a_skill_on_its_next_turn(config):

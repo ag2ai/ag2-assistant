@@ -69,24 +69,6 @@ VOICE_PROMPT = (
 )
 
 
-def profile_live_config(config: Config, settings: "Settings") -> dict | None:
-    """The live (voice) config Active for THIS profile: its per-profile **Active
-    override** (ADR 0015) when set and still present, else the install-wide active.
-
-    A dangling override (points at a deleted config) degrades silently to the
-    install-wide active — never an error — mirroring the Text resolution in
-    ``llm_configs.apply_active``. This is the seam where env pin > profile override >
-    install-wide active > env fallback is realised for voice: the caller layers the
-    ``AG2ASSISTANT_VOICE_MODEL`` pin and the legacy-provider fallback around it."""
-    store = LiveConfigStore(config.paths)
-    override = settings.get_live_override()
-    if override:
-        entry = store.get_config(override)
-        if entry is not None:
-            return entry
-    return store.active_config()
-
-
 def voice_realtime_config(
     config: Config,
     settings: "Settings",
@@ -103,12 +85,13 @@ def voice_realtime_config(
     `AG2ASSISTANT_VOICE_MODEL` still overrides the model. Input transcription is enabled
     per provider so the user's speech arrives as text for the on-screen bubbles.
     """
-    active = None if provider else profile_live_config(config, settings)
+    store = LiveConfigStore(config.paths)
+    active = None if provider else store.active_config(settings.get_live_override())
     if active:
         p = voice_providers.get(active["provider"])
         model = config.voice_model or active["model"] or p.realtime_model
         chosen_voice = voice or active.get("voice") or p.default_voice
-        api_key = LiveConfigStore(config.paths).resolve_key(active, config.secret_env)
+        api_key = store.resolve_key(active, config.secret_env)
     else:
         p = voice_providers.get(provider or settings.voice_provider())
         model = config.voice_model or p.realtime_model
@@ -134,7 +117,7 @@ async def synthesize_preview(
     caller falls back (live preview / skip the sample).
     """
     if provider is None:
-        active = profile_live_config(config, settings)
+        active = LiveConfigStore(config.paths).active_config(settings.get_live_override())
         if active:
             provider = active["provider"]
             api_key = api_key or LiveConfigStore(config.paths).resolve_key(

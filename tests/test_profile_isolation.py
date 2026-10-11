@@ -410,7 +410,11 @@ def test_voice_system_tool_isolated(registry, paths):
         provider = voice_providers.get(a_settings.voice_provider())
         target = next(v for v in provider.voices if v != provider.default_voice)
 
-        tools = build_system_tools(a_runtime.tasks, a_settings, chats=a_runtime.gateway)
+        voice_config = a_runtime.config.model_copy(deep=True)
+        voice_config.secret_env = {"GEMINI_API_KEY": "test-voice"}
+        tools = build_system_tools(
+            a_runtime.tasks, a_settings, chats=a_runtime.gateway, config=voice_config
+        )
         set_voice = next(t for t in tools if t.name == "set_voice")
         msg = asyncio.run(_run_tool(set_voice, voice=target))
         assert "Voice set to" in msg

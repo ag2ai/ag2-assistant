@@ -366,6 +366,7 @@ class Gateway:
             chats=self,
             platform=self._platform,
             peers=PeerStore(cfg.paths),
+            config=cfg,
         )
 
     def _model_key(self, cfg: Config, model: str | None = None) -> str:
