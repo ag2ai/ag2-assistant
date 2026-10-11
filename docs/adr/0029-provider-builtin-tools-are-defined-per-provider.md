@@ -156,7 +156,9 @@ Anthropic accepts one or the other. A turn applies the same filter to what it re
 a hand-edited option that is undeclared never reaches the tool. Malformed usage limits
 are omitted individually, preserving valid domain restrictions. Invalid or conflicting
 domain restrictions raise before a turn builds tools, rather than enabling unrestricted
-access. Switching a tool off removes its entry and its
+access. Stored options expressed as key-value pairs retain their former mapping
+semantics on each read; an unconvertible value raises instead of discarding a policy.
+The authored config remains unchanged. Switching a tool off removes its entry and its
 options with it. The gateway ships `builtin_options_by_type`; the option's words are
 `lib/builtinTools.ts`'s, keyed by the option id alone because a name means the same on
 every tool that takes it.

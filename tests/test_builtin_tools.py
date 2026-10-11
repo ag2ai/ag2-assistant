@@ -14,7 +14,7 @@ from assistant.builtin_tools import (
     find_builtin,
     suppressed_by,
 )
-from assistant.config import update_global_section
+from assistant.config import Config, update_global_section
 from assistant.tools import CAPABILITIES, build_agent_tools
 
 
@@ -269,3 +269,52 @@ def test_conflicting_stored_domain_filters_never_become_an_unrestricted_tool():
                 }
             },
         )
+
+
+@pytest.mark.parametrize("tool_id", ["web_search", "web_fetch"])
+@pytest.mark.parametrize("option", ["allowed_domains", "blocked_domains"])
+async def test_persisted_option_pairs_keep_their_domain_restrictions(paths, tool_id, option):
+    entry = {
+        "id": "c_pairs",
+        "name": "M",
+        "type": "anthropic",
+        "model": "m",
+        "builtin_tools": {tool_id: [[option, ["example.com"]], ["max_uses", 3]]},
+    }
+    update_global_section(paths, "llm_configs", {"configs": [entry], "active": None})
+    store = llm_configs.LlmConfigStore(paths)
+    for _ in range(2):
+        config = Config.for_paths(paths)
+        store.derive_onto(config, store.get_config(entry["id"]))
+        tools = build_agent_tools(
+            config.llm.config_type, builtin=config.llm.builtin_tools, capabilities=["web"]
+        )
+        tool = next(t for t in tools if getattr(t, "name", "") == tool_id)
+        (schema,) = await tool.schemas(None)
+        assert getattr(schema, option) == ["example.com"]
+        assert schema.max_uses == 3
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        "allowed_domains=example.com",
+        1,
+        True,
+        ["allowed_domains"],
+        [["allowed_domains"]],
+        [["allowed_domains", ["example.com"], "extra"]],
+    ],
+)
+def test_malformed_stored_options_never_become_an_unrestricted_tool(options):
+    with pytest.raises(ValueError, match="options"):
+        build_agent_tools("anthropic", builtin={"web_fetch": options}, capabilities=["web"])
+
+
+@pytest.mark.parametrize("options", [None, {}, []])
+async def test_empty_stored_options_keep_the_provider_defaults(options):
+    tools = build_agent_tools("anthropic", builtin={"web_fetch": options}, capabilities=["web"])
+    fetch = next(t for t in tools if getattr(t, "name", "") == "web_fetch")
+    (schema,) = await fetch.schemas(None)
+    assert schema.allowed_domains is None
+    assert schema.blocked_domains is None

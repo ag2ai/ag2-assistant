@@ -232,7 +232,15 @@ def clean_options(spec: BuiltinTool, raw: Mapping, *, strict: bool = True) -> di
 
 def usable_options(spec: BuiltinTool, raw: object) -> dict:
     """Stored options fit to send; invalid domain restrictions raise."""
-    return clean_options(spec, raw if isinstance(raw, Mapping) else {}, strict=False)
+    stored = {} if raw is None else raw
+    error = f"{spec.id} options must be an object or a list of key-value pairs"
+    if not isinstance(stored, (Mapping, list, tuple)):
+        raise ValueError(error)
+    try:
+        options = dict(stored)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(error) from exc
+    return clean_options(spec, options, strict=False)
 
 
 def active_builtins(
