@@ -70,7 +70,7 @@
 <svelte:document onpointerdown={outside} onkeydown={(event) => { if (event.key === 'Escape') menu = '' }} />
 
 <div class="dlist screens-nav" onscroll={() => menu = ''}>
-  <button class="open create-screen" onclick={() => go('/c/' + newChatId())}>Create with assistant</button>
+  <button class="newrow" onclick={() => go('/c/' + newChatId())}><Icon name="plus" size={15} /> Create with assistant</button>
   {#if error}<p role="alert">{error}</p>{/if}
   {#if renameError}<p role="alert">{renameError}</p>{/if}
   {#if !$screenRows.length}<div class="none">Ask the assistant to create a dashboard, or add a Screen in Files.</div>{/if}
@@ -110,7 +110,6 @@
 </div>
 
 <style>
-  .create-screen { margin: 8px 0 16px; }
   .screen-row { display: flex; align-items: center; gap: 8px; color: var(--text); }
   .screen-label { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
   .screen-label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
