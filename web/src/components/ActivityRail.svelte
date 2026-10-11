@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { route, switchTab } from '../router.ts'
+  import { route, switchTab, openOverlay } from '../router.ts'
   import type { Tab } from '../lib/route.ts'
   import Icon from './Icon.svelte'
   import ag2Logo from '../assets/ag2.svg'
@@ -7,9 +7,9 @@
 
   const sections: { tab: Tab; label: string; icon: string }[] = [
     { tab: 'chats', label: 'Chats', icon: 'message' },
-    { tab: 'tasks', label: 'Tasks', icon: 'list' },
+    { tab: 'tasks', label: 'Tasks', icon: 'clock' },
     { tab: 'files', label: 'Files', icon: 'folder' },
-    { tab: 'screens', label: 'Screens', icon: 'monitor' },
+    { tab: 'screens', label: 'Screens', icon: 'file-text' },
   ]
 </script>
 
@@ -25,11 +25,18 @@
       <Icon name={section.icon} size={21} strokeWidth={1.7} />
     </button>
   {/each}
+  <div class="rail-bottom">
+    <button class="activity" aria-label="Settings" data-label="Settings" aria-haspopup="dialog"
+      aria-expanded={$route.overlay === 'settings'} onclick={() => openOverlay('settings', 'general')}>
+      <Icon name="settings" size={20} strokeWidth={1.7} />
+    </button>
+  </div>
 </nav>
 
 <style>
   .activity-rail { display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 12px 0; background: var(--panel); border-right: 1px solid var(--line); }
   .rail-brand { height: 30px; display: grid; place-items: center; margin-bottom: 12px; }
+  .rail-bottom { margin-top: auto; padding-top: 14px; }
   .activity { position: relative; display: grid; place-items: center; width: 38px; height: 38px; padding: 0; flex: none; border: none; border-radius: 10px; background: none; color: var(--text-muted); cursor: pointer; }
   .activity:hover { color: var(--text); background: var(--surface-hover); }
   .activity.active { color: var(--accent); background: var(--accent-soft); }

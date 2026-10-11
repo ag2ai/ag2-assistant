@@ -92,7 +92,7 @@
   }}
   ontoggle={(event) => { opened = event.newState === 'open'; if (!opened) { pinned = false; keepOpen() } }}>
   <div class="runs-header">
-    <h2>{label}<span> ×{runs.length}</span></h2>
+    <h2>{label}{#if runs.length > 1}<span> ×{runs.length}</span>{/if}</h2>
   </div>
   <ol>
     {#each groups as { run, count, firstAt, lastAt } (run.id)}

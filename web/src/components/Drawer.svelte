@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { get } from 'svelte/store'
   import { chats, tasks, listsLoaded, profiles, profileEpoch, pendingTaskEdit } from '../store.ts'
-  import { route, go, goTab, newChatId, openOverlay } from '../router.ts'
+  import { route, go, goTab, newChatId } from '../router.ts'
   import { api } from '../transport/api/index.ts'
   import { switchProfile } from '../controller.ts'
   import Icon from './Icon.svelte'
@@ -607,9 +607,6 @@
       <span class="uhicon"><Icon name="cpu" size={13} /></span><span class="uhlabel">Today · {usageLabel}</span>
     </div>
   {/if}
-  <div class="dfoot">
-    <button class="settingsbtn" onclick={() => openOverlay('settings', 'general')}><Icon name="settings" size={15} /> Settings</button>
-  </div>
 </div>
 
 <style>
