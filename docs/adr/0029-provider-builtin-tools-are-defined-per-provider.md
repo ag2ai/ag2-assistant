@@ -124,8 +124,8 @@ without a data migration; the values are empty today.
 
 ## Amendment: a switched-on tool has options
 
-Decision 5 held while nothing needed configuring. A search with no cap on how often a
-turn may run it, and no way to keep it to trusted sources, turned out to need both.
+Decision 5 held while nothing needed configuring. Search needs a use cap per provider
+request and domain filters for trusted sources; a turn can contain several requests.
 
 Each registration now declares, in `fields`, the options that type honours for that
 tool — the ones its AG2 mapper reads and its provider API accepts, which is the per-type argument of
