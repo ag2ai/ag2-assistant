@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { get } from 'svelte/store'
   import { chats, tasks, listsLoaded, profiles, profileEpoch, pendingTaskEdit } from '../store.ts'
-  import { route, go, goTab, switchTab, newChatId, openOverlay } from '../router.ts'
+  import { route, go, goTab, newChatId, openOverlay } from '../router.ts'
   import { api } from '../transport/api/index.ts'
   import { switchProfile } from '../controller.ts'
   import Icon from './Icon.svelte'
@@ -14,8 +14,6 @@
   import FilesTree from './FilesTree.svelte'
   import ScreensNav from './ScreensNav.svelte'
   import { fmtNextIn, fmtAgoShort, dayRows, fmtDayShort, taskRecencyAt } from '../lib/time.ts'
-  import ag2Logo from '../assets/ag2.svg'
-  import ag2LogoWhite from '../assets/ag2-white.svg'
   import { inkOn } from '../design/palette.ts'
   import type { ChatRow, Profile, RunStatus, StatusRow, Task, UsageRollup, UsageTotals } from '../schemas/index.ts'
 
@@ -31,11 +29,7 @@
     .replace(/\b[Bb]etween (\S+) and (\S+)/, '$1–$2')
     .replace(/ through /g, '–')
 
-  // Profile switcher chips (§5.4). A row of accent-tinted monogram chips at the
-  // top of the Drawer: the active profile filled, others outlined; click switches
-  // (full-page nav — App.svelte's boot makes the URL pid the persisted choice and
-  // applies its accent). >4 profiles collapse the overflow into a small anchored
-  // picker. Each profile's accent is a #rrggbb hex applied directly.
+  // The current profile opens a picker of all profiles and their shortcut hints.
   const list = $derived($profiles.list)
   // ⌘1..9 shortcut hint for a chip's tooltip (§5.4): the profile's 1-based index in
   // registry order, shown only for the first 9 (the shortcut range). ⌘ on mac, Ctrl
@@ -45,44 +39,50 @@
     const i = list.findIndex((p) => p.id === pid)
     return i >= 0 && i < 9 ? ` — ${isMac ? '⌘' : 'Ctrl+'}${i + 1}` : ''
   }
-  const chipTitle = (p: Profile) => p.name + shortcutHint(p.id)
+  const profileTitle = (p: Profile) => p.name + shortcutHint(p.id)
   const active = $derived(list.find((p) => p.id === $profiles.activeId))
   const initial = (p: Profile | undefined) => (p?.name || '?').trim().charAt(0).toUpperCase() || '?'
 
   // In-place switch (no reload → no blink). switchProfile no-ops on the active one.
-  const switchTo = (pid: string) => switchProfile(pid)
-
-  // Chips shown inline vs. collapsed. ≤4 profiles: all inline, no menu. >4: show
-  // the first few inline and fold the rest into a "+N" overflow picker (which also
-  // includes the active one so it's always reachable/marked).
-  const MAX_CHIPS = 4
-  const inlineChips = $derived(list.length <= MAX_CHIPS ? list : list.slice(0, MAX_CHIPS - 1))
-  const overflow = $derived(list.length <= MAX_CHIPS ? [] : list.slice(MAX_CHIPS - 1))
+  const switchTo = (pid: string) => { pickerOpen = false; switchProfile(pid) }
 
   let pickerOpen = $state(false)
+  let profileTrigger = $state<HTMLButtonElement | null>(null)
+  function focusProfileMenu(node: HTMLDivElement) {
+    node.querySelector<HTMLButtonElement>('[aria-current="true"]')?.focus()
+  }
+  function profileMenuKey(event: KeyboardEvent & { currentTarget: HTMLDivElement }) {
+    const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button'))
+    const current = buttons.indexOf(document.activeElement as HTMLButtonElement)
+    let next: number
+    if (event.key === 'ArrowDown') next = (current + 1) % buttons.length
+    else if (event.key === 'ArrowUp') next = (current - 1 + buttons.length) % buttons.length
+    else if (event.key === 'Home') next = 0
+    else if (event.key === 'End') next = buttons.length - 1
+    else return
+    event.preventDefault()
+    buttons[next]?.focus()
+  }
   // Close the picker on click-outside / Escape.
   function onDocPointer(e: PointerEvent) {
     const t = e.target instanceof Element ? e.target : null
-    if (pickerOpen && !t?.closest('.profchips')) pickerOpen = false
+    if (pickerOpen && !t?.closest('.profile-header')) pickerOpen = false
     if (menuChat && !t?.closest('.chatmenu') && !t?.closest('.rowkebab')) menuChat = ''
     if (menuTask && !t?.closest('.taskmenu') && !t?.closest('.rowkebab')) menuTask = ''
   }
   function onDocKey(e: KeyboardEvent) {
     if (createOpen && e.key === 'Escape') { createOpen = false; return }
-    if (pickerOpen && e.key === 'Escape') pickerOpen = false
+    if (pickerOpen && e.key === 'Escape') { pickerOpen = false; profileTrigger?.focus() }
     if (menuChat && e.key === 'Escape') menuChat = ''
     if (menuTask && e.key === 'Escape') menuTask = ''
   }
 
-  // "+" chip → profile-creation modal (§5.4). Reuses ProfileForm (same form as
-  // onboarding). Preset accents already claimed by existing profiles are hidden
-  // (a custom colour is always available). On success → switch to the new profile
-  // in place (switchProfile adopts its accent and lands on its home).
+  // Profile creation reuses ProfileForm and switches to the new profile in place.
   let createOpen = $state(false)
   const claimedAccents = $derived(list.map((p) => p.accent))
   async function createProfile({ name, accent }: ProfileDraft) {
     const res = await api.createProfile(name, accent) // throws → inline
-    // Add to the live list before switching so switchProfile finds its accent/chip.
+    // Add to the live list before switching so switchProfile finds its accent.
     profiles.update((r) => ({ ...r, list: [...r.list, res.profile] }))
     // switchProfile lands in place (no reload), so nothing unmounts this modal for
     // us — close it here, or the form sits on its "Creating…" busy state forever.
@@ -374,67 +374,32 @@
 
 <div class="drawer">
   <RailResizer side="left" width={drawerWidth} clamp={clampDrawerWidth} />
-  <div class="dhead">
-    <img class="brandlogo on-light" src={ag2Logo} alt="AG2" />
-    <img class="brandlogo on-dark" src={ag2LogoWhite} alt="AG2" />
-    <span class="brand">Assistant</span>
-  </div>
-
   {#if active}
-    <div class="profchips">
-      <div class="chiprow" role="tablist" aria-label="Profiles">
-        {#each inlineChips as p (p.id)}
-          {@const isActive = p.id === active.id}
-          <button
-            class="chip"
-            class:active={isActive}
-            style="--p:{p.accent}; --p-ink:{inkOn(p.accent)}"
-            title={chipTitle(p)}
-            role="tab"
-            aria-selected={isActive}
-            aria-current={isActive ? 'true' : undefined}
-            onclick={() => (isActive ? null : switchTo(p.id))}
-          >
-            <span class="mono">{initial(p)}</span>
-            {#if hasUnseen(p.id)}<span class="actdot" title="unread results"></span>{/if}
-          </button>
-        {/each}
+    <div class="profile-header">
+      <button class="profile-trigger" bind:this={profileTrigger}
+        style="--p:{active.accent}; --p-ink:{inkOn(active.accent)}"
+        title={active.name} aria-label={`Switch profile: ${active.name}`}
+        aria-haspopup="menu" aria-expanded={pickerOpen} aria-controls="profile-menu"
+        onclick={() => pickerOpen = !pickerOpen}>
+        <span class="profile-mark" aria-hidden="true">
+          {initial(active)}
+          {#if hasUnseen(active.id)}<span class="actdot" title="unread results"></span>{/if}
+        </span>
+        <span class="activename">{active.name}</span>
+      </button>
 
-        {#if overflow.length}
-          {@const overflowActive = overflow.some((p) => p.id === active.id)}
-          {@const overflowUnseen = overflow.some((p) => hasUnseen(p.id))}
-          <button
-            class="chip more"
-            class:active={overflowActive}
-            title="More profiles"
-            aria-haspopup="menu"
-            aria-expanded={pickerOpen}
-            onclick={() => (pickerOpen = !pickerOpen)}
-          >
-            <span class="mono">+{overflow.length}</span>
-            {#if overflowUnseen}<span class="actdot" title="unread results"></span>{/if}
-          </button>
-        {/if}
-
-        <!-- "+" chip → create-profile modal (§5.4). -->
-        <button class="chip add" title="New profile" aria-label="New profile" onclick={() => (createOpen = true)}>
-          <Icon name="plus" size={15} />
-        </button>
-      </div>
-
-      <span class="activename" title={active.name}>{active.name}</span>
-
-      {#if pickerOpen && overflow.length}
-        <div class="profmenu" role="menu">
-          {#each overflow as p (p.id)}
+      {#if pickerOpen}
+        <div class="profmenu" id="profile-menu" role="menu" aria-label="Profiles" tabindex="-1"
+          use:focusProfileMenu onkeydown={profileMenuKey}>
+          {#each list as p (p.id)}
             {@const isActive = p.id === active.id}
             <button
               class="profitem"
               class:active={isActive}
               role="menuitem"
-              title={chipTitle(p)}
+              title={profileTitle(p)}
               aria-current={isActive ? 'true' : undefined}
-              onclick={() => (isActive ? (pickerOpen = false) : switchTo(p.id))}
+              onclick={() => switchTo(p.id)}
             >
               <span class="profdot" style="--dot:{p.accent}"></span>
               <span class="profname">{p.name}</span>
@@ -442,6 +407,10 @@
               {#if isActive}<Icon name="check" size={13} />{/if}
             </button>
           {/each}
+          <div class="profdivider"></div>
+          <button class="profitem" role="menuitem" onclick={() => { pickerOpen = false; createOpen = true }}>
+            <Icon name="plus" size={14} /> New profile
+          </button>
         </div>
       {/if}
     </div>
@@ -467,13 +436,6 @@
   {#if foldersChat}
     <ChatFolders chatId={foldersChat} onClose={() => (foldersChat = '')} />
   {/if}
-
-  <div class="segbar" role="tablist" aria-label="View">
-    <button class="seg" class:on={$route.tab === 'chats'} role="tab" aria-selected={$route.tab === 'chats'} onclick={() => switchTab('chats')}><Icon name="message" size={14} /> Chats</button>
-    <button class="seg" class:on={$route.tab === 'tasks'} role="tab" aria-selected={$route.tab === 'tasks'} onclick={() => switchTab('tasks')}><Icon name="list" size={14} /> Tasks</button>
-    <button class="seg" class:on={$route.tab === 'files'} role="tab" aria-selected={$route.tab === 'files'} onclick={() => switchTab('files')}><Icon name="folder" size={14} /> Files</button>
-    <button class="seg" class:on={$route.tab === 'screens'} role="tab" aria-selected={$route.tab === 'screens'} onclick={() => switchTab('screens')}>Screens</button>
-  </div>
 
   {#snippet chatRow(s: ChatRow)}
     <div class="drow chatrow" class:on={$route.name === 'chat' && $route.id === s.chat_id}
@@ -651,52 +613,19 @@
 </div>
 
 <style>
-  .segbar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-radius: var(--radius-sm); }
-  /* Profile switcher chips (§5.4). A row of palette-tinted monogram chips below
-     the brand header — the active profile filled with its palette colour, others
-     outlined in it. The active profile's name sits beside the row (kept visible
-     by request). >4 profiles fold the overflow into a "+N" chip + anchored menu
-     (reusing .profmenu/.profitem below). Supersedes the Phase-1 indicator. */
-  .profchips {
-    position: relative;
-    display: flex; align-items: center; gap: 10px;
-    padding: 10px 16px;
-    min-width: 0;
+  .profile-header { position: relative; padding: 10px 12px; min-width: 0; }
+  .profile-trigger {
+    display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px;
+    border: 1px solid transparent; border-radius: var(--radius-sm); background: none;
+    color: var(--text); font: inherit; text-align: left; cursor: pointer;
   }
-  .chiprow { display: flex; align-items: center; gap: 6px; flex: none; }
-  .chip {
-    position: relative; flex: none;
-    width: 28px; height: 28px; border-radius: var(--radius-pill);
-    display: inline-flex; align-items: center; justify-content: center;
-    cursor: pointer; font: inherit; font-size: var(--text-xs);
-    font-weight: var(--fw-bold); line-height: 1;
-    /* outlined by default: tinted ring + tinted glyph on the surface */
-    background: var(--surface);
-    color: var(--p, var(--accent));
-    border: 1.5px solid var(--p, var(--accent));
-    transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+  .profile-trigger:hover .activename { color: var(--p); }
+  .profile-trigger:focus-visible { outline: 2px solid var(--p); outline-offset: 2px; }
+  .profile-mark {
+    position: relative; display: grid; place-items: center; flex: none; width: 28px; height: 28px;
+    border: 1.5px solid var(--p); border-radius: var(--radius-pill);
+    background: var(--p); color: var(--p-ink); font-size: var(--text-xs); font-weight: var(--fw-bold);
   }
-  .chip:hover { transform: translateY(-1px); }
-  .chip:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--p, var(--accent)) 35%, transparent); }
-  /* active: filled with the palette colour, white glyph, cursor default. The selected
-     ring is INSET (a surface-coloured gap just inside the tinted border) so the chip
-     keeps the exact same 28px footprint as the others — an OUTER ring would extend past
-     the box and make the row's spacing/alignment shift per active-chip position. */
-  .chip.active {
-    background: var(--p, var(--accent)); color: var(--p-ink, var(--text-on-accent)); cursor: default;
-    border-color: var(--p, var(--accent));
-    box-shadow: inset 0 0 0 2px var(--surface);
-  }
-  .chip.more { color: var(--muted); border-color: var(--line); background: var(--surface); font-weight: var(--fw-semibold); }
-  .chip.more:hover { color: var(--text); border-color: var(--text); }
-  .chip.more.active { color: var(--text); }
-  /* "+" chip: a quiet dashed affordance to add a profile */
-  .chip.add { color: var(--muted); border-style: dashed; border-color: var(--line); background: var(--surface); }
-  .chip.add:hover { color: var(--text); border-color: var(--text); }
-  .mono { pointer-events: none; }
-  /* unread-results dot: a small badge in the chip's top-right when the profile has
-     finished tasks the user hasn't opened yet. A fixed amber attention color (not the
-     palette --accent) so it reads as "new" and stays legible on every profile tint. */
   .actdot {
     position: absolute; top: -1px; right: -1px;
     width: 8px; height: 8px; border-radius: var(--radius-pill);
@@ -706,7 +635,7 @@
   .actdot.inmenu { position: static; margin-left: auto; border-color: var(--surface); }
 
   .activename {
-    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     font-size: var(--text-sm); font-weight: var(--fw-semibold); color: var(--text);
   }
 
@@ -719,11 +648,10 @@
     font-weight: var(--fw-medium);
   }
 
-  /* Overflow picker (>4 profiles). Absolutely positioned under the chip row,
-     styled with existing tokens to match the drawer aesthetic. */
+  /* The profile picker opens below the current-profile button. */
   .profmenu {
-    position: absolute; top: calc(100% - 4px); left: 16px; z-index: var(--z-modal);
-    min-width: 150px; max-width: 220px; display: flex; flex-direction: column;
+    position: absolute; top: calc(100% - 4px); left: 12px; right: 12px; z-index: var(--z-modal);
+    max-height: calc(100vh - 90px); overflow-y: auto; display: flex; flex-direction: column;
     padding: 4px; background: var(--surface-elevated); border: 1px solid var(--line);
     border-radius: var(--radius-sm); box-shadow: var(--shadow-lg);
   }
@@ -739,6 +667,7 @@
   .profitem.active { color: var(--muted); cursor: default; }
   .profitem.active:hover { background: none; }
   .profitem :global(svg) { flex: none; opacity: .7; }
+  .profdivider { height: 1px; flex: none; margin: 4px 0; background: var(--line); }
 
   /* Create-profile modal: uses the global .modal shell; just a lead line here. */
   .profcreate { width: min(460px, 92vw); }
