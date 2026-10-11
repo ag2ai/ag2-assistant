@@ -23,7 +23,10 @@ Open `/app/browser/layout.html` on the Vite server to inspect the fixtures visua
 Pass `charts` after the Vite URL for native chart fixtures covering themes, sizing,
 missing values, event markers, legend controls and accessible data tables.
 Pass `thinking <profile-id>` to mount the real Thread and check activity through tool
-rounds, counted tool labels, replay, final replies, cancellation and compaction. It reads settings
+rounds, aggregated run labels, counted repeated details and hover/focus/tap lists, replay, final replies, cancellation
+and compaction. Long run lists must scroll without escaping the viewport. Written files expose inline
+Open/Download icons within their run list, without an extra timeline badge.
+Tools with no meaningful parameters retain their counted chip without an empty popover. It reads settings
 from the running gateway through Vite's API proxy; it sends no chat messages.
 These fixtures are development files. Production ships the app entry and a passive
 preview entry used by the screens skill.

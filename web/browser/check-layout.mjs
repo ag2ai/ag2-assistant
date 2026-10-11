@@ -24,6 +24,9 @@ const send = (method, params = {}) => new Promise((resolve, reject) => {
   socket.send(JSON.stringify({ id, method, params }))
 })
 try {
+  await send('Page.enable')
+  await send('Page.navigate', { url: 'about:blank' })
+  await send('Runtime.discardConsoleEntries')
   await Promise.all([send('Runtime.enable'), send('Page.enable'), send('Network.enable')])
   await send('Emulation.setFocusEmulationEnabled', { enabled: true })
   await send('Network.setCacheDisabled', { cacheDisabled: true })

@@ -4,7 +4,7 @@
 // breaks the UI.
 import { CardSourceEvent } from './card_source.ts'
 import { z } from 'zod'
-import type { KeyedToolCard as ToolCard } from '../lib/toolcards.ts'
+import type { ToolCard } from '../lib/toolcards.ts'
 import type { A2UIComponent, A2UIData } from '../lib/a2ui.ts'
 
 const TextPart = z.object({ __event__: z.string().optional(), content: z.string().optional() })
@@ -219,17 +219,17 @@ export type Feedback = { sentiment?: string; reason?: string } | null
 // from the reducer, the controller and a2ui.js never collide. `at` is the source
 // event's created_at (Unix seconds).
 type ItemBase = { id: number; at?: number }
+export type ToolRun = ItemBase & { name: string; detail: string; card?: ToolCard }
 
-// One card per tool call the thread renders alongside the chips — the union
-// lib/toolcards.ts builds, keyed by `id` for the rendered list.
+// Structured provenance and artifact metadata for an individual tool run.
 export type { ToolCard }
 
 export type ThreadItem =
   // `voice` marks a bubble spoken in a live voice session — UserMessage/AgentMessage style it.
   | (ItemBase & { kind: 'user'; text: string; queued?: boolean; voice?: boolean })
   | (ItemBase & { kind: 'agent'; text: string; streaming?: boolean; continues?: boolean; empty?: boolean; voice?: boolean; feedback?: Feedback })
-  | (ItemBase & { kind: 'tools'; names: { name: string; n: number }[]; cards: ToolCard[] })
-  | (ItemBase & { kind: 'note'; icon: string; text: string; alert?: boolean; ends?: boolean; pending?: boolean; compactionAgent?: string; a2uiActionPending?: boolean; surfaceId?: string; savedPath?: string; saveRequestId?: string })
+  | (ItemBase & { kind: 'tools'; names: { name: string; n: number }[]; runs: ToolRun[] })
+  | (ItemBase & { kind: 'note'; icon: string; text: string; alert?: boolean; observerAlert?: boolean; ends?: boolean; pending?: boolean; compactionAgent?: string; a2uiActionPending?: boolean; surfaceId?: string; savedPath?: string; saveRequestId?: string })
   | (ItemBase & { kind: 'taskcard'; taskId: string; title?: string; scheduled: boolean })
   | (ItemBase & { kind: 'subagent'; taskId: string; agent: string; objective: string; status?: string; result?: string; error?: string; items: ThreadItem[] })
   | (ItemBase & { kind: 'deliverable'; taskId?: string; deliverableId: string; description?: string; preview?: string; path?: string; feedback?: Feedback })

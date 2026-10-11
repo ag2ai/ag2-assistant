@@ -3,8 +3,7 @@
 // use the same reducer, so they produce identical items.
 
 import { projectSourceEvent } from './lib/cardSources.ts'
-import { cardFor } from './lib/toolcards.ts'
-import type { ToolCard } from './lib/toolcards.ts'
+import { cardFor, toolDetail } from './lib/toolcards.ts'
 import { fmtDateTime } from './lib/time.ts'
 import { applyA2UIMessage, asComponent, asComponents } from './lib/a2ui.ts'
 import { nextItemId as nid } from './lib/ids.ts'
@@ -26,29 +25,32 @@ function joinText(parts: TextParts): string {
     .trim()
 }
 
-export function addTool(items: ThreadItem[], name: string, card: ToolCard | null = null): void {
+export function addTool(items: ThreadItem[], name: string, args: unknown = undefined, at?: number): void {
   if (!name) return
   const pretty = prettyToolName(name)
-  // Group adjacent tool rounds across empty continuing responses.
+  // Aggregate tool rounds across empty continuing responses and observer alerts.
   let index = items.length - 1
   while (index >= 0) {
     const item = items[index]
+    if (item.kind === 'note' && item.observerAlert) { index--; continue }
     if (item.kind !== 'agent' || !item.continues || item.streaming || item.text || item.empty) break
     index--
   }
   const prev = items[index]
   let last: ItemOf<'tools'>
-  if (prev && prev.kind === 'tools') last = prev
+  if (prev && prev.kind === 'tools') {
+    last = { ...prev, names: prev.names.map(entry => ({ ...entry })), runs: [...prev.runs] }
+    items[index] = last
+  }
   else {
-    last = { id: nid(), kind: 'tools', names: [], cards: [] }
+    last = { id: nid(), kind: 'tools', names: [], runs: [] }
     items.push(last)
   }
-  const e = last.names[last.names.length - 1]
-  if (e && e.name === pretty) e.n++
+  const e = last.names.find(entry => entry.name === pretty)
+  if (e) e.n++
   else last.names.push({ name: pretty, n: 1 })
-  // A tool can contribute a card (file written, search run, …) — a projection of
-  // the call's structured args, rendered alongside the chips. See lib/toolcards.js.
-  if (card) last.cards.push({ ...card, id: nid() })
+  const card = cardFor(name, args)
+  last.runs.push({ id: nid(), name: pretty, detail: toolDetail(name, args) || pretty, at, card: card ?? undefined })
 }
 
 function prettyToolName(name: string): string {
@@ -304,7 +306,8 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
     // duplicates it (same ids), so we ignore the singular to avoid double chips.
     case 'ToolCallsEvent': {
       const d = EventData.ToolCallsEvent.parse(data)
-      for (const c of d.calls ?? []) addTool(items, c.name, cardFor(c.name, c.arguments))
+      const at = EventMeta.parse(data).created_at
+      for (const c of d.calls ?? []) addTool(items, c.name, c.arguments, at)
       break
     }
     case 'CompactionStarted': {
@@ -368,7 +371,7 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
       const d = EventData.ObserverAlert.parse(data)
       const prev = items[items.length - 1]
       const prevText = prev && 'text' in prev ? prev.text : undefined
-      if (prevText !== d.message) items.push({ id: nid(), kind: 'note', icon: 'zap', text: d.message, alert: true })
+      if (prevText !== d.message) items.push({ id: nid(), kind: 'note', icon: 'zap', text: d.message, alert: true, observerAlert: true })
       break
     }
     case 'DeliverableProduced': {
@@ -426,13 +429,13 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
     }
     case 'CardDefinitionSaved': {
       const d = EventData.CardDefinitionSaved.parse(data)
-      items.push({ id: nid(), kind: 'note', icon: 'check', text: `Saved ${d.name} to ${d.path}` })
+      items.push({ id: nid(), kind: 'note', icon: 'check', text: `Saved card definition ${d.name} to ${d.path}` })
       break
     }
     case 'CardInstanceSaved': {
       const d = EventData.CardInstanceSaved.parse(data)
       if (!items.some(item => item.kind === 'note' && item.saveRequestId === d.request_id)) {
-        items.push({ id: nid(), kind: 'note', icon: 'check', text: `Saved to ${d.path}`,
+        items.push({ id: nid(), kind: 'note', icon: 'check', text: `Saved card instance to ${d.path}`,
           savedPath: d.path, saveRequestId: d.request_id })
       }
       break

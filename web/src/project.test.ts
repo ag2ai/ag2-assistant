@@ -103,7 +103,7 @@ for (const streamed of [false, true]) {
   })
 }
 
-test('grouped skill rounds retain every provenance card and separate visible progress', () => {
+test('grouped skill rounds retain every run and separate visible progress', () => {
   const preview: WireEvent = { ...toolCalls, data: { calls: [{ name: 'run_skill_script', arguments: { name: 'screens', script: 'preview' } }] } }
   const items: ThreadItem[] = []
   const run = () => {
@@ -115,20 +115,21 @@ test('grouped skill rounds retain every provenance card and separate visible pro
   run(); run()
   const first = itemOfKind(items.find(it => it.kind === 'tools'), 'tools')
   assert.deepEqual(first.names, [{ name: 'run skill script', n: 2 }])
-  assert.equal(first.cards.length, 2)
-  assert.equal(new Set(first.cards.map(card => card.id)).size, 2)
+  assert.equal(first.runs.length, 2)
+  assert.equal(new Set(first.runs.map(run => run.id)).size, 2)
+  assert.equal(first.runs.every(run => run.card?.kind === 'skill' && run.card.name === 'screens'), true)
 
   foldEvent(items, response('Adjusting the layout'))
   run()
   const second = itemOfKind(items.filter(it => it.kind === 'tools').at(-1), 'tools')
   assert.notEqual(second.id, first.id)
   assert.deepEqual(second.names, [{ name: 'run skill script', n: 1 }])
-  assert.equal(second.cards.length, 1)
+  assert.equal(second.runs.length, 1)
   assert.equal(items.filter(it => it.kind === 'tools').length, 2)
   assert.equal(isBusy(items), true)
 })
 
-test('tool grouping respects alerts and user message boundaries', () => {
+test('tool grouping crosses observer alerts and respects user message boundaries', () => {
   const items: ThreadItem[] = []
   const run = () => {
     foldEvent(items, { ...response(''), data: { tool_calls: toolCalls.data } })
@@ -140,7 +141,79 @@ test('tool grouping respects alerts and user message boundaries', () => {
   run(); run()
   foldEvent(items, user('now read the other file'))
   run()
-  assert.deepEqual(items.filter(it => it.kind === 'tools').map(it => itemOfKind(it, 'tools').names[0].n), [2, 2, 1])
+  assert.deepEqual(items.filter(it => it.kind === 'tools').map(it => itemOfKind(it, 'tools').names[0].n), [4, 1])
+  assert.equal(items.filter(it => it.kind === 'note').length, 1)
+})
+
+test('interleaved tool names aggregate once and retain the ordered run list', () => {
+  const items: ThreadItem[] = []
+  foldEvent(items, user('preview the screen'))
+  for (const [index, name] of ['run_skill_script', 'update_file', 'run_skill_script', 'update_file', 'run_skill_script'].entries()) {
+    foldEvent(items, { ...response(''), data: { tool_calls: { calls: [{ name }] } } })
+    foldEvent(items, { ...toolCalls, data: { created_at: index + 1, calls: [{ name, arguments: { name: 'screens', script: 'preview', path: `file-${index}.yaml` } }] } })
+  }
+  const group = itemOfKind(items.find(it => it.kind === 'tools'), 'tools')
+  assert.deepEqual(group.names, [{ name: 'run skill script', n: 3 }, { name: 'update file', n: 2 }])
+  assert.deepEqual(group.runs.map(run => run.at), [1, 2, 3, 4, 5])
+  assert.equal(group.runs.filter(run => run.name === 'run skill script').length, 3)
+  assert.equal(group.runs[0].detail, 'screens · preview')
+  assert.equal(group.runs[1].detail.includes('file-1.yaml'), true)
+  assert.equal(new Set(group.runs.map(run => run.id)).size, 5)
+})
+
+test('run details name skills, scripts and files across streamed updates and replay', () => {
+  const events: WireEvent[] = [user('prepare a screen')]
+  for (const args of [
+    { name: 'screens', script: 'read_screen', args: { path: 'demo.screen.yaml' } },
+    { name: 'screens', script: 'preview', args: { path: 'demo.screen.yaml' } },
+    { name: 'card-author', script: 'read_draft', args: { draft_id: 'draft-1' } },
+  ]) {
+    events.push({ ...toolCalls, data: { calls: [{ name: 'run_skill_script', arguments: JSON.stringify(args) }] } })
+  }
+  const items: ThreadItem[] = []
+  let previous: ThreadItem | undefined
+  for (const event of events) {
+    previous = items.find(it => it.kind === 'tools')
+    foldEvent(items, event)
+    if (previous) assert.notEqual(items.find(it => it.kind === 'tools'), previous)
+  }
+  const group = itemOfKind(items.find(it => it.kind === 'tools'), 'tools')
+  assert.deepEqual(group.runs.map(run => run.detail), [
+    'screens · read_screen · demo.screen.yaml',
+    'screens · preview · demo.screen.yaml',
+    'card-author · read_draft',
+  ])
+  const replay: ThreadItem[] = []
+  for (const event of events) foldEvent(replay, event)
+  assert.deepEqual(itemOfKind(replay.find(it => it.kind === 'tools'), 'tools').runs.map(run => run.detail), group.runs.map(run => run.detail))
+})
+
+test('file runs retain their own openable artifact paths through aggregation and replay', () => {
+  const events: WireEvent[] = [user('save the reports')]
+  for (const path of ['reports/first.csv', 'reports/second.csv', 'reports/first.csv']) {
+    events.push({ ...toolCalls, data: { calls: [{ name: 'write_file', arguments: { path, content: 'Report' } }] } })
+  }
+  for (let replay = 0; replay < 2; replay++) {
+    const items: ThreadItem[] = []
+    for (const event of events) foldEvent(items, event)
+    const groups = items.filter(item => item.kind === 'tools')
+    assert.equal(groups.length, 1)
+    const group = itemOfKind(groups[0], 'tools')
+    assert.deepEqual(group.names, [{ name: 'write file', n: 3 }])
+    assert.deepEqual(group.runs.map(run => run.card?.kind === 'file' && run.card.path), ['reports/first.csv', 'reports/second.csv', 'reports/first.csv'])
+  }
+})
+
+test('save confirmations distinguish a reusable definition from a card instance', () => {
+  const items: ThreadItem[] = []
+  foldEvent(items, { type: 'assistant.events.CardDefinitionSaved', data: { name: 'WeeklyChart', path: 'cards/weeklychart.card.yaml' } })
+  foldEvent(items, { type: 'assistant.events.CardInstanceSaved', data: {
+    path: 'weekly.card-instance.yaml', surface_id: 'weekly', instance_id: 'weekly',
+    request_id: 'save-weekly', saved_at: '2026-10-11T10:00:00Z',
+  } })
+  assert.equal(itemOfKind(items[0], 'note').text, 'Saved card definition WeeklyChart to cards/weeklychart.card.yaml')
+  assert.equal(itemOfKind(items[1], 'note').text, 'Saved card instance to weekly.card-instance.yaml')
+  assert.equal(itemOfKind(items[1], 'note').savedPath, 'weekly.card-instance.yaml')
 })
 
 for (const ending of [cancelled('Stopped'), failed('Timed out')]) {

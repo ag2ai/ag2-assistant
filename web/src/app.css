@@ -812,16 +812,6 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .fp-use.on { background: var(--success); border-color: var(--success); color: #fff; }
 .tools { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0; align-items: center; }
 .chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); background: var(--code); border: 1px solid var(--line); border-radius: var(--radius-pill); padding: 2px 9px; }
-.toolcards { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 8px; }
-.toolcard { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; background: var(--code); border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; max-width: 100%; }
-.toolcard .tcicon { display: inline-flex; align-items: center; color: var(--muted); line-height: 1; }
-.toolcard .tclink { background: none; border: none; padding: 0; color: var(--accent, var(--danger)); cursor: pointer; font: inherit; text-decoration: underline; text-underline-offset: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 360px; }
-.toolcard .tcdl { display: inline-flex; align-items: center; background: none; border: none; padding: 0; cursor: pointer; color: var(--muted); }
-.toolcard .tcdl:hover { color: var(--text, inherit); }
-.toolcard.gone .tcname { color: var(--muted); text-decoration: line-through; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.toolcard .tcgone { color: var(--muted); font-size: 11px; font-style: italic; }
-.toolcard .tcquery { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 360px; }
-.toolcard .tcskill { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 360px; }
 .genimage { margin: 8px 0; }
 /* The thumbnail's click target is a button wrapping the img; it adds no box of
    its own so the image keeps being the whole visual. */
