@@ -550,7 +550,7 @@ A setting that tunes how a **Text model** answers — how hard it reasons, for o
 offered by the model's type under the provider's own name and levels, and stored on
 the Text model. Unset means the provider's default. There is no per-Chat or
 per-Profile Parameter: a differently tuned conversation is a second Text model reached
-through the **Chat override** (ADR 0041).
+through the **Chat override** (ADR 0047).
 _Avoid_: option (the free-form "Advanced (JSON)" escape hatch), setting (bare —
 collides with Settings), reasoning level (one Parameter, and each provider names its own)
 

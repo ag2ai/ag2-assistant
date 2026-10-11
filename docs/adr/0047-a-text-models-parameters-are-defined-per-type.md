@@ -1,4 +1,4 @@
-# 0041 — A Text model's parameters are defined per type, and live on the Text model
+# 0047 — A Text model's parameters are defined per type, and live on the Text model
 
 ## Status
 
