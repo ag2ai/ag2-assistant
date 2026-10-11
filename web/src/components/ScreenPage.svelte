@@ -11,6 +11,7 @@
   import AppBar from './AppBar.svelte'
   import BasicA2UIComponent from './items/BasicA2UIComponent.svelte'
   import CardSourceControls from './items/CardSourceControls.svelte'
+  import { prototypeEnabled } from './prototype/sidebarPrototype.ts'
 
   const screenPath = $derived($route.id)
   let screen: Screen | null = $state(null)
@@ -53,8 +54,9 @@
 
 {#snippet sourceControls(id: string)}
   {@const target = screen!.sources[id]}
-  <CardSourceControls source={CardSource.parse(target.source)} refreshState={states[id]}
+  {#if !prototypeEnabled}<CardSourceControls source={CardSource.parse(target.source)} refreshState={states[id]}
     target={{ path: target.path, source_id: target.source_id }} onEvent={sourceEvent} showControls={false} refreshOnLoad />
+  {/if}
 {/snippet}
 
 <style>

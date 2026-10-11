@@ -10,6 +10,8 @@
   import type { Profile } from './schemas/index.ts'
   import Onboarding from './components/Onboarding.svelte'
   import Drawer from './components/Drawer.svelte'
+  import DrawerSidebarPrototype from './components/prototype/DrawerSidebarPrototype.svelte'
+  import { prototypeEnabled, sidebarVariant, sidebarPanelOpen } from './components/prototype/sidebarPrototype.ts'
   import ScreenPage from './components/ScreenPage.svelte'
   import Thread from './components/Thread.svelte'
   import TaskPage from './components/task/TaskPage.svelte'
@@ -48,6 +50,7 @@ import AppBar from './components/AppBar.svelte'
   // the Inspector's. Expanded preview fills the Thread column instead (.app.rail.railfull).
   const railW = $derived(railOpen ? clampRailWidth($previewWidth) : clampRailWidth($railWidth))
   const previewFull = $derived(railOpen && $previewExpanded)
+  const prototypeWidth = $derived($sidebarVariant === 'A' ? 318 : $sidebarVariant === 'B' ? 290 : $sidebarPanelOpen ? 338 : 52)
 
   // Boot sequence (§7 Phase 1 item 4): fetch /api/profiles FIRST. Empty →
   // create-first-profile form. Else resolve active pid (localStorage if still
@@ -197,7 +200,7 @@ import AppBar from './components/AppBar.svelte'
     if (r.name === 'run' && r.id) openThread('run', r.id)
     else if (r.name === 'chat' && r.id) openThread('chat', r.id)
     else if (r.name === 'task' || r.name === 'tasks' || r.name === 'files' || r.name === 'screens' || r.name === 'screen') closeThread()
-    else { closeThread(); go('/c/' + newChatId()) } // home → a fresh chat
+    else { closeThread(); if (!prototypeEnabled) go('/c/' + newChatId()) } // home → a fresh chat
   })
 </script>
 
@@ -210,9 +213,9 @@ import AppBar from './components/AppBar.svelte'
        tier (see store.animations) without importing the store — same
        attribute-driven pattern as theming. -->
   <div class="app" class:ag2={showInspector} class:rail={showRail} class:railfull={previewFull}
-       style="--drawer-w: {clampDrawerWidth($drawerWidth)}px; --rail-w: {railW}px" data-animations={$animations}>
-    <Drawer />
-    <div class="main">
+       style="--drawer-w: {prototypeEnabled ? prototypeWidth : clampDrawerWidth($drawerWidth)}px; --rail-w: {railW}px" data-animations={$animations}>
+    {#if prototypeEnabled}<DrawerSidebarPrototype />{:else}<Drawer />{/if}
+    <div class="main" inert={prototypeEnabled}>
       <Hitl />
       {#if $route.name === 'chat' || $route.name === 'run'}
         <Thread />
