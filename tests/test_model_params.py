@@ -30,7 +30,7 @@ def test_every_offered_parameter_is_one_the_provider_configuration_takes(ctype, 
     """Each offered parameter is a constructor name of the real provider configuration."""
     if ctype in PROVIDER_EXTRA:
         pytest.importorskip(PROVIDER_EXTRA[ctype][0])  # the provider's optional library
-    value = param.choices[0] if param.kind == "choice" else 1
+    value = param.choices[0] if param.kind == "choice" else max(1, param.minimum or 0)
     entry = LlmConfigStore(paths).save_config(
         {"name": "M", "type": ctype, "model": "m", "params": {param.id: value}}
     )

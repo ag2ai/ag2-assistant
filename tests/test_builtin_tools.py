@@ -243,8 +243,29 @@ def test_a_hand_edited_option_the_type_does_not_honour_never_reaches_the_tool():
     assert options == {"allowed_domains": ["example.com"]}
 
 
-def test_hand_edited_options_that_are_malformed_leave_the_tool_on_its_defaults():
+def test_a_malformed_usage_limit_keeps_valid_domain_restrictions():
     stored = {"web_search": {"max_uses": "few", "blocked_domains": ["spam.example"]}}
     ((spec, options),) = active_builtins("anthropic", stored)
     assert spec.id == "web_search"
-    assert options == {}
+    assert options == {"blocked_domains": ["spam.example"]}
+
+
+@pytest.mark.parametrize("tool_id", ["web_search", "web_fetch"])
+@pytest.mark.parametrize("option", ["allowed_domains", "blocked_domains"])
+@pytest.mark.parametrize("domain", ["https://example.com", "*.example.com"])
+def test_invalid_stored_domain_filters_never_become_unrestricted_tools(tool_id, option, domain):
+    with pytest.raises(ValueError, match=option):
+        build_agent_tools("anthropic", builtin={tool_id: {option: [domain]}})
+
+
+def test_conflicting_stored_domain_filters_never_become_an_unrestricted_tool():
+    with pytest.raises(ValueError, match="allowed_domains"):
+        build_agent_tools(
+            "anthropic",
+            builtin={
+                "web_search": {
+                    "allowed_domains": ["example.com"],
+                    "blocked_domains": ["spam.example"],
+                }
+            },
+        )

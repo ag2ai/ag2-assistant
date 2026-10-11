@@ -32,8 +32,8 @@ def _temperature(maximum: float) -> ModelParam:
     return ModelParam("temperature", "float", minimum=0, maximum=maximum)
 
 
-def _output_limit(name: str) -> ModelParam:
-    return ModelParam(name, "int", minimum=1)
+def _output_limit(name: str, *, minimum: int = 1) -> ModelParam:
+    return ModelParam(name, "int", minimum=minimum)
 
 
 register(
@@ -47,7 +47,7 @@ register(
     _output_limit("max_tokens"),
 )
 
-register("openai_responses", _temperature(2), _output_limit("max_output_tokens"))
+register("openai_responses", _temperature(2), _output_limit("max_output_tokens", minimum=16))
 
 register(
     "gemini",

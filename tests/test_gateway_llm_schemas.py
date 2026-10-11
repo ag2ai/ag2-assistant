@@ -221,6 +221,89 @@ def test_a_draft_test_refuses_tool_options_a_save_would_refuse(client):
     assert "allowed_domains" in r.json()["error"]
 
 
+@pytest.mark.parametrize("endpoint", ["/api/llm-configs", "/api/llm-configs/test"])
+@pytest.mark.parametrize("limit", [1, 15])
+def test_responses_refuses_output_limits_below_the_api_minimum(client, endpoint, limit):
+    body = {
+        "name": "Responses",
+        "type": "openai_responses",
+        "model": "gpt-4o",
+        "params": {"max_output_tokens": limit},
+    }
+    response = client.post(endpoint, json=body)
+    assert response.status_code == 400
+    assert "max_output_tokens must be at least 16" in response.json()["error"]
+    assert client.get("/api/llm-configs").json()["configs"] == []
+
+
+def test_responses_saves_and_describes_the_minimum_output_limit(client, paths):
+    saved = _save_llm(client, type="openai_responses", params={"max_output_tokens": 16})
+    assert llm_configs.LlmConfigStore(paths).get_config(saved["id"])["params"] == {
+        "max_output_tokens": 16
+    }
+    params = client.get("/api/llm-configs").json()["params_by_type"]["openai_responses"]
+    limit = next(param for param in params if param["id"] == "max_output_tokens")
+    assert limit["minimum"] == 16
+
+
+def test_a_stored_responses_limit_below_the_minimum_can_be_corrected(client, paths):
+    saved = _save_llm(client, type="openai_responses", params={"max_output_tokens": 16})
+    store = llm_configs.LlmConfigStore(paths)
+    entry = {**store.get_config(saved["id"]), "params": {"max_output_tokens": 1}}
+    update_global_section(paths, "llm_configs", {"configs": [entry], "active": None})
+    listed = client.get("/api/llm-configs").json()["configs"][0]
+    assert listed["params"] == {}
+    response = client.post(
+        f"/api/llm-configs/{saved['id']}", json={**listed, "params": {"max_output_tokens": 16}}
+    )
+    assert response.status_code == 200
+    assert store.get_config(saved["id"])["params"] == {"max_output_tokens": 16}
+
+
+@pytest.mark.parametrize("endpoint", ["/api/llm-configs", "/api/llm-configs/test"])
+@pytest.mark.parametrize("tool_id", ["web_search", "web_fetch"])
+@pytest.mark.parametrize("option", ["allowed_domains", "blocked_domains"])
+@pytest.mark.parametrize("domain", ["https://example.com", "*.example.com", "ex*.com"])
+def test_anthropic_refuses_invalid_domain_filters(client, endpoint, tool_id, option, domain):
+    body = {
+        "name": "Anthropic",
+        "type": "anthropic",
+        "model": "claude",
+        "builtin_tools": {tool_id: {option: [domain]}},
+    }
+    response = client.post(endpoint, json=body)
+    assert response.status_code == 400
+    assert option in response.json()["error"]
+    assert client.get("/api/llm-configs").json()["configs"] == []
+
+
+@pytest.mark.parametrize("tool_id", ["web_search", "web_fetch"])
+@pytest.mark.parametrize("option", ["allowed_domains", "blocked_domains"])
+def test_anthropic_retains_valid_domain_filters(client, paths, tool_id, option):
+    domains = ["example.com", "docs.example.com"]
+    if tool_id == "web_search":
+        domains += ["example.com/blog", "example.com/*/articles"]
+    saved = _save_llm(client, type="anthropic", builtin_tools={tool_id: {option: domains}})
+    assert saved["builtin_tools"] == {tool_id: {option: domains}}
+    assert llm_configs.LlmConfigStore(paths).get_config(saved["id"])["builtin_tools"] == {
+        tool_id: {option: domains}
+    }
+
+
+def test_anthropic_fetch_refuses_a_domain_filter_with_an_ineffective_path(client):
+    response = client.post(
+        "/api/llm-configs",
+        json={
+            "name": "Anthropic",
+            "type": "anthropic",
+            "model": "claude",
+            "builtin_tools": {"web_fetch": {"allowed_domains": ["example.com/blog"]}},
+        },
+    )
+    assert response.status_code == 400
+    assert "allowed_domains" in response.json()["error"]
+
+
 def test_the_list_describes_the_parameters_of_every_type(client):
     """Every type is described, not just the configured ones."""
     by_type = client.get("/api/llm-configs").json()["params_by_type"]

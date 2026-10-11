@@ -66,6 +66,8 @@ supplies the words, the same split as `lib/builtinTools.ts`.
 
 ## Consequences
 
+- Responses output limits start at 16 tokens, the API's request-wide minimum;
+  the other types retain a minimum of 1. The editor receives those bounds from the catalogue.
 - Adding a Parameter is one row in a type's `register(...)` block plus its words.
   `tests/test_model_params.py` builds the real provider configuration with every
   registered Parameter, so an id AG2 does not take fails there rather than on a turn.

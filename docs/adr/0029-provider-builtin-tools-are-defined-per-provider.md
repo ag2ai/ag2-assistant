@@ -145,12 +145,18 @@ not offered. Other supported constructor options are declared separately as
 They keep their existing pass-through behaviour: fetch citation and content budgets,
 search context and location, and Anthropic tool versions remain effective after a save.
 
+Each Anthropic registration also declares its domain format: search accepts domain
+names with optional paths, including path wildcards; fetch accepts domain names only.
+Schemes and wildcards in the domain itself are refused.
+
 Options are stored where decision 5 left room for them, in the `{id: options}` map, so
 there is no migration. On save an option the type does not declare is dropped, a
 malformed UI option is refused, and an allowed list together with a blocked list is refused —
 Anthropic accepts one or the other. A turn applies the same filter to what it reads, so
-a hand-edited option that is undeclared never reaches the tool, and a malformed set
-leaves the tool on its defaults. Switching a tool off removes its entry and its
+a hand-edited option that is undeclared never reaches the tool. Malformed usage limits
+are omitted individually, preserving valid domain restrictions. Invalid or conflicting
+domain restrictions raise before a turn builds tools, rather than enabling unrestricted
+access. Switching a tool off removes its entry and its
 options with it. The gateway ships `builtin_options_by_type`; the option's words are
 `lib/builtinTools.ts`'s, keyed by the option id alone because a name means the same on
 every tool that takes it.

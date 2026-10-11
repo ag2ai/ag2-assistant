@@ -28,6 +28,7 @@ configs keep today's behaviour).
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from re import fullmatch
 from typing import Literal, TypedDict
 
 from ag2.tools import CodeExecutionTool, WebFetchTool, WebSearchTool
@@ -53,6 +54,8 @@ class BuiltinTool:
     fields: tuple[str, ...] = field(default=())
     # Other supported constructor options retained in authored configurations.
     extra_fields: tuple[str, ...] = ()
+    # The format accepted by this tool's domain filters, if constrained.
+    domain_format: Literal["domain", "domain_path"] | None = None
 
 
 _REGISTRY: dict[str, tuple[BuiltinTool, ...]] = {}
@@ -94,12 +97,14 @@ register(
         WebSearchTool,
         fields=_ANTHROPIC_WEB,
         extra_fields=("user_location", "version"),
+        domain_format="domain_path",
         **_SEARCH,
     ),
     BuiltinTool(
         "web_fetch",
         WebFetchTool,
         fields=_ANTHROPIC_WEB,
+        domain_format="domain",
         extra_fields=(
             "citations",
             "max_content_tokens",
@@ -166,7 +171,27 @@ def find_builtin(ctype: str, tool_id: str) -> BuiltinTool | None:
     return next((t for t in builtin_tools_for(ctype) if t.id == tool_id), None)
 
 
-def _checked_option(name: str, value: object) -> object:
+def _valid_domain(value: str, *, allow_path: bool) -> bool:
+    """A domain name, optionally followed by a path pattern."""
+    host, separator, _ = value.partition("/")
+    try:
+        host = host.encode("idna").decode("ascii").removesuffix(".")
+    except UnicodeError:
+        return False
+    return (
+        not any(c.isspace() for c in value)
+        and (allow_path or not separator)
+        and len(host) <= 253
+        and all(
+            fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", label)
+            for label in host.split(".")
+        )
+    )
+
+
+def _checked_option(
+    name: str, value: object, *, domain_format: Literal["domain", "domain_path"] | None = None
+) -> object:
     """``value`` if this option accepts it, else a ValueError naming the option."""
     if OPTION_KINDS[name] == "int":
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
@@ -174,27 +199,40 @@ def _checked_option(name: str, value: object) -> object:
         return value
     if not isinstance(value, list) or not all(isinstance(d, str) and d.strip() for d in value):
         raise ValueError(f"{name} must be a list of domain names, not {value!r}")
-    return [d.strip() for d in value]
+    domains = [d.strip() for d in value]
+    if domain_format is not None:
+        for domain in domains:
+            if not _valid_domain(domain, allow_path=domain_format == "domain_path"):
+                wanted = (
+                    "domain names with optional paths"
+                    if domain_format == "domain_path"
+                    else "domain names without paths"
+                )
+                raise ValueError(
+                    f"{name} must contain {wanted}, without schemes or host wildcards: {domain!r}"
+                )
+    return domains
 
 
-def clean_options(spec: BuiltinTool, raw: Mapping) -> dict:
+def clean_options(spec: BuiltinTool, raw: Mapping, *, strict: bool = True) -> dict:
     """One tool's stored options, filtered to the ones this type honours."""
     cleaned = {name: raw[name] for name in spec.extra_fields if raw.get(name) is not None}
     for name in spec.fields:
         value = raw.get(name)
         if value is not None and value != []:
-            cleaned[name] = _checked_option(name, value)
+            try:
+                cleaned[name] = _checked_option(name, value, domain_format=spec.domain_format)
+            except ValueError:
+                if strict or OPTION_KINDS[name] == "domains":
+                    raise
     if "allowed_domains" in cleaned and "blocked_domains" in cleaned:
         raise ValueError("set allowed_domains or blocked_domains, not both")
     return cleaned
 
 
 def usable_options(spec: BuiltinTool, raw: object) -> dict:
-    """One tool's stored options fit to send; a malformed set reads as none."""
-    try:
-        return clean_options(spec, raw if isinstance(raw, Mapping) else {})
-    except ValueError:
-        return {}
+    """Stored options fit to send; invalid domain restrictions raise."""
+    return clean_options(spec, raw if isinstance(raw, Mapping) else {}, strict=False)
 
 
 def active_builtins(
