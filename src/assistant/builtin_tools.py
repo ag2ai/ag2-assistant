@@ -56,6 +56,8 @@ class BuiltinTool:
     extra_fields: tuple[str, ...] = ()
     # The format accepted by this tool's domain filters, if constrained.
     domain_format: Literal["domain", "domain_path"] | None = None
+    # The provider's maximum number of entries in a domain filter.
+    max_domains: int | None = None
 
 
 _REGISTRY: dict[str, tuple[BuiltinTool, ...]] = {}
@@ -127,6 +129,8 @@ register(
         WebSearchTool,
         fields=("allowed_domains",),
         extra_fields=("search_context_size", "user_location"),
+        domain_format="domain",
+        max_domains=100,
         **_SEARCH,
     ),
     BuiltinTool("code_execution", CodeExecutionTool, **_CODE),
@@ -190,7 +194,11 @@ def _valid_domain(value: str, *, allow_path: bool) -> bool:
 
 
 def _checked_option(
-    name: str, value: object, *, domain_format: Literal["domain", "domain_path"] | None = None
+    name: str,
+    value: object,
+    *,
+    domain_format: Literal["domain", "domain_path"] | None = None,
+    max_domains: int | None = None,
 ) -> object:
     """``value`` if this option accepts it, else a ValueError naming the option."""
     if OPTION_KINDS[name] == "int":
@@ -200,6 +208,8 @@ def _checked_option(
     if not isinstance(value, list) or not all(isinstance(d, str) and d.strip() for d in value):
         raise ValueError(f"{name} must be a list of domain names, not {value!r}")
     domains = [d.strip() for d in value]
+    if max_domains is not None and len(domains) > max_domains:
+        raise ValueError(f"{name} must contain at most {max_domains} domain names")
     if domain_format is not None:
         for domain in domains:
             if not _valid_domain(domain, allow_path=domain_format == "domain_path"):
@@ -221,7 +231,9 @@ def clean_options(spec: BuiltinTool, raw: Mapping, *, strict: bool = True) -> di
         value = raw.get(name)
         if value is not None and value != []:
             try:
-                cleaned[name] = _checked_option(name, value, domain_format=spec.domain_format)
+                cleaned[name] = _checked_option(
+                    name, value, domain_format=spec.domain_format, max_domains=spec.max_domains
+                )
             except ValueError:
                 if strict or OPTION_KINDS[name] == "domains":
                     raise

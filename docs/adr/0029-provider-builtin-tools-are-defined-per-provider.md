@@ -148,6 +148,7 @@ search context and location, and Anthropic tool versions remain effective after 
 Each Anthropic registration also declares its domain format: search accepts domain
 names with optional paths, including path wildcards; fetch accepts domain names only.
 Schemes and wildcards in the domain itself are refused.
+Responses search accepts domain names only, with at most 100 entries per filter.
 
 Options are stored where decision 5 left room for them, in the `{id: options}` map, so
 there is no migration. On save an option the type does not declare is dropped, a

@@ -261,6 +261,42 @@ def test_a_stored_responses_limit_below_the_minimum_can_be_corrected(client, pat
 
 
 @pytest.mark.parametrize("endpoint", ["/api/llm-configs", "/api/llm-configs/test"])
+@pytest.mark.parametrize(
+    "domains",
+    [
+        ["https://example.com"],
+        ["*.example.com"],
+        ["example.com/blog"],
+        [f"site{i}.example.com" for i in range(101)],
+    ],
+)
+def test_responses_refuses_invalid_domain_filters(client, endpoint, domains):
+    response = client.post(
+        endpoint,
+        json={
+            "name": "Responses",
+            "type": "openai_responses",
+            "model": "gpt-4o",
+            "builtin_tools": {"web_search": {"allowed_domains": domains}},
+        },
+    )
+    assert response.status_code == 400
+    assert "allowed_domains" in response.json()["error"]
+    assert client.get("/api/llm-configs").json()["configs"] == []
+
+
+def test_responses_retains_the_maximum_valid_domain_filter(client, paths):
+    domains = [f"site{i}.example.com" for i in range(100)]
+    saved = _save_llm(
+        client, type="openai_responses", builtin_tools={"web_search": {"allowed_domains": domains}}
+    )
+    assert saved["builtin_tools"] == {"web_search": {"allowed_domains": domains}}
+    assert llm_configs.LlmConfigStore(paths).get_config(saved["id"])["builtin_tools"] == {
+        "web_search": {"allowed_domains": domains}
+    }
+
+
+@pytest.mark.parametrize("endpoint", ["/api/llm-configs", "/api/llm-configs/test"])
 @pytest.mark.parametrize("tool_id", ["web_search", "web_fetch"])
 @pytest.mark.parametrize("option", ["allowed_domains", "blocked_domains"])
 @pytest.mark.parametrize("domain", ["https://example.com", "*.example.com", "ex*.com"])

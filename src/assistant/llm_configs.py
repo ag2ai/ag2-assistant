@@ -390,7 +390,7 @@ class LlmConfigStore:
         refuses a missing key and llama.cpp-style servers expect some bearer value);
         endpoints that need a real key (e.g. MiniMax) take it via a referenced Secret."""
         ctype = entry.get("type") or ""
-        opts = {**usable_params(ctype, entry.get("params")), **(entry.get("options") or {})}
+        opts = {**usable_params(ctype, entry.get("params")), **dict(entry.get("options") or {})}
         if ctype == "openai_subscription":
             # model_config routes this type through codex_auth off cfg.llm.auth_mode and
             # ignores provider_options entirely — so no api/base_url/key derivation here;

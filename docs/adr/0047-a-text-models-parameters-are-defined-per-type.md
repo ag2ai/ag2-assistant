@@ -51,6 +51,8 @@ default the app itself supplies, such as Gemini's output budget.
 Parameters merge onto the provider configuration before `options`. A Text model tuned
 by hand before this change keeps behaving as it did, and the escape hatch stays one.
 The editor marks a control whose Parameter the Advanced box also names.
+Stored `options` expressed as key-value pairs retain their mapping semantics and
+precedence on each read; the authored config remains unchanged.
 
 ### 5. The server validates; the web names
 

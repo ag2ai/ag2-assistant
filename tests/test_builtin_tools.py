@@ -271,6 +271,36 @@ def test_conflicting_stored_domain_filters_never_become_an_unrestricted_tool():
         )
 
 
+@pytest.mark.parametrize(
+    "domains",
+    [
+        ["https://example.com"],
+        ["*.example.com"],
+        ["example.com/blog"],
+        [f"site{i}.example.com" for i in range(101)],
+    ],
+)
+def test_invalid_responses_domain_filters_never_become_unrestricted_tools(domains):
+    with pytest.raises(ValueError, match="allowed_domains"):
+        build_agent_tools(
+            "openai_responses",
+            builtin={"web_search": {"allowed_domains": domains}},
+            capabilities=["web"],
+        )
+
+
+async def test_responses_passes_the_maximum_valid_domain_filter_to_the_tool():
+    domains = [f"site{i}.example.com" for i in range(100)]
+    tools = build_agent_tools(
+        "openai_responses",
+        builtin={"web_search": {"allowed_domains": domains}},
+        capabilities=["web"],
+    )
+    search = next(tool for tool in tools if getattr(tool, "name", "") == "web_search")
+    (schema,) = await search.schemas(None)
+    assert schema.allowed_domains == domains
+
+
 @pytest.mark.parametrize("tool_id", ["web_search", "web_fetch"])
 @pytest.mark.parametrize("option", ["allowed_domains", "blocked_domains"])
 async def test_persisted_option_pairs_keep_their_domain_restrictions(paths, tool_id, option):

@@ -16,7 +16,7 @@ import pytest
 import yaml
 
 from assistant.agent import cheap_model, model_config
-from assistant.config import Config, resolve_config
+from assistant.config import Config, resolve_config, update_global_section
 from assistant.llm_configs import (
     CLI_LOGIN_TYPES,
     PROVIDER_EXTRA,
@@ -165,6 +165,31 @@ def test_apply_active_empty_store_is_noop(store, paths):
     cfg.llm.provider = "sentinel"
     store.apply_active(cfg)  # no store → unchanged
     assert cfg.llm.provider == "sentinel"
+
+
+@pytest.mark.parametrize("derivation", ["apply_active", "derive_onto"])
+def test_persisted_advanced_option_pairs_keep_precedence_over_parameters(paths, derivation):
+    entry = {
+        "id": "c_pairs",
+        "name": "Legacy",
+        "type": "gemini",
+        "model": "gemini-x",
+        "options": [["temperature", 0.4], ["max_output_tokens", 128]],
+        "params": {"temperature": 0.2, "max_output_tokens": 256},
+        "builtin_tools": {},
+    }
+    update_global_section(paths, "llm_configs", {"configs": [entry], "active": entry["id"]})
+    for _ in range(2):
+        store = LlmConfigStore(paths)
+        cfg = Config.for_paths(paths)
+        if derivation == "apply_active":
+            store.apply_active(cfg)
+        else:
+            store.derive_onto(cfg, store.get_config(entry["id"]))
+        provider = model_config(cfg)
+        assert provider.temperature == 0.4
+        assert provider.max_output_tokens == 128
+        assert store.get_config(entry["id"])["options"] == entry["options"]
 
 
 def test_apply_active_derives_and_env_still_wins(store, paths):
