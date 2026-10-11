@@ -7,19 +7,24 @@ import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 
+import httpx
 import pytest
 import yaml
 from ag2.events import ToolCallEvent
 from fastapi.testclient import TestClient
 
+from assistant.a2ui import bundled_cards
+from assistant.card_sources.service import quotes, weather
 from assistant.events import A2UISurface, A2UISurfaceDataUpdated, CardSourceUpdated
 from assistant.gateway.app import create_app
 from assistant.profiles import ProfileRegistry
 from tests.support.apps import api, make_manager
 from tests.support.cards import replay, send, snapshot_message
 from tests.support.fakes import ScriptedModels
+from tests.support.http import client as http_client
 
 
 def document(source=None):
@@ -162,6 +167,9 @@ def test_drawn_weather_retains_parameters_and_refreshes_after_catalog_deletion(p
         )
     ) as client:
         send(client, pid)
+        offered = {schema.function.name for schema in models.requests[0][2]}
+        assert "get_weather" not in offered
+        assert "get_quotes" not in offered
         surface = next(e["data"] for e in replay(client, pid) if e["type"].endswith("A2UISurface"))
         source = surface["data"]["_sources"]["root"]
         assert source["parameters"] == {"location": "Moscow", "units": "celsius"}
@@ -190,6 +198,84 @@ def test_drawn_weather_retains_parameters_and_refreshes_after_catalog_deletion(p
             ).json()["message"]["data"]["summary"]
             == "Original"
         )
+
+
+@pytest.mark.parametrize(
+    "card_name, source_id, provider, parameters",
+    [
+        ("WeatherPanel", "get_weather", weather, {"location": "Moscow", "units": "celsius"}),
+        ("MarketBoard", "get_quotes", quotes, {"symbols": "AAPL", "title": "Watchlist"}),
+    ],
+)
+def test_bundled_card_backend_refreshes_saved_instances_with_the_existing_source_id(
+    paths, card_name, source_id, provider, parameters
+):
+    def respond(request):
+        if source_id == "get_weather":
+            assert request.url.host == "wttr.in"
+            return httpx.Response(
+                200,
+                json={
+                    "current_condition": [
+                        {"weatherCode": "113", "temp_C": "12", "weatherDesc": [{"value": "Sunny"}]}
+                    ]
+                },
+            )
+        assert request.url.path.endswith("/AAPL")
+        return httpx.Response(
+            200,
+            json={
+                "chart": {
+                    "result": [
+                        {
+                            "meta": {
+                                "symbol": "AAPL",
+                                "shortName": "Apple",
+                                "regularMarketPrice": 110,
+                                "chartPreviousClose": 100,
+                            }
+                        }
+                    ]
+                }
+            },
+        )
+
+    pid = ProfileRegistry(paths).create_profile("Sources", "#109e91").id
+    card = bundled_cards()[card_name]
+    with http_client(respond) as http:
+        with TestClient(
+            create_app(
+                make_manager(paths, persist=True),
+                card_source_tools={source_id: partial(provider, client=http)},
+            )
+        ) as client:
+            path = upload(
+                client,
+                pid,
+                source={
+                    **card.source,
+                    "parameters": parameters,
+                    "fields": card.fields,
+                    "required": list(card.required),
+                },
+            )
+            response = client.post(
+                api(pid, "/card-sources/refresh"), json={"path": path, "source_id": "root"}
+            )
+            assert response.status_code == 200, response.text
+            result = response.json()
+            assert result["status"] == "updated", result
+            event = result["events"][0]
+            assert event["type"].endswith("CardSourceUpdated")
+            data = event["data"]["data"]
+            assert data["_sources"]["root"]["tool"] == source_id
+            if source_id == "get_weather":
+                assert data["condition"] == "sunny" and data["temperature"] == "12°"
+            else:
+                assert data["title"] == "Watchlist"
+                assert data["quotes"][0]["price"] == 110
+                assert data["quotes"][0]["changePercent"] == 10
+            assert client.get(api(pid, "/chats")).json()["chats"] == []
 
 
 def test_custom_code_needs_profile_version_approval_and_explicit_stable_secret_binding(paths):

@@ -24,19 +24,19 @@ from assistant.card_sources.schema import (
     sources_from,
 )
 from assistant.cards import validate_card_data
+from assistant.cards.bundled.marketboard import fetch_quotes
+from assistant.cards.bundled.weatherpanel import fetch_weather
 from assistant.events import A2UISurface, A2UISurfaceDataUpdated, CardSourceUpdated
 from assistant.secrets import SecretStore
-from assistant.tools.finance import get_quotes
-from assistant.tools.weather import get_weather
 from assistant.workspace import etag_for_path, write_text
 
 
 async def weather(**args):
-    return await asyncio.to_thread(get_weather.model.call, **args)
+    return await asyncio.to_thread(fetch_weather, **args)
 
 
 async def quotes(**args):
-    return await asyncio.to_thread(get_quotes.model.call, **args)
+    return await asyncio.to_thread(fetch_quotes, **args)
 
 
 class CardSources:

@@ -22,10 +22,10 @@ from assistant.a2ui import (
     wrap_bare_a2ui,
 )
 from assistant.cards import bundled_cards_dir, expand_components, load_cards
+from assistant.cards.bundled.weatherpanel import condition_for
 from assistant.coding.diff import FileDiff
 from assistant.coding.surface import card_fields
 from assistant.events import A2UISurface
-from assistant.tools.weather import condition_for
 from tests.support.cards import card_detail, protocol, skill_body
 
 

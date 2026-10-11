@@ -1,7 +1,11 @@
 # Card sources
 
-WeatherPanel and MarketBoard can refresh through `get_weather` and `get_quotes`
-without an assistant Turn. The generating call supplies `_parameters`, for example
+WeatherPanel and MarketBoard own their backend data-fetching code beside their
+bundled definitions, in `cards/bundled/weatherpanel.py` and `marketboard.py`.
+They refresh without an assistant Turn. The stable source IDs `get_weather` and
+`get_quotes` address these backend providers; neither is registered as an agent tool.
+Existing instances retain those IDs and continue to refresh.
+The generating call supplies `_parameters`, for example
 `{"location":"Moscow","units":"celsius"}` or `{"symbols":"AAPL,MSFT","title":"Watchlist"}`.
 Parameters that cannot come from required displayed fields or declared defaults
 are required in `_parameters`; missing choices reject drawing instead of dropping

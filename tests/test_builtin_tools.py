@@ -146,12 +146,10 @@ def test_a_type_with_no_builtins_is_unaffected_by_a_stale_selection():
     assert "duckduckgo_search" in stale  # ours was NOT suppressed by a phantom
 
 
-def test_no_builtins_leaves_the_local_toolset_exactly_as_before():
-    """The _NATIVE_WEB_FETCH_PROVIDERS deletion must not change the default set."""
+def test_no_builtins_leaves_the_local_web_tools():
+    """Provider builtins are opt-in; the default web tools search and fetch."""
     for ctype in ("anthropic", "gemini", "openai_responses", ""):
         assert names(build_agent_tools(ctype, capabilities=["web"])) == [
             "duckduckgo_search",
             "web_fetch",
-            "get_weather",
-            "get_quotes",
         ]

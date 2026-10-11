@@ -16,7 +16,7 @@ from ag2.tools import MCPStdioServerConfig
 from mcp.types import CallToolResult, ListToolsResult, TextContent
 from mcp.types import Tool as McpTool
 
-from assistant.a2ui import WEATHER_CONDITIONS, bundled_cards
+from assistant.a2ui import bundled_cards
 from assistant.agent import ask
 from assistant.config import Config
 from assistant.permissions import ALLOW_ONCE
@@ -27,7 +27,6 @@ from assistant.tools.mcp import (
     describe_mcp_error,
     namespaced_tool_name,
 )
-from assistant.tools.weather import get_weather
 from assistant.tools.web_fetch import web_fetch
 
 
@@ -42,12 +41,12 @@ def test_build_agent_tools_has_core_capabilities():
     assert "list_folder" in names
     assert "write_file" in names
     assert "web_fetch" in names
-    assert "get_weather" in names
-    assert "get_quotes" in names
+    assert "get_weather" not in names
+    assert "get_quotes" not in names
     assert "ask_user" in names  # chat-only: option-carrying HITL questions
     assert "code_with_cli_agent" in names  # ACP: drive host CLI coding agents
     assert "list_coding_agents" in names
-    assert len(tools) == 12
+    assert len(tools) == 10
 
 
 @pytest.mark.parametrize("ctype", ["gemini", "anthropic", "openai_responses", "openai", ""])
@@ -402,9 +401,3 @@ def test_no_tool_tells_the_model_about_cards():
         assert "A2UI" not in text and "render" not in text.lower()
         for name in bundled_cards():
             assert name not in text
-
-
-def test_the_weather_tool_names_every_condition_it_reports():
-    description = get_weather.schema.function.description
-    for condition in WEATHER_CONDITIONS:
-        assert condition in description

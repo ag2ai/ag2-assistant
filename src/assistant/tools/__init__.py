@@ -38,11 +38,9 @@ from assistant.tools import docker_sandbox
 from assistant.tools.approval import require_command_approval
 from assistant.tools.ask import ask_user
 from assistant.tools.files import list_folder, read_file, write_file
-from assistant.tools.finance import get_quotes
 from assistant.tools.google import build_google_tools
 from assistant.tools.image_gen import build_image_tool
 from assistant.tools.mcp import build_mcp_tools
-from assistant.tools.weather import get_weather
 from assistant.tools.web_fetch import web_fetch, web_fetch_tool
 
 # Commands the shell tool must never run.
@@ -160,8 +158,6 @@ def build_agent_tools(
     if want("web"):
         tools.append(DuckDuckSearchTool(max_results=5))
         tools.append(web_fetch_tool)
-        tools.append(get_weather)  # deterministic weather, not a search spray
-        tools.append(get_quotes)  # deterministic global quotes, not a search spray
 
     if want("code"):
         use_docker = False
@@ -320,8 +316,6 @@ __all__ = [
     "read_file",
     "list_folder",
     "write_file",
-    "get_weather",
-    "get_quotes",
     "web_fetch",
     "web_fetch_tool",
 ]

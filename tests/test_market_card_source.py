@@ -1,6 +1,17 @@
-"""Unit tests for the finance tool's pure helpers (no network)."""
+"""MarketBoard data conversion and backend source requests."""
 
-from assistant.tools.finance import build_board, market_state, normalize_spark, quote_from_meta
+import json
+
+import httpx
+
+from assistant.cards.bundled.marketboard import (
+    build_board,
+    fetch_quotes,
+    market_state,
+    normalize_spark,
+    quote_from_meta,
+)
+from tests.support.http import client
 
 
 def test_normalize_spark_scales_to_0_100_and_downsamples():
@@ -102,3 +113,46 @@ def test_build_board_omits_currency_and_status_when_mixed():
 
 def test_build_board_default_title():
     assert build_board([], "")["title"] == "Markets"
+
+
+def test_market_source_resolves_names_and_preserves_the_requested_order():
+    def respond(request):
+        assert request.url.host == "query1.finance.yahoo.com"
+        if request.url.path.endswith("/Toyota"):
+            return httpx.Response(200, json={"chart": {"result": []}})
+        if request.url.path.endswith("/search"):
+            assert request.url.params["q"] == "Toyota"
+            return httpx.Response(200, json={"quotes": [{"symbol": "7203.T"}]})
+        symbol = request.url.path.rsplit("/", 1)[-1]
+        assert symbol in {"AAPL", "7203.T"}
+        assert request.url.params["range"] == "1d"
+        return httpx.Response(
+            200,
+            json={
+                "chart": {
+                    "result": [
+                        {
+                            "meta": {
+                                "symbol": symbol,
+                                "regularMarketPrice": 110,
+                                "chartPreviousClose": 100,
+                            },
+                            "indicators": {"quote": [{"close": [100, 110]}]},
+                        }
+                    ]
+                }
+            },
+        )
+
+    with client(respond) as http:
+        result = json.loads(fetch_quotes("Toyota,AAPL", "Watchlist", client=http))
+        assert result["title"] == "Watchlist"
+        assert [quote["symbol"] for quote in result["quotes"]] == ["7203.T", "AAPL"]
+        assert all(quote["changePercent"] == 10 for quote in result["quotes"])
+        assert not http.is_closed
+
+
+def test_market_source_reports_missing_symbols_and_unavailable_data():
+    with client(lambda request: httpx.Response(503)) as http:
+        assert fetch_quotes("", client=http) == "No symbols requested."
+        assert fetch_quotes("AAPL", client=http) == "No market data found for: AAPL."
