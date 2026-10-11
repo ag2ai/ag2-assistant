@@ -1,4 +1,5 @@
 <script lang="ts">
+  import CardSaveMenu from './CardSaveMenu.svelte'
   import { api } from '../../transport/api/index.ts'
   import { thread } from '../../store.ts'
   import { cardFilename } from '../../lib/cardDrafts.ts'
@@ -65,37 +66,28 @@
   }
 </script>
 
-<div class="draft-save">
-  <div class="draft-row">
-    <span>{item.draft?.name} · Version {item.draft?.version}</span>
-    <button class="open" onclick={open}>Save definition</button>
-  </div>
-  {#if saved}<p role="status">{saved}</p>{/if}
-  {#if opened}
+{#if saved}<p class="draft-save-result" role="status">{saved}</p>{/if}
+<CardSaveMenu label="Save definition" icon="code" triggerClass="definition-save-trigger" alwaysVisible bind:opened onOpen={open}>
     <form onsubmit={(event) => { event.preventDefault(); save() }}>
+      <h2>Save definition</h2>
+      <p class="draft-version">{item.draft?.name} · Version {item.draft?.version}</p>
       <label>Card name<input bind:value={name} oninput={changed} required disabled={busy} /></label>
       <label>Filename<input bind:value={filename} oninput={changed} required disabled={busy} /></label>
-      {#if conflict}
-        <p role="alert">{conflict.message}</p>
-        <div class="draft-row">
-          <button type="button" class="open" onclick={() => save(true)} disabled={busy}>Replace</button>
-          <button type="button" class="open" onclick={copy} disabled={busy}>Save as copy</button>
-        </div>
-      {:else}
-        <button type="submit" class="open" disabled={busy || !name.trim() || !filename.trim()}>{busy ? 'Saving…' : 'Save definition'}</button>
-      {/if}
+      {#if conflict}<p role="alert">{conflict.message}</p>{/if}
       {#if error}<p role="alert">{error}</p>{/if}
-      <button type="button" class="open" onclick={() => opened = false} disabled={busy}>Cancel</button>
+      <div class="card-save-actions">
+        <button type="button" class="open" onclick={() => opened = false} disabled={busy}>Cancel</button>
+        {#if conflict}
+          <button type="button" class="open" onclick={copy} disabled={busy}>Save as copy</button>
+          <button type="button" class="open primary" onclick={() => save(true)} disabled={busy}>Replace</button>
+        {:else}
+          <button type="submit" class="open primary" disabled={busy || !name.trim() || !filename.trim()}>{busy ? 'Saving…' : 'Save definition'}</button>
+        {/if}
+      </div>
     </form>
-  {/if}
-</div>
+</CardSaveMenu>
 
 <style>
-  .draft-save { margin: 8px 0 16px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; }
-  .draft-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .draft-row span { font-size: 12px; color: var(--muted); }
-  form { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-top: 12px; }
-  label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
-  input { min-width: 180px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); background: var(--bg); }
-  p { width: 100%; margin: 8px 0; font-size: 12px; }
+  .draft-save-result { margin: 8px 0 16px; font-size: 12px; }
+  .draft-version { color: var(--muted); }
 </style>

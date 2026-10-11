@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte'
-  import Icon from '../Icon.svelte'
+  import CardSaveMenu from './CardSaveMenu.svelte'
   import { api } from '../../transport/api/index.ts'
   import { thread, profileEpoch, refreshFiles } from '../../store.ts'
   import { openAsideFile } from '../../router.ts'
@@ -12,7 +12,7 @@
   import type { CardInstanceSaveRequest, CardInstanceSave } from '../../schemas/card_instance.ts'
 
   let { item, localData }: { item: Extract<ThreadItem, { kind: 'a2ui' }>; localData: () => A2UIData } = $props()
-  let dialog: HTMLDialogElement
+  let opened = $state(false)
   let directory = $state('')
   let filename = $state('')
   let directories = $state<string[]>([])
@@ -32,7 +32,6 @@
     originChat = $thread.chat
     directory = ''; error = ''; result = null; pending = null
     directories = []; paths = []; filename = ''
-    dialog.showModal()
     loading = true
     try {
       const files = await api.files()
@@ -60,7 +59,7 @@
       if (disposed || epoch !== $profileEpoch) return
       result = saved
       refreshFiles(saved.path)
-      dialog.close()
+      opened = false
       if (saved.history_recorded) pending = null
     } catch (cause) {
       if (disposed || epoch !== $profileEpoch) return
@@ -70,9 +69,6 @@
   }
 </script>
 
-<button class="instance-save-trigger" onclick={open} title="Save instance" aria-label="Save instance" aria-haspopup="dialog">
-  <Icon name="save" size={16} />
-</button>
 {#if result}
   <div class="instance-save-result">
     <span role="status">{result.message}</span>
@@ -83,9 +79,9 @@
     {/if}
   </div>
 {/if}
-<dialog class="instance-save-dialog" bind:this={dialog} aria-label="Save instance as" oncancel={(event) => { if (busy) event.preventDefault() }}>
+<CardSaveMenu label="Save instance" icon="save" triggerClass="instance-save-trigger" bind:opened onOpen={open}>
   <form onsubmit={(event) => { event.preventDefault(); save() }}>
-    <h2>Save instance as</h2>
+    <h2>Save instance</h2>
     <label>Directory
       <select value={directory} onchange={changeDirectory} disabled={busy || loading}>
         <option value="">Files</option>
@@ -98,21 +94,13 @@
     <p class="muted">Keep the {INSTANCE_SUFFIX} suffix.</p>
     {#if loading}<p role="status">Loading Directories…</p>{/if}
     {#if error}<p role="alert">{error}</p>{/if}
-    <div class="buttons">
-      <button type="button" class="open" disabled={busy} onclick={() => dialog.close()}>Cancel</button>
-      <button type="submit" class="open" disabled={busy || loading || !filename.endsWith(INSTANCE_SUFFIX) || !filename.trim()}>{busy ? 'Saving…' : pending ? 'Retry Save' : 'Save instance'}</button>
+    <div class="card-save-actions">
+      <button type="button" class="open" disabled={busy} onclick={() => opened = false}>Cancel</button>
+      <button type="submit" class="open primary" disabled={busy || loading || !filename.endsWith(INSTANCE_SUFFIX) || !filename.trim()}>{busy ? 'Saving…' : pending ? 'Retry Save' : 'Save instance'}</button>
     </div>
   </form>
-</dialog>
+</CardSaveMenu>
 
 <style>
   .instance-save-result { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 8px 0 16px; font-size: 12px; }
-  dialog { color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 16px; width: min(440px, 90vw); padding: 24px; }
-  dialog::backdrop { background: #0007; }
-  form { display: flex; flex-direction: column; gap: 12px; }
-  h2 { font-size: 18px; margin: 0 0 8px; }
-  label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
-  input, select { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); background: var(--bg); }
-  p { margin: 0; font-size: 12px; }
-  .buttons { display: flex; justify-content: end; gap: 12px; }
 </style>

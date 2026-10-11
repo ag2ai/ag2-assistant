@@ -209,22 +209,22 @@
    would style those as buttons. A page that renders outside a modal/panel opts in
    by adding its root class to the list below (today: .taskpage, .tf) — never by
    copying this block into the component. */
-.modal .open, .panel .open, .taskpage .open, .tf .open, :is(.draft-save, .instance-save, .instance-save-dialog, .source-controls, .source-approval, .note, .screen-actions, .screens-nav) .open {
+.modal .open, .panel .open, .taskpage .open, .tf .open, :is(.card-save-menu, .instance-save-result, .source-controls, .source-approval, .note, .screen-actions, .screens-nav) .open {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   flex: none; font-family: var(--sans); font-size: 13px; font-weight: var(--fw-medium); cursor: pointer;
   border: 1px solid var(--line); background: var(--surface); color: var(--ink);
   border-radius: var(--radius-sm); padding: 7px 14px;
   transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
 }
-.modal .open:hover, .panel .open:hover, .taskpage .open:hover, .tf .open:hover, :is(.draft-save, .instance-save, .instance-save-dialog, .source-controls, .source-approval, .note, .screen-actions, .screens-nav) .open:hover { border-color: color-mix(in srgb, var(--ink) 22%, var(--line)); background: var(--code); }
-.modal .open:active, .panel .open:active, .taskpage .open:active, .tf .open:active, :is(.draft-save, .instance-save, .instance-save-dialog, .source-controls, .source-approval, .note, .screen-actions, .screens-nav) .open:active { background: var(--code); }
-.modal .open:disabled, .panel .open:disabled, .taskpage .open:disabled, .tf .open:disabled, :is(.draft-save, .instance-save, .instance-save-dialog, .source-controls, .source-approval, .note, .screen-actions, .screens-nav) .open:disabled { opacity: .5; cursor: default; border-color: var(--line); color: var(--muted); background: var(--surface); }
+.modal .open:hover, .panel .open:hover, .taskpage .open:hover, .tf .open:hover, :is(.card-save-menu, .instance-save-result, .source-controls, .source-approval, .note, .screen-actions, .screens-nav) .open:hover { border-color: color-mix(in srgb, var(--ink) 22%, var(--line)); background: var(--code); }
+.modal .open:active, .panel .open:active, .taskpage .open:active, .tf .open:active, :is(.card-save-menu, .instance-save-result, .source-controls, .source-approval, .note, .screen-actions, .screens-nav) .open:active { background: var(--code); }
+.modal .open:disabled, .panel .open:disabled, .taskpage .open:disabled, .tf .open:disabled, :is(.card-save-menu, .instance-save-result, .source-controls, .source-approval, .note, .screen-actions, .screens-nav) .open:disabled { opacity: .5; cursor: default; border-color: var(--line); color: var(--muted); background: var(--surface); }
 /* Primary CTA — accent-outlined, filled on hover. The one action that matters. */
-.modal .open.primary, .panel .open.primary, .taskpage .open.primary, .tf .open.primary, :is(.draft-save, .instance-save, .instance-save-dialog, .source-controls, .source-approval, .note, .screen-actions, .screens-nav) .open.primary { border-color: var(--accent); color: var(--accent); }
-.modal .open.primary:hover:not(:disabled), .panel .open.primary:hover:not(:disabled), .taskpage .open.primary:hover:not(:disabled), .tf .open.primary:hover:not(:disabled), :is(.draft-save, .instance-save, .instance-save-dialog, .source-controls, .source-approval, .note, .screen-actions, .screens-nav) .open.primary:hover:not(:disabled) { background: var(--accent-soft); }
+.modal .open.primary, .panel .open.primary, .taskpage .open.primary, .tf .open.primary, :is(.card-save-menu, .instance-save-result, .source-controls, .source-approval, .note, .screen-actions, .screens-nav) .open.primary { border-color: var(--accent); color: var(--accent); }
+.modal .open.primary:hover:not(:disabled), .panel .open.primary:hover:not(:disabled), .taskpage .open.primary:hover:not(:disabled), .tf .open.primary:hover:not(:disabled), :is(.card-save-menu, .instance-save-result, .source-controls, .source-approval, .note, .screen-actions, .screens-nav) .open.primary:hover:not(:disabled) { background: var(--accent-soft); }
 /* Destructive action (e.g. Delete task) + its inline confirm. */
-.modal .open.danger, .panel .open.danger, .taskpage .open.danger, .tf .open.danger, :is(.draft-save, .instance-save, .instance-save-dialog, .source-controls, .source-approval, .note, .screen-actions, .screens-nav) .open.danger { border-color: color-mix(in srgb, var(--danger) 55%, var(--line)); color: var(--danger); background: none; }
-.modal .open.danger:hover, .panel .open.danger:hover, .taskpage .open.danger:hover, .tf .open.danger:hover, :is(.draft-save, .instance-save, .instance-save-dialog, .source-controls, .source-approval, .note, .screen-actions, .screens-nav) .open.danger:hover { border-color: var(--danger); color: #fff; background: var(--danger); }
+.modal .open.danger, .panel .open.danger, .taskpage .open.danger, .tf .open.danger, :is(.card-save-menu, .instance-save-result, .source-controls, .source-approval, .note, .screen-actions, .screens-nav) .open.danger { border-color: color-mix(in srgb, var(--danger) 55%, var(--line)); color: var(--danger); background: none; }
+.modal .open.danger:hover, .panel .open.danger:hover, .taskpage .open.danger:hover, .tf .open.danger:hover, :is(.card-save-menu, .instance-save-result, .source-controls, .source-approval, .note, .screen-actions, .screens-nav) .open.danger:hover { border-color: var(--danger); color: #fff; background: var(--danger); }
 /* Icon-only square button (Edit / Delete / revoke). Muted glyph, NEUTRAL hover —
    matches the app's other icon buttons (.cbtn / .fttool / .rowkebab), never accent.
    Safe as a bare global: `.iconbtn` is not overloaded as a state modifier. */
@@ -532,12 +532,15 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .a2ui-surface > .a2ui-feature { margin: 0; }
 .a2ui-saveable > .a2ui-basic-card > .a2ui-text:first-child,
 .a2ui-saveable > .a2ui-basic-card > .a2ui-basic-col > .a2ui-text:first-child,
-.a2ui-saveable > .a2ui-basic-col > .a2ui-text:first-child { padding-right: 32px; box-sizing: border-box; }
-.instance-save-trigger { position: absolute; top: 7px; right: 7px; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); color: var(--muted); cursor: pointer; opacity: 0; pointer-events: none; }
-.a2ui-surface:hover > .instance-save-trigger,
-.a2ui-surface:focus-within > .instance-save-trigger { opacity: 1; pointer-events: auto; }
-.instance-save-trigger:hover { color: var(--ink); background: var(--panel); }
-@media (hover: none) { .instance-save-trigger { opacity: 1; pointer-events: auto; } }
+.a2ui-saveable > .a2ui-basic-col > .a2ui-text:first-child { padding-right: var(--card-save-space, 32px); box-sizing: border-box; }
+.card-save-trigger { position: absolute; top: 7px; right: 7px; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); color: var(--muted); cursor: pointer; opacity: 0; pointer-events: none; }
+.a2ui-surface:hover > .card-save-trigger,
+.a2ui-surface:focus-within > .card-save-trigger,
+.card-save-trigger.always-visible { opacity: 1; pointer-events: auto; }
+.a2ui-has-definition { --card-save-space: 66px; }
+.a2ui-has-definition > .instance-save-trigger { right: 41px; }
+.card-save-trigger:hover { color: var(--ink); background: var(--panel); }
+@media (hover: none) { .card-save-trigger { opacity: 1; pointer-events: auto; } }
 
 /* Placeholder while the model is still writing the surface's A2UI payload. */
 .a2ui-composing { max-width: min(100%, 360px); }

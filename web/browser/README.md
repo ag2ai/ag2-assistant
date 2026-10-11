@@ -8,7 +8,8 @@ Sizing fixtures check equal Grid tracks and content/fill modes. Calendar fixture
 compact monthly and scrollable annual ranges, three square sizes, English/Russian labels,
 accessible tooltips and distinct unknown/analysis/activity states. Surface fixtures check
 ordinary, feature and unframed cards without generic chrome, editable/read-only bindings,
-save icon placement/tooltips/keyboard focus, and the composing placeholder on narrow and wide chat layouts.
+save icon placement/tooltips/keyboard focus, definition dropdown defaults/dismissal/focus
+restoration, current versus obsolete drafts, and the composing placeholder on narrow and wide chat layouts.
 
 Start Vite with `npm --prefix web run dev -- --host 127.0.0.1 --port 5186`, then launch
 a **dedicated** Chrome with `--remote-debugging-port=9360` and a temporary

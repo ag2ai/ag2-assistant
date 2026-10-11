@@ -2,6 +2,7 @@ import { mount } from 'svelte'
 import BasicA2UIComponent from '../src/components/items/BasicA2UIComponent.svelte'
 import A2UISurface from '../src/components/items/A2UISurface.svelte'
 import A2UIComposing from '../src/components/items/A2UIComposing.svelte'
+import { thread } from '../src/store.ts'
 import type { ThreadItem } from '../src/schemas/events.ts'
 import type { A2UIComponent } from '../src/lib/a2ui.ts'
 import '../src/design/styles.css'
@@ -221,4 +222,48 @@ const composingFailures: string[] = []
 if (composingStyle.borderTopWidth !== '0px' || composingStyle.backgroundColor !== 'rgba(0, 0, 0, 0)' || composing.textContent?.includes('Overview')) composingFailures.push('Composing placeholder has generic chrome')
 if (composingTarget.scrollWidth > composingTarget.clientWidth + 1) composingFailures.push('Composing placeholder overflows')
 surfaces.push({ name: 'surface/composing', failures: composingFailures, scrollWidth: composingTarget.scrollWidth, clientWidth: composingTarget.clientWidth })
-Object.assign(window, { layoutResults: [...results, ...sizing, ...calendars, ...metrics, ...surfaces] })
+const draftMenus: Result[] = []
+const latestDraft: Extract<ThreadItem, { kind: 'a2ui' }> = {
+  id: 100, kind: 'a2ui', surfaceId: 'latest-draft', title: 'Native card',
+  component: { id: 'root', component: 'Card' }, data: {}, draft: { id: 'native-draft', version: 2, name: 'Native card' },
+}
+thread.set({ id: null, kind: 'chat', chat: 'browser-fixture', items: [latestDraft], busy: false })
+for (const width of [280, 620]) {
+  for (const state of ['current', 'obsolete', 'passive']) {
+    const target = document.createElement('section')
+    target.className = 'fixture'; target.style.width = `${width}px`; fixtures.append(target)
+    const nodes: A2UIComponent[] = [
+      { id: 'root', component: 'Card', width: 'content', child: 'title' },
+      { id: 'title', component: 'Text', text: 'Native card', variant: 'h4' },
+    ]
+    const item = { ...latestDraft, component: nodes[0], components: nodes, draft: { ...latestDraft.draft!, version: state === 'obsolete' ? 1 : 2 } }
+    mount(A2UISurface, { target, props: { item, passive: state === 'passive' } })
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+    const failures: string[] = []
+    const definition = target.querySelector<HTMLButtonElement>('.definition-save-trigger')
+    if (!!definition !== (state === 'current')) failures.push('Wrong definition action availability')
+    if (definition) {
+      if (getComputedStyle(definition).opacity !== '1' || definition.title !== 'Save definition') failures.push('Definition action is not permanently visible with its tooltip')
+      const instance = target.querySelector<HTMLElement>('.instance-save-trigger')!.getBoundingClientRect()
+      if (instance.right > definition.getBoundingClientRect().left) failures.push('Save actions overlap')
+      definition.scrollIntoView({ block: 'center' }); definition.click()
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      const menu = target.querySelector<HTMLElement>('[popover][aria-label="Save definition"]')!
+      const bounds = menu.getBoundingClientRect()
+      if (!menu.matches(':popover-open') || definition.getAttribute('aria-expanded') !== 'true') failures.push('Definition dropdown did not open')
+      if (bounds.left < 0 || bounds.right > window.innerWidth || bounds.top < 0 || bounds.bottom > window.innerHeight) failures.push('Save dropdown escapes the viewport')
+      const primary = menu.querySelector<HTMLButtonElement>('.card-save-actions .open.primary')!
+      const secondary = menu.querySelector<HTMLButtonElement>('.card-save-actions .open:not(.primary)')!
+      if (getComputedStyle(primary).borderRadius === '0px' || getComputedStyle(primary).color === getComputedStyle(secondary).color) failures.push('Save menu buttons do not use the shared design system')
+      const inputs = menu.querySelectorAll<HTMLInputElement>('input')
+      if (inputs[0].value !== 'Native card' || inputs[1].value !== 'native-card.card.yaml') failures.push('Definition form defaults were lost')
+      inputs[0].focus()
+      menu.querySelector<HTMLButtonElement>('.card-save-actions button[type="button"]')!.click()
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      if (menu.matches(':popover-open') || definition.getAttribute('aria-expanded') !== 'false') failures.push('Definition dropdown did not close')
+      if (document.activeElement !== definition) failures.push('Definition dropdown lost keyboard focus on close')
+    }
+    draftMenus.push({ name: `definition-menu/${width}/${state}`, failures, scrollWidth: target.scrollWidth, clientWidth: target.clientWidth })
+  }
+}
+Object.assign(window, { layoutResults: [...results, ...sizing, ...calendars, ...metrics, ...surfaces, ...draftMenus] })

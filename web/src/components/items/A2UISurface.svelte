@@ -116,13 +116,13 @@
 {#if isComposingUpdate}
   <A2UIComposing />
 {:else if hasLayout}
-  <div class="a2ui-surface" class:a2ui-saveable={!readOnly} style:width={item.component.width === 'content' ? 'fit-content' : undefined} role="group" aria-label={title}>
+  <div class="a2ui-surface" class:a2ui-saveable={!readOnly} class:a2ui-has-definition={!readOnly && currentDraft($thread.items, item)} style:width={item.component.width === 'content' ? 'fit-content' : undefined} role="group" aria-label={title}>
     <BasicA2UIComponent {sourceIds} {sourceControls} component={item.component} {components} data={inputData} passive={readOnly} onDataChange={setInputValue} onAction={submitAction} />
-    {#if !readOnly}<CardInstanceSave {item} localData={() => inputData} />{/if}
+    {#if !readOnly}
+      <CardInstanceSave {item} localData={() => inputData} />
+      {#if currentDraft($thread.items, item)}<CardDraftSave {item} />{/if}
+    {/if}
   </div>
-{/if}
-{#if !readOnly && currentDraft($thread.items, item)}
-  <CardDraftSave {item} />
 {/if}
 {#if actionPending}
   <div class="a2ui-action-pending" role="status" aria-label="Submitting action"><Icon name="rotate-cw" size={14} /></div>
