@@ -22,6 +22,9 @@ Reuse unchanged instructions and references whose full text is in the current co
 Read missing or changed references; a compaction summary is not their full text.
 Use vocabulary.md and examples.md before authoring. Use the existing primitives, styling
 words, bindings and repeated templates; never add CSS, JavaScript or backend handlers.
+For direct values or automatically refreshed data, use sources.md. Current values belong
+in data; a source is optional. Definitions may include source and parameters; retained
+Python source code uses the existing runtime, without a coding agent or application changes.
 For sizing or equal columns use layout.md. Use width="content" for a frame fitted to its
 contents, width="fill" to fill its container, and Grid for equal responsive columns.
 For GitHub-like activity calendars use heatmap.md and CalendarHeatmap instead of Table.
@@ -36,6 +39,8 @@ Keep identifiers and previews in separate columns; compose numbers and toned pil
 Gather factual values from the user's context and available tools; leave missing facts
 absent and explain gaps. For a requested template only, clearly label example values as
 illustrative. Definition.example is a worked example, separate from the current data.
+Before claiming a property is unavailable, read its current reference and validated schema.
+Removing a visible heading from a saved instance does not remove its required message.title.
 
 run_skill_script(name="card-author", script="draft_card", args={"definition": {...},
 "data": {...}, "title": "..."}) validates and draws in this same Turn. The definition has
@@ -80,6 +85,7 @@ class _CardAuthorSkill(MemorySkill):
                     "layout.md",
                     "heatmap.md",
                     "charts.md",
+                    "sources.md",
                     "drafts.md",
                 )
             ),
@@ -140,6 +146,8 @@ class CardAuthorRuntime(MemoryRuntime):
             return (Path(__file__).parent / "cards" / "HEATMAP.md").read_text()
         if resource == "charts.md":
             return (Path(__file__).parent / "cards" / "CHARTS.md").read_text()
+        if resource == "sources.md":
+            return (Path(__file__).parent / "cards" / "SOURCES.md").read_text()
         if resource == "drafts.md" and self.drafts is not None:
             return json.dumps(await self.drafts.index(context), ensure_ascii=False)
         raise FileNotFoundError(resource)

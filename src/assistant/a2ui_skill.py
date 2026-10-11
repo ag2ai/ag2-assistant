@@ -5,6 +5,7 @@ import json
 import uuid
 from collections.abc import Sequence
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 from ag2.a2ui import A2UIMessageEvent
@@ -38,6 +39,7 @@ _RESOURCE_DIR = "cards"
 
 # The A2UI protocol at large: composing views and drawing from the basic components.
 PROTOCOL_RESOURCE = "reference/protocol.md"
+SOURCE_RESOURCE = "reference/sources.md"
 
 
 def card_resource(name: str) -> str:
@@ -88,6 +90,20 @@ script="<CardName>", args={{…fields}}). The view is drawn in the chat, or the 
 fields to fix.
 4. Reply with one or two sentences of orientation. The view is the answer: do not restate \
 its contents in prose, and never mention A2UI, schemas or components to the user.
+
+## Data and refresh
+
+Pass known values directly as the view's fields; a separate data file or backend source
+is optional. The rendered instance retains its data. Definition.example is illustrative,
+not the current values. Saving a definition does not update an already saved instance.
+For data that must stay current, use this skill's {SOURCE_RESOURCE}: Card definitions can
+declare a source, and saved instances can retain Python code in message.data._sources.
+This uses the existing source runtime; attaching code requires no ACP bridge or app changes.
+Choose _parameters for source-backed catalog Cards. Source execution requires Profile approval
+for custom code; a successful layout preview does not verify refresh. Use screens to save
+or reference an instance outside Chat, preserving the independence of ordinary Chat copies.
+For a custom native chart, activity heatmap or layout, use card-author and its current
+references before claiming that a component or sizing option is unavailable.
 
 To put several views on one surface, or to build one from the basic components when no view \
 above fits, use the protocol reference, reading it if missing or changed: \
@@ -211,6 +227,7 @@ class _A2UISkill(MemorySkill):
             resources=(
                 *(Resource(name=card_resource(name)) for name in cards),
                 Resource(name=PROTOCOL_RESOURCE),
+                Resource(name=SOURCE_RESOURCE),
             ),
             scripts=tuple(Script(name=name) for name in cards),
         )
@@ -235,6 +252,8 @@ class A2UISkillRuntime(MemoryRuntime):
             return await super().read_resource(name, resource, context)
         if resource == PROTOCOL_RESOURCE:
             return self._catalog.runtime().protocol
+        if resource == SOURCE_RESOURCE:
+            return (Path(__file__).parent / "cards" / "SOURCES.md").read_text()
         card = self._catalog.cards().get(_card_named(resource))
         if card is None:
             raise FileNotFoundError(f"resource {resource!r} not found in skill {name!r}")

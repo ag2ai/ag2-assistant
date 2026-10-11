@@ -4,8 +4,10 @@ Screens are pages of Cards outside conversations. Open **Screens** in the sideba
 and select a dashboard. Ask the assistant to create one (for example, “make me a
 morning dashboard with weather and AAPL”) or rearrange it (“move weather to the
 top”). The **screens** Skill creates independent Card instance files and a Screen
-that references them. The available sources remain those supported by Cards:
-Weather, Quotes and approved custom code; other data needs a suitable Card source.
+that references them. Card instances can retain values directly without an external
+data file or backend source. Automatic refresh uses Weather, Quotes or approved custom
+code retained inside the Card. The `sources.md` skill reference explains both new
+definitions and attaching a source to an existing instance through ordinary Files edits.
 
 To rename a Screen, open its sidebar **⋮** menu and choose **Rename**. Enter or
 leaving the input saves; Escape or an empty name cancels. The new title appears

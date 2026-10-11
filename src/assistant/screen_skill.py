@@ -37,9 +37,15 @@ INSTRUCTIONS = """Screens are pages in the Screens tab, composed from saved Card
 Reuse unchanged instructions and references whose full text is in the current context.
 Read missing or changed references; a compaction summary is not their full text.
 Use rich-views Card details first. Fetch real initial fields; never invent values.
+Card values can live directly in the instance's message.data; an external data file or
+backend source is optional. For automatic updates, read sources.md: Python code can be
+retained inside the Card itself. Use the existing file tools and Card source mechanism;
+attaching a source does not require a coding agent, ACP bridge or application code changes.
 run_skill_script(name="screens", script="save_instance", args={"path":"weather.card-instance.yaml",
-"card":"WeatherPanel", "fields":{...}}) creates an independent source-backed instance.
-Choose its _parameters once; later refresh uses its retained source without another Turn.
+"card":"WeatherPanel", "fields":{...}}) creates an independent instance from a catalog Card.
+If the Card declares a source, choose its _parameters once; later refresh uses the retained
+source without another Turn. For an existing instance, attach code under message.data._sources
+as shown in sources.md; preserve its layout, values, required envelope fields and references.
 For existing instances, reuse their Files paths instead of copying or regenerating them.
 
 run_skill_script(name="screens", script="save_screen", args={"path":"morning.screen.yaml",
@@ -49,6 +55,8 @@ run_skill_script(name="screens", script="save_screen", args={"path":"morning.scr
 creates one Screen. Each CardInstance is a reference, never inline Card data or a catalog name.
 Layouts use the Card vocabulary (Column, Row, Text, etc.); relative ./ bindings are permitted
 only within repeated templates. Use card-author's vocabulary when choosing primitives.
+Headings can be Text directly in the Screen layout, without a Card wrapper or instance file.
+Keep message.title when removing a visible heading from an instance: they are separate fields.
 Use card-author's layout.md for sizing. Grid with columns=2 gives equal responsive halves;
 two grow=true columns only share leftover space. width="content" fits a frame to its contents;
 width="fill" fills its container. A parent's align affects the child; inner align does not
@@ -66,6 +74,11 @@ Before judging a design's sizing, use preview through THIS skill. Use preview.md
 arguments. It returns an image and measured component boxes, including horizontal scroll.
 Preview is read-only: it renders retained values without running source scripts. Inspect
 both desktop and narrow viewports and iterate; saving is a separate explicit action.
+Before declaring a property unsupported, read the current vocabulary and relevant layout,
+tables, charts or heatmap reference. Keep illustrative preview values out of saved real data.
+After source changes, validate the Screen and check an actual refresh separately from preview.
+Custom code requires approval in this Profile. Report saved, previewed and refreshed states
+accurately; a denied test run or approval leaves execution unverified.
 Renaming an instance requires updating its references. Missing or invalid references report
 an error; repair the file rather than substituting another Card. Buttons in Screens are passive
 except source Refresh and approval controls. Drag/write-back boards are a separate feature.
@@ -77,7 +90,7 @@ class _ScreenSkill(MemorySkill):
     def descriptor(self) -> Skill:
         return replace(
             super().descriptor,
-            resources=(Resource(name="preview.md"),),
+            resources=(Resource(name="preview.md"), Resource(name="sources.md")),
             scripts=tuple(
                 Script(name=name)
                 for name in (
@@ -115,8 +128,9 @@ class ScreenSkillRuntime(MemoryRuntime):
         return f'<skill_content name="screens">\n{INSTRUCTIONS.strip()}\n</skill_content>'
 
     async def read_resource(self, name: str, resource: str, context: ConversationContext) -> str:
-        if name == "screens" and resource == "preview.md":
-            return (Path(__file__).parent / "cards" / "PREVIEW.md").read_text()
+        references = {"preview.md": "PREVIEW.md", "sources.md": "SOURCES.md"}
+        if name == "screens" and resource in references:
+            return (Path(__file__).parent / "cards" / references[resource]).read_text()
         raise FileNotFoundError(resource)
 
     async def _preview(self, context, values: dict):
