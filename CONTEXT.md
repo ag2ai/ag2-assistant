@@ -566,8 +566,8 @@ chat, one for spoken voice — each an independent list with its own single Acti
 selection, both living in the Global config (shared across every Profile).
 
 **Text model**:
-A named configuration for a chat LLM — a provider/type, a model name, and an
-optional referenced Secret. The assistant's "brain" for typed conversation. Shown as
+A named configuration for a chat LLM — a provider/type, a model name, an optional
+referenced Secret, and its **Parameters**. The assistant's "brain" for typed conversation. Shown as
 the Text section of Settings → Models; exactly one is Active install-wide.
 _Avoid_: LLM config (the `llm_configs` store/implementation name), model (bare —
 ambiguous with a Live model)
@@ -590,6 +590,15 @@ have exactly one surface and so present no choice. Naming an endpoint reveals th
 choice; withdrawing the endpoint settles it back to the vendor's own surface.
 _Avoid_: type (the stored field's name, which also carries the vendor), protocol, API
 version, provider (the vendor is a separate axis and is never chosen here)
+
+**Parameter** (Text model):
+A setting that tunes how a **Text model** answers — how hard it reasons, for one —
+offered by the model's type under the provider's own name and levels, and stored on
+the Text model. Unset means the provider's default. There is no per-Chat or
+per-Profile Parameter: a differently tuned conversation is a second Text model reached
+through the **Chat override** (ADR 0047).
+_Avoid_: option (the free-form "Advanced (JSON)" escape hatch), setting (bare —
+collides with Settings), reasoning level (one Parameter, and each provider names its own)
 
 **Live model**:
 A named configuration for realtime voice — a Voice provider, a realtime model, an
