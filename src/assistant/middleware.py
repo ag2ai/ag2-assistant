@@ -2,8 +2,9 @@
 
 import asyncio
 import copy
+import logging
 import random
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
 from ag2.annotations import Context
@@ -12,7 +13,21 @@ from ag2.middleware.base import BaseMiddleware, LLMCall, MiddlewareFactory
 
 from assistant.compaction import ContextBudgetError
 
+logger = logging.getLogger(__name__)
+
 _TRANSIENT_HTTP_STATUS = frozenset({429, 500, 502, 503, 504})
+_TRANSIENT_PROVIDER_CODES = frozenset(
+    {
+        "server_error",
+        "internal_error",
+        "internal_server_error",
+        "overloaded_error",
+        "server_overloaded",
+        "rate_limit_error",
+        "rate_limit_exceeded",
+        "service_unavailable",
+    }
+)
 # Match transport base classes without importing optional provider SDKs.
 _TRANSIENT_NETWORK_TYPES = frozenset(
     {
@@ -68,6 +83,17 @@ class _LLMTimeoutMiddleware(BaseMiddleware):
             raise LLMCallTimeout(f"LLM call timed out after {self._seconds:g}s") from exc
 
 
+def _is_transient_provider_error(exc: BaseException) -> bool:
+    """Recognize structured error codes in a provider's streaming error payload."""
+    codes = [getattr(exc, "code", None), getattr(exc, "type", None)]
+    body = getattr(exc, "body", None)
+    if isinstance(body, Mapping):
+        error = body.get("error", body)
+        if isinstance(error, Mapping):
+            codes.extend((error.get("code"), error.get("type")))
+    return any(isinstance(code, str) and code in _TRANSIENT_PROVIDER_CODES for code in codes)
+
+
 def _is_transient(exc: BaseException) -> bool:
     """Recognize transient HTTP and network failures, including explicit wrapped causes."""
     seen: set[int] = set()
@@ -88,6 +114,8 @@ def _is_transient(exc: BaseException) -> bool:
                 continue
             if 400 <= status <= 599:
                 return status in _TRANSIENT_HTTP_STATUS
+        if _is_transient_provider_error(exc):
+            return True
         if isinstance(exc, (LLMCallTimeout, ConnectionError, TimeoutError)):
             return True
         if any(
@@ -102,14 +130,7 @@ def _is_transient(exc: BaseException) -> bool:
 
 
 class LLMRetryMiddleware(MiddlewareFactory):
-    """Retry a failed LLM call a few times, with backoff, before propagating.
-
-    ``retries`` is the number of *re-tries* (so total attempts = ``retries + 1``).
-    Only transient failures (see ``_is_transient``) are retried; a fatal error
-    propagates on the first occurrence. Backoff is exponential from ``base_delay``
-    (capped at ``max_delay``) with a little jitter. ``sleep`` is injectable so
-    tests exercise the retry path without real waits.
-    """
+    """Retry transient failures up to ``retries`` times with capped exponential waits."""
 
     def __init__(
         self,
@@ -119,12 +140,14 @@ class LLMRetryMiddleware(MiddlewareFactory):
         max_delay: float = 30.0,
         predicate: Callable[[BaseException], bool] = _is_transient,
         sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
+        jitter: Callable[[], float] = random.random,
     ) -> None:
         self._retries = max(0, retries)
         self._base_delay = base_delay
         self._max_delay = max_delay
         self._predicate = predicate
         self._sleep = sleep
+        self._jitter = jitter
 
     def __call__(self, event: "BaseEvent", context: "Context") -> "BaseMiddleware":
         return _LLMRetryMiddleware(
@@ -135,6 +158,7 @@ class LLMRetryMiddleware(MiddlewareFactory):
             max_delay=self._max_delay,
             predicate=self._predicate,
             sleep=self._sleep,
+            jitter=self._jitter,
         )
 
 
@@ -149,6 +173,7 @@ class _LLMRetryMiddleware(BaseMiddleware):
         max_delay: float,
         predicate: Callable[[BaseException], bool],
         sleep: Callable[[float], Awaitable[Any]],
+        jitter: Callable[[], float],
     ) -> None:
         super().__init__(event, context)
         self._retries = retries
@@ -156,6 +181,7 @@ class _LLMRetryMiddleware(BaseMiddleware):
         self._max_delay = max_delay
         self._predicate = predicate
         self._sleep = sleep
+        self._jitter = jitter
 
     async def on_llm_call(
         self,
@@ -168,17 +194,23 @@ class _LLMRetryMiddleware(BaseMiddleware):
             try:
                 return await call_next(events, context)
             except Exception as exc:
-                # Out of retries, or a non-transient error → let it propagate so
-                # the timeout/executor failure path handles it as before.
                 if attempt >= self._retries or not self._predicate(exc):
                     raise
-                await self._sleep(self._backoff(attempt))
+                delay = self._backoff(attempt)
+                logger.warning(
+                    "LLM call failed (%s); retry %d/%d in %.2fs",
+                    type(exc).__name__,
+                    attempt + 1,
+                    self._retries,
+                    delay,
+                )
+                await self._sleep(delay)
                 attempt += 1
 
     def _backoff(self, attempt: int) -> float:
-        """Exponential backoff (base * 2**attempt), capped, with ±25% jitter."""
+        """Double the wait per retry, add up to 25% jitter, and cap the final delay."""
         delay = min(self._base_delay * (2**attempt), self._max_delay)
-        return delay * (1 + random.uniform(-0.25, 0.25))
+        return min(delay * (1 + self._jitter() * 0.25), self._max_delay)
 
 
 class ACPInstructionsMiddleware(MiddlewareFactory):
