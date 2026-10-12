@@ -6,6 +6,7 @@ import json
 import pytest
 from ag2 import tool
 from ag2.compact import CompactionSummary
+from ag2.config.gemini.events import GeminiServerToolResultEvent
 from ag2.config.openai.events import OpenAIReasoningEvent
 from ag2.context import ConversationContext
 from ag2.events import (
@@ -22,6 +23,7 @@ from ag2.events import (
     ToolResult,
     ToolResultEvent,
     ToolResultsEvent,
+    UrlInput,
     UsageEvent,
 )
 from ag2.knowledge import MemoryKnowledgeStore
@@ -41,6 +43,7 @@ from assistant.compaction import (
     event_ref,
     load_checkpoint,
     request_tokens,
+    summary_parts,
 )
 from assistant.config import Config
 from assistant.gateway.history import ChatEventLog
@@ -664,3 +667,16 @@ async def test_new_event_before_checkpoint_marker_is_not_mistaken_for_covered_hi
     assert any(
         "Work retained from another process" in json.dumps(event.to_dict()) for event in messages
     )
+
+
+def test_summary_parts_skip_provider_search_citations() -> None:
+    citation = UrlInput(
+        "https://vertexaisearch.cloud.google.com/grounding-api-redirect/x", kind="binary"
+    )
+    image = ImageInput(url="https://example.com/chart.png")
+    search = GeminiServerToolResultEvent(
+        parent_id="s", name="google_search", result=ToolResult(citation)
+    )
+    fetched = ToolResultEvent(parent_id="f", name="fetch", result=ToolResult(image))
+
+    assert summary_parts(ToolResultsEvent(results=[search, fetched])) == [image]
