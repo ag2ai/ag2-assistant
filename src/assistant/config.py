@@ -80,10 +80,8 @@ class LLMConfig(BaseModel):
     # A config.json value is the install-wide base; each profile's
     # Settings → Model & Keys → Advanced overlays its own entries on top.
     provider_options: dict[str, dict] = Field(default_factory=dict)
-    # Provider-native (server-side) tools switched on for the active configuration,
-    # as {tool id: options}. Availability is per config_type — see
-    # assistant.builtin_tools. Values are empty today: every option on the
-    # registered tools is optional, so nothing needs configuring yet.
+    # Provider-native tools switched on for the active configuration, as
+    # {tool id: options}; assistant.builtin_tools says which exist per config_type.
     builtin_tools: dict[str, dict] = Field(default_factory=dict)
     # Hard wall-clock ceiling on a single LLM call. Provider SDKs sometimes hang a
     # streaming request indefinitely (no error, no timeout) — a stuck turn then sits

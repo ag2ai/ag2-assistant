@@ -18,7 +18,10 @@
   import { autoSecretName, sortForProvider } from '../../lib/secretsUtil.ts'
   import { TYPE_LABEL } from '../../lib/providerLabels.ts'
   import { llmConfigs } from '../../lib/llm.ts'
-  import { builtinToolText } from '../../lib/builtinTools.ts'
+  import {
+    builtinOptionText, builtinToolText, formatOption, parseOption,
+  } from '../../lib/builtinTools.ts'
+  import { advancedKeys, choiceLabel, modelParamText, parseParam } from '../../lib/modelParams.ts'
   import { API_INTERFACES, usesBaseUrl, offersApiInterface, settleWithoutBaseUrl } from '../../lib/apiInterface.ts'
   import { splitModelId, joinModelId, effortLabel, groupModels } from '../../lib/codexModels.ts'
   import { familyOf } from '../../lib/knownModels.ts'
@@ -67,6 +70,7 @@
       hasOptions,
       advText: hasOptions ? JSON.stringify(config.options, null, 2) : '',
       builtinTools: { ...(config.builtin_tools || {}) },
+      params: { ...(config.params || {}) },
     }
   })
 
@@ -79,8 +83,7 @@
   let pastedKey = $state('')            // non-empty → create-or-snap a Secret on save
   let advOpen = $state(init.hasOptions) // Advanced JSON escape hatch (extra provider kwargs)
   let advText = $state(init.advText)
-  // Provider-native tools switched on, as {tool id: options}. Options stay empty —
-  // every field on the offered tools is optional, so there is nothing to edit yet.
+  // Provider-native tools switched on, as {tool id: options}.
   let builtinTools = $state<Record<string, Record<string, unknown>>>(init.builtinTools)
 
   // Which provider tools THIS type offers. The server is the authority (it ships
@@ -92,6 +95,29 @@
     else delete next[id]
     builtinTools = next
   }
+  // The options each offered tool takes on THIS type; an unset one is absent.
+  const builtinOptions = $derived($llmConfigs.builtinOptionsByType?.[type] || {})
+  function setBuiltinOption(toolId: string, optionId: string, kind: string, text: string) {
+    const options = { ...builtinTools[toolId] }
+    const value = parseOption(kind, text)
+    if (value === undefined) delete options[optionId]
+    else options[optionId] = value
+    builtinTools = { ...builtinTools, [toolId]: options }
+  }
+
+  // Parameters THIS type offers, and the ones set; an unset one is absent, which
+  // is the provider's default.
+  let params = $state<Record<string, unknown>>(init.params)
+  const paramsOffered = $derived($llmConfigs.paramsByType?.[type] || [])
+  function setParam(id: string, kind: string, text: string) {
+    const next = { ...params }
+    const value = parseParam(kind, text)
+    if (value === undefined) delete next[id]
+    else next[id] = value
+    params = next
+  }
+  // The parameters the open Advanced box names; their controls are marked overridden.
+  const overridden = $derived(advOpen ? advancedKeys(advText) : new Set<string>())
 
   onMount(loadSecrets)
 
@@ -155,13 +181,14 @@
   function changeType(next: string) {
     if (next === type) return
     if (modelFamily(next) !== modelFamily(type)) model = ''
-    // Provider tools belong to the provider. Drop the ones the new type has no
-    // answer for, mirroring the server's own filter, so the form never shows a
-    // switch a save would silently strip.
+    // Retain offered tools and their options; save validates the final type.
     const offered = $llmConfigs.builtinByType?.[next] || []
     builtinTools = Object.fromEntries(
       Object.entries(builtinTools).filter(([id]) => offered.includes(id)),
     )
+    // Keep only the parameters the new type offers.
+    const nextParams = ($llmConfigs.paramsByType?.[next] || []).map((p) => p.id)
+    params = Object.fromEntries(Object.entries(params).filter(([id]) => nextParams.includes(id)))
     type = next
   }
 
@@ -346,6 +373,7 @@
       // feature" and seeds the type's old automatic behaviour, so omitting it here
       // would resurrect a switch the user just turned off.
       builtin_tools: builtinTools,
+      params,
     }
   }
 
@@ -546,6 +574,33 @@
     </div>
   {/if}
 
+  <!-- One control per parameter the type offers, drawn from the server's
+       descriptors; a type that offers none renders nothing. -->
+  {#each paramsOffered as p (p.id)}
+    {@const t = modelParamText(type, p.id)}
+    <div class="llmfield">
+      <label for="lf-param-{p.id}">{t.label} <span class="llmhint">{t.description}</span></label>
+      {#if p.kind === 'choice'}
+        <select
+          id="lf-param-{p.id}" value={String(params[p.id] ?? '')}
+          onchange={(e) => setParam(p.id, p.kind, e.currentTarget.value)}
+        >
+          <option value="">Provider default</option>
+          {#each p.choices as c (c)}<option value={c}>{choiceLabel(c)}</option>{/each}
+        </select>
+      {:else}
+        <input
+          id="lf-param-{p.id}" type="number" placeholder="Provider default"
+          min={p.minimum ?? undefined} max={p.maximum ?? undefined}
+          step={p.kind === 'int' ? 1 : 0.1}
+          value={String(params[p.id] ?? '')}
+          onchange={(e) => setParam(p.id, p.kind, e.currentTarget.value)}
+        />
+      {/if}
+      {#if overridden.has(p.id)}<span class="llmhint">Overridden by Advanced (JSON) below.</span>{/if}
+    </div>
+  {/each}
+
   {#if builtinOffered.length}
     <!-- Only for types that offer any: OpenAI Chat Completions, Ollama and the CLI
          types map no server-side tool, so they show nothing rather than an empty
@@ -568,6 +623,22 @@
             {#if builtinTools[id] && t.note}<span class="llmhint">{t.note}</span>{/if}
           </span>
         </label>
+        <!-- A switched-on tool shows the options this type honours for it. -->
+        {#if builtinTools[id] && builtinOptions[id]?.length}
+          <div class="llmtoolopts">
+            {#each builtinOptions[id] as o (o.id)}
+              {@const words = builtinOptionText(o.id)}
+              <label for="lf-tool-{id}-{o.id}">{words.label} <span class="llmhint">{words.description}</span></label>
+              <input
+                id="lf-tool-{id}-{o.id}" type={o.kind === 'int' ? 'number' : 'text'}
+                min={o.kind === 'int' ? 1 : undefined}
+                placeholder={o.kind === 'int' ? 'No limit' : 'example.com, docs.python.org'}
+                value={formatOption(builtinTools[id][o.id])}
+                onchange={(e) => setBuiltinOption(id, o.id, o.kind, e.currentTarget.value)}
+              />
+            {/each}
+          </div>
+        {/if}
       {/each}
     </div>
   {/if}
