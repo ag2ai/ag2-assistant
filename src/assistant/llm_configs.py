@@ -3,8 +3,8 @@ per-profile provider/model + Advanced-JSON settings.
 
 An LLM configuration is a named, type-tagged bundle of what it takes to reach one
 model: a ``type`` (one of :data:`TYPES`), a ``model`` name, an optional endpoint
-(``base_url`` for OpenAI/Anthropic-compatible servers, ``host`` for Ollama), a
-free-form ``options`` escape-hatch object, and an optional ``secret_id``
+(``base_url`` for OpenAI/Anthropic-compatible servers, ``host`` for Ollama), the
+``params`` its type offers, a free-form ``options`` escape-hatch object, and an optional ``secret_id``
 referencing a Secret (the key itself lives in the secrets store, never here). The list *and* the single
 ``active`` selection are install-wide (the LLM is common across profiles), so this
 store lives in the ``llm_configs:`` section of the global ``config.yaml`` (no
@@ -42,8 +42,9 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from secrets import token_hex
 
-from assistant.builtin_tools import builtin_ids_for
+from assistant.builtin_tools import clean_options, find_builtin
 from assistant.config import apply_provider_defaults, read_global_config, update_global_section
+from assistant.model_params import clean_params, usable_params
 from assistant.paths import Paths
 from assistant.secrets import SecretStore
 
@@ -199,14 +200,14 @@ def _clean_builtin_tools(raw: dict, ctype: str) -> dict:
         return dict(_LEGACY_BUILTINS.get(ctype, {}))
     if not isinstance(stored, dict):
         raise ValueError("builtin_tools must be a JSON object")
-    offered = builtin_ids_for(ctype)
     cleaned = {}
     for tool_id, options in stored.items():
-        if tool_id not in offered:
+        spec = find_builtin(ctype, tool_id)
+        if spec is None:
             continue  # a type change, or a hand-edited config.yaml
         if options is not None and not isinstance(options, dict):
             raise ValueError(f"builtin_tools[{tool_id!r}] options must be a JSON object")
-        cleaned[str(tool_id)] = dict(options or {})
+        cleaned[str(tool_id)] = clean_options(spec, options or {})
     return cleaned
 
 
@@ -249,6 +250,7 @@ def _clean_entry(raw: dict) -> dict:
         "secret_id": "" if strip_endpoint else str(raw.get("secret_id") or "").strip(),
         "options": {} if is_subscription else options,
         "builtin_tools": _clean_builtin_tools(raw, ctype),
+        "params": clean_params(ctype, raw.get("params")),
     }
     if not entry["id"]:
         entry.pop("id")
@@ -377,8 +379,8 @@ class LlmConfigStore:
         """The ``provider_options`` kwargs derived from one entry, ready to drop into
         ``cfg.llm.provider_options[provider]``.
 
-        Merge order (later wins): the entry's own ``options`` object first; then the
-        type-forced fields — ``api`` for the two OpenAI surfaces plus the lifted
+        Merge order (later wins): the entry's ``params`` first; then its own ``options``
+        object; then the type-forced fields — ``api`` for the two OpenAI surfaces plus the lifted
         ``base_url`` (OpenAI/Anthropic) or ``host`` (Ollama) when set; then the
         referenced Secret's ``api_key`` last, so a config's own Secret overrides
         anything in options. No resolving Secret → the env fallback in ``model_config``
@@ -387,8 +389,8 @@ class LlmConfigStore:
         placeholder is forced instead. It is non-empty on purpose (the OpenAI SDK
         refuses a missing key and llama.cpp-style servers expect some bearer value);
         endpoints that need a real key (e.g. MiniMax) take it via a referenced Secret."""
-        opts = dict(entry.get("options") or {})
-        ctype = entry.get("type")
+        ctype = entry.get("type") or ""
+        opts = {**usable_params(ctype, entry.get("params")), **dict(entry.get("options") or {})}
         if ctype == "openai_subscription":
             # model_config routes this type through codex_auth off cfg.llm.auth_mode and
             # ignores provider_options entirely — so no api/base_url/key derivation here;
