@@ -308,4 +308,27 @@ for (const width of [160, 340]) {
     selects.push({ name: `select/${width}/${disabled}`, failures, scrollWidth: target.scrollWidth, clientWidth: target.clientWidth })
   }
 }
-Object.assign(window, { layoutResults: [...results, ...sizing, ...calendars, ...metrics, ...surfaces, ...draftMenus, ...selects] })
+const labels: Result[] = []
+for (const width of [280, 620]) {
+  for (const layout of ['Row', 'Column']) {
+    for (const align of ['start', 'center', 'end', 'stretch']) {
+      const target = document.createElement('section')
+      target.className = 'fixture'; target.style.width = `${width}px`; fixtures.append(target)
+      const components: A2UIComponent[] = [
+        { id: 'root', component: layout, align, children: ['short', 'long', 'unbroken'] },
+        { id: 'short', component: 'Text', text: 'Open now', variant: 'pill' },
+        { id: 'long', component: 'Text', text: 'A long explanation with several sentences. '.repeat(20), variant: 'pill' },
+        { id: 'unbroken', component: 'Text', text: 'x'.repeat(300), variant: 'pill' },
+      ]
+      mount(BasicA2UIComponent, { target, props: { component: components[0], components, data: {} } })
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      const failures: string[] = []
+      const pills = [...target.querySelectorAll<HTMLElement>('.a2ui-t-pill')]
+      if (target.scrollWidth > target.clientWidth + 1) failures.push('Label overflows its frame')
+      if (pills[0].getBoundingClientRect().width >= target.clientWidth / 2) failures.push('Short label no longer fits its content')
+      if (pills.slice(1).some(pill => pill.getBoundingClientRect().height < Number.parseFloat(getComputedStyle(pill).lineHeight) * 2)) failures.push('Long label does not wrap')
+      labels.push({ name: `labels/${width}/${layout}/${align}`, failures, scrollWidth: target.scrollWidth, clientWidth: target.clientWidth })
+    }
+  }
+}
+Object.assign(window, { layoutResults: [...results, ...sizing, ...calendars, ...metrics, ...surfaces, ...draftMenus, ...selects, ...labels] })
