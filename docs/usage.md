@@ -244,6 +244,11 @@ AG2 Assistant connects to your favorite messaging platforms. Your agent responds
 
 ### Attachments
 
+Unsent chat drafts retain their text, attached files, workspace file references and
+input position when you navigate between sections or chats. Each profile and thread
+has its own draft, kept in the current browser tab until the page is closed or reloaded.
+Sending a message clears only that thread's draft.
+
 Drop a file into any chat (Telegram, Discord, or Slack) and AG2 Assistant reads it:
 images and PDFs are understood visually, audio/video go to the model natively
 (provider permitting), and text/code files are inlined. Add a caption to ask

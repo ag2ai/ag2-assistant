@@ -32,3 +32,8 @@ from the running gateway through Vite's API proxy; it sends no chat messages. Th
 verify that messages and the input share their left and right edges at four widths.
 These fixtures are development files. Production ships the app entry and a passive
 preview entry used by the screens skill.
+
+Pass `composer <profile-id>` for draft restoration after remounts, chat/profile changes,
+file encoding during navigation, workspace references, caret/selection/scroll restoration,
+and clearing only the submitted draft. Message delivery uses a local WebSocket protocol
+peer; the fixture reads settings and file search from the gateway and starts no agent turns.
