@@ -28,7 +28,8 @@ configs keep today's behaviour).
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import TypedDict
+from re import fullmatch
+from typing import Literal, TypedDict
 
 from ag2.tools import CodeExecutionTool, WebFetchTool, WebSearchTool
 
@@ -49,10 +50,16 @@ class BuiltinTool:
     # Local tool names this replaces when enabled — ours and the builtin do the
     # same job, and offering both only invites the model to pick badly.
     suppresses: tuple[str, ...] = ()
-    # Option names this type actually honours. Empty everywhere today: every
-    # field on the three registered tools is optional, so nothing needs
-    # configuring. Declared because the option set is per-type when it arrives.
+    # Options offered as UI controls on this type.
     fields: tuple[str, ...] = field(default=())
+    # Other supported constructor options retained in authored configurations.
+    extra_fields: tuple[str, ...] = ()
+    # Options the mapper reads but this configuration's provider API refuses.
+    unsupported_fields: tuple[str, ...] = ()
+    # The format accepted by this tool's domain filters, if constrained.
+    domain_format: Literal["domain", "domain_path"] | None = None
+    # The provider's maximum number of entries in a domain filter.
+    max_domains: int | None = None
 
 
 _REGISTRY: dict[str, tuple[BuiltinTool, ...]] = {}
@@ -77,22 +84,63 @@ _FETCH: _KindFields = {"capability": "web", "suppresses": ("web_fetch",)}
 # real files (approval-gated), the provider's runs on their servers and cannot.
 _CODE: _KindFields = {"capability": "code"}
 
-register(
-    "anthropic",
-    BuiltinTool("web_search", WebSearchTool, **_SEARCH),
-    BuiltinTool("web_fetch", WebFetchTool, **_FETCH),
-    BuiltinTool("code_execution", CodeExecutionTool, **_CODE),
-)
+# Option name -> its kind: "int" is a whole number of at least 1, "domains" a list
+# of host names.
+OPTION_KINDS: dict[str, Literal["int", "domains"]] = {
+    "max_uses": "int",
+    "allowed_domains": "domains",
+    "blocked_domains": "domains",
+}
+
+_ANTHROPIC_WEB = ("max_uses", "allowed_domains", "blocked_domains")
 
 register(
+    "anthropic",
+    BuiltinTool(
+        "web_search",
+        WebSearchTool,
+        fields=_ANTHROPIC_WEB,
+        extra_fields=("user_location", "version"),
+        domain_format="domain_path",
+        **_SEARCH,
+    ),
+    BuiltinTool(
+        "web_fetch",
+        WebFetchTool,
+        fields=_ANTHROPIC_WEB,
+        domain_format="domain",
+        extra_fields=(
+            "citations",
+            "max_content_tokens",
+            "strict",
+            "use_cache",
+            "response_inclusion",
+            "url_sources",
+            "version",
+        ),
+        **_FETCH,
+    ),
+    BuiltinTool("code_execution", CodeExecutionTool, extra_fields=("version",), **_CODE),
+)
+
+# max_uses is not offered here (ADR 0029, amendment).
+register(
     "openai_responses",
-    BuiltinTool("web_search", WebSearchTool, **_SEARCH),
+    BuiltinTool(
+        "web_search",
+        WebSearchTool,
+        fields=("allowed_domains",),
+        extra_fields=("search_context_size", "user_location"),
+        domain_format="domain",
+        max_domains=100,
+        **_SEARCH,
+    ),
     BuiltinTool("code_execution", CodeExecutionTool, **_CODE),
 )
 
 register(
     "gemini",
-    BuiltinTool("web_search", WebSearchTool, **_SEARCH),
+    BuiltinTool("web_search", WebSearchTool, unsupported_fields=("blocked_domains",), **_SEARCH),
     BuiltinTool("web_fetch", WebFetchTool, **_FETCH),
     BuiltinTool("code_execution", CodeExecutionTool, **_CODE),
 )
@@ -129,6 +177,89 @@ def find_builtin(ctype: str, tool_id: str) -> BuiltinTool | None:
     return next((t for t in builtin_tools_for(ctype) if t.id == tool_id), None)
 
 
+def _valid_domain(value: str, *, allow_path: bool) -> bool:
+    """A domain name, optionally followed by a path pattern."""
+    host, separator, _ = value.partition("/")
+    try:
+        host = host.encode("idna").decode("ascii").removesuffix(".")
+    except UnicodeError:
+        return False
+    return (
+        not any(c.isspace() for c in value)
+        and (allow_path or not separator)
+        and len(host) <= 253
+        and all(
+            fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", label)
+            for label in host.split(".")
+        )
+    )
+
+
+def _checked_option(
+    name: str,
+    value: object,
+    *,
+    domain_format: Literal["domain", "domain_path"] | None = None,
+    max_domains: int | None = None,
+) -> object:
+    """``value`` if this option accepts it, else a ValueError naming the option."""
+    if OPTION_KINDS[name] == "int":
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(f"{name} must be a whole number of at least 1, not {value!r}")
+        return value
+    if not isinstance(value, list) or not all(isinstance(d, str) and d.strip() for d in value):
+        raise ValueError(f"{name} must be a list of domain names, not {value!r}")
+    domains = [d.strip() for d in value]
+    if max_domains is not None and len(domains) > max_domains:
+        raise ValueError(f"{name} must contain at most {max_domains} domain names")
+    if domain_format is not None:
+        for domain in domains:
+            if not _valid_domain(domain, allow_path=domain_format == "domain_path"):
+                wanted = (
+                    "domain names with optional paths"
+                    if domain_format == "domain_path"
+                    else "domain names without paths"
+                )
+                raise ValueError(
+                    f"{name} must contain {wanted}, without schemes or host wildcards: {domain!r}"
+                )
+    return domains
+
+
+def clean_options(spec: BuiltinTool, raw: Mapping, *, strict: bool = True) -> dict:
+    """One tool's stored options, filtered to the ones this type honours."""
+    for name in spec.unsupported_fields:
+        if raw.get(name) is not None and raw[name] != []:
+            raise ValueError(f"{name} is not supported by this configuration type's {spec.id}")
+    cleaned = {name: raw[name] for name in spec.extra_fields if raw.get(name) is not None}
+    for name in spec.fields:
+        value = raw.get(name)
+        if value is not None and not (OPTION_KINDS[name] == "domains" and value == []):
+            try:
+                cleaned[name] = _checked_option(
+                    name, value, domain_format=spec.domain_format, max_domains=spec.max_domains
+                )
+            except ValueError:
+                if strict or OPTION_KINDS[name] == "domains":
+                    raise
+    if "allowed_domains" in cleaned and "blocked_domains" in cleaned:
+        raise ValueError("set allowed_domains or blocked_domains, not both")
+    return cleaned
+
+
+def usable_options(spec: BuiltinTool, raw: object) -> dict:
+    """Stored options fit to send; invalid domain restrictions raise."""
+    stored = {} if raw is None else raw
+    error = f"{spec.id} options must be an object or a list of key-value pairs"
+    if not isinstance(stored, (Mapping, list, tuple)):
+        raise ValueError(error)
+    try:
+        options = dict(stored)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(error) from exc
+    return clean_options(spec, options, strict=False)
+
+
 def active_builtins(
     ctype: str, enabled: Mapping[str, Mapping], capabilities: list[str] | None = None
 ) -> list[tuple[BuiltinTool, dict]]:
@@ -142,7 +273,7 @@ def active_builtins(
     for tool_id, options in (enabled or {}).items():
         spec = find_builtin(ctype, tool_id)
         if spec is not None and want(spec.capability):
-            pairs.append((spec, dict(options or {})))
+            pairs.append((spec, usable_options(spec, options)))
     return pairs
 
 
