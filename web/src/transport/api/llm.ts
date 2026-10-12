@@ -29,6 +29,8 @@ export type LlmConfigDraft = {
   // form, so an omitted field means only "an older client" — which the server
   // reads as a config predating the feature.
   builtin_tools?: Record<string, Record<string, unknown>>
+  // {parameter id: value}; a parameter left at the provider's default is absent.
+  params?: Record<string, unknown>
   activate?: boolean
 }
 

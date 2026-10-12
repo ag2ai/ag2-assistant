@@ -96,6 +96,8 @@ the `provider` parameter of `build_agent_tools` are both deleted.
 
 ### 5. No option UI
 
+*(Amended — see "Amendment: a switched-on tool has options" below.)*
+
 Every field on the three registered tools is optional (`None` = the provider's
 default), so across the eight (type × tool) pairs shipped, none requires
 configuration. Storage is still a map of id → options so a panel can land later
@@ -119,3 +121,51 @@ without a data migration; the values are empty today.
   there is no entry, so Anthropic gets our local fetcher where it previously got
   the native one. That path has no Settings UI to express a choice through, and
   re-adding a provider-keyed default would resurrect the constant being deleted.
+
+## Amendment: a switched-on tool has options
+
+Decision 5 held while nothing needed configuring. Search needs a use cap per provider
+request and domain filters for trusted sources; a turn can contain several requests.
+
+Each registration now declares, in `fields`, the options that type honours for that
+tool — the ones its AG2 mapper reads and its provider API accepts, which is the per-type argument of
+decision 1 applied one level down:
+
+| type · tool | `max_uses` | `allowed_domains` | `blocked_domains` |
+|---|---|---|---|
+| anthropic · web_search | yes | yes | yes |
+| anthropic · web_fetch | yes | yes | yes |
+| openai_responses · web_search | — | yes | — |
+| gemini · web_search | — | — | — |
+| gemini · web_fetch | — | — | — |
+
+The Responses mapper does send `max_uses`, but OpenAI documents no such field, so it is
+not offered. Gemini's mapper reads `blocked_domains`, but its Developer API rejects
+the mapped `exclude_domains`; that option is not offered and a nonempty saved filter
+raises on save and read. Registrations declare these refused options in `unsupported_fields`.
+Other supported constructor options are declared separately as
+`extra_fields` and retained in saved configurations, without adding UI controls.
+They keep their existing pass-through behaviour: fetch citation and content budgets,
+search context and location, and Anthropic tool versions remain effective after a save.
+The editor retains options for offered tools across interface changes in a draft;
+the server filters them against the final type on save.
+
+Each Anthropic registration also declares its domain format: search accepts domain
+names with optional paths, including path wildcards; fetch accepts domain names only.
+Schemes and wildcards in the domain itself are refused.
+Responses search accepts domain names only, with at most 100 entries per filter.
+
+Options are stored where decision 5 left room for them, in the `{id: options}` map, so
+there is no migration. On save an option the type does not declare is dropped, a
+malformed UI option is refused, and an allowed list together with a blocked list is refused —
+Anthropic accepts one or the other. An empty domain list is unset; an empty array is
+invalid for a numeric usage limit. A turn applies the same filter to what it reads, so
+a hand-edited option that is undeclared never reaches the tool. Malformed usage limits
+are omitted individually, preserving valid domain restrictions. Invalid or conflicting
+domain restrictions raise before a turn builds tools, rather than enabling unrestricted
+access. Stored options expressed as key-value pairs retain their former mapping
+semantics on each read; an unconvertible value raises instead of discarding a policy.
+The authored config remains unchanged. Switching a tool off removes its entry and its
+options with it. The gateway ships `builtin_options_by_type`; the option's words are
+`lib/builtinTools.ts`'s, keyed by the option id alone because a name means the same on
+every tool that takes it.
