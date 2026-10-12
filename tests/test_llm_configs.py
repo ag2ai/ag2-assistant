@@ -15,8 +15,8 @@ import json
 import pytest
 import yaml
 
-from assistant.agent import cheap_model
-from assistant.config import Config, resolve_config
+from assistant.agent import cheap_model, model_config
+from assistant.config import Config, resolve_config, update_global_section
 from assistant.llm_configs import (
     CLI_LOGIN_TYPES,
     PROVIDER_EXTRA,
@@ -165,6 +165,31 @@ def test_apply_active_empty_store_is_noop(store, paths):
     cfg.llm.provider = "sentinel"
     store.apply_active(cfg)  # no store → unchanged
     assert cfg.llm.provider == "sentinel"
+
+
+@pytest.mark.parametrize("derivation", ["apply_active", "derive_onto"])
+def test_persisted_advanced_option_pairs_keep_precedence_over_parameters(paths, derivation):
+    entry = {
+        "id": "c_pairs",
+        "name": "Legacy",
+        "type": "gemini",
+        "model": "gemini-x",
+        "options": [["temperature", 0.4], ["max_output_tokens", 128]],
+        "params": {"temperature": 0.2, "max_output_tokens": 256},
+        "builtin_tools": {},
+    }
+    update_global_section(paths, "llm_configs", {"configs": [entry], "active": entry["id"]})
+    for _ in range(2):
+        store = LlmConfigStore(paths)
+        cfg = Config.for_paths(paths)
+        if derivation == "apply_active":
+            store.apply_active(cfg)
+        else:
+            store.derive_onto(cfg, store.get_config(entry["id"]))
+        provider = model_config(cfg)
+        assert provider.temperature == 0.4
+        assert provider.max_output_tokens == 128
+        assert store.get_config(entry["id"])["options"] == entry["options"]
 
 
 def test_apply_active_derives_and_env_still_wins(store, paths):
@@ -686,3 +711,247 @@ def test_a_config_type_with_no_builtins_derives_an_empty_selection(store, paths)
     cfg = Config.for_paths(paths)
     store.derive_onto(cfg, entry)
     assert cfg.llm.builtin_tools == {}
+
+
+# ---- Parameters stored on the Text model ------------------------------------------
+
+
+def test_a_parameter_is_saved_on_the_text_model(store):
+    entry = store.save_config(
+        {"name": "G", "type": "gemini", "model": "g", "params": {"thinking_level": "high"}}
+    )
+    assert store.get_config(entry["id"])["params"] == {"thinking_level": "high"}
+
+
+def test_a_text_model_without_parameters_stores_none(store):
+    """Absent means the provider's default."""
+    entry = store.save_config({"name": "G", "type": "gemini", "model": "g"})
+    assert entry["params"] == {}
+
+
+def test_parameters_are_filtered_to_what_the_type_offers(store):
+    entry = store.save_config(
+        {
+            "name": "G",
+            "type": "gemini",
+            "model": "g",
+            # reasoning_effort is OpenAI's spelling; Gemini's is thinking_level.
+            "params": {"thinking_level": "low", "reasoning_effort": "high", "invented": 1},
+        }
+    )
+    assert entry["params"] == {"thinking_level": "low"}
+
+
+def test_changing_type_drops_parameters_the_new_type_does_not_offer(store):
+    entry = store.save_config(
+        {"name": "G", "type": "gemini", "model": "g", "params": {"thinking_level": "low"}}
+    )
+    moved = store.save_config({**entry, "type": "ollama", "model": "llama3"})
+    assert moved["params"] == {}
+
+
+def test_a_choice_the_provider_does_not_have_is_refused(store):
+    with pytest.raises(ValueError, match="thinking_level"):
+        store.save_config(
+            {"name": "G", "type": "gemini", "model": "g", "params": {"thinking_level": "xhigh"}}
+        )
+
+
+def test_parameters_must_be_an_object(store):
+    with pytest.raises(ValueError, match="params"):
+        store.save_config({"name": "G", "type": "gemini", "model": "g", "params": ["high"]})
+
+
+def test_a_parameter_set_back_to_provider_default_is_not_stored(store):
+    entry = store.save_config(
+        {"name": "G", "type": "gemini", "model": "g", "params": {"thinking_level": None}}
+    )
+    assert entry["params"] == {}
+
+
+def test_a_parameter_reaches_the_provider_configuration(store, paths):
+    entry = store.save_config(
+        {"name": "G", "type": "gemini", "model": "g", "params": {"thinking_level": "high"}}
+    )
+    cfg = Config.for_paths(paths)
+    store.derive_onto(cfg, entry)
+    assert model_config(cfg).thinking_level == "high"
+
+
+def test_advanced_options_override_a_parameter_of_the_same_name(store, paths):
+    entry = store.save_config(
+        {
+            "name": "G",
+            "type": "gemini",
+            "model": "g",
+            "params": {"thinking_level": "high"},
+            "options": {"thinking_level": "low"},
+        }
+    )
+    cfg = Config.for_paths(paths)
+    store.derive_onto(cfg, entry)
+    assert model_config(cfg).thinking_level == "low"
+
+
+def test_generation_parameters_are_saved_under_the_provider_s_own_names(store):
+    entry = store.save_config(
+        {
+            "name": "A",
+            "type": "anthropic",
+            "model": "claude",
+            "params": {"temperature": 0.2, "max_tokens": 8000},
+        }
+    )
+    assert entry["params"] == {"temperature": 0.2, "max_tokens": 8000}
+
+
+@pytest.mark.parametrize(
+    ("params", "named"),
+    [
+        ({"temperature": 1.5}, "temperature"),  # Anthropic's scale stops at 1
+        ({"temperature": -0.1}, "temperature"),
+        ({"temperature": "warm"}, "temperature"),
+        ({"temperature": True}, "temperature"),
+        ({"max_tokens": 0}, "max_tokens"),
+        ({"max_tokens": 1.5}, "max_tokens"),
+        ({"max_tokens": "many"}, "max_tokens"),
+    ],
+)
+def test_a_value_outside_a_parameter_s_bounds_is_refused(store, params, named):
+    with pytest.raises(ValueError, match=named):
+        store.save_config({"name": "A", "type": "anthropic", "model": "claude", "params": params})
+
+
+def test_an_output_limit_overrides_the_app_s_own_budget_and_advanced_overrides_both(store, paths):
+    """A set limit replaces the output budget Gemini is built with."""
+    entry = store.save_config(
+        {"name": "G", "type": "gemini", "model": "g", "params": {"max_output_tokens": 2048}}
+    )
+    cfg = Config.for_paths(paths)
+    store.derive_onto(cfg, entry)
+    assert model_config(cfg).max_output_tokens == 2048
+
+    tuned = store.save_config({**entry, "options": {"max_output_tokens": 512}})
+    store.derive_onto(cfg, tuned)
+    assert model_config(cfg).max_output_tokens == 512
+
+
+def test_a_subscription_text_model_offers_no_parameters(store):
+    entry = store.save_config(
+        {"name": "S", "type": "openai_subscription", "model": "gpt-5", "params": {"temperature": 1}}
+    )
+    assert entry["params"] == {}
+
+
+def _hand_edited(**fields):
+    """An entry as a hand-edited Global config holds it: never through the save path."""
+    return {"id": "c_hand", "name": "H", "model": "m", **fields}
+
+
+def test_a_hand_edited_parameter_the_type_does_not_offer_never_reaches_the_provider(store):
+    entry = _hand_edited(
+        type="gemini", params={"thinking_level": "high", "reasoning_effort": "low"}
+    )
+    assert store.entry_options(entry) == {"thinking_level": "high"}
+
+
+def test_a_hand_edited_parameter_that_is_malformed_is_left_out_of_the_turn(store, paths):
+    entry = _hand_edited(type="gemini", params={"thinking_level": "max", "temperature": 0.3})
+    cfg = Config.for_paths(paths)
+    store.derive_onto(cfg, entry)
+    built = model_config(cfg)
+    assert built.thinking_level is None
+    assert built.temperature == 0.3
+
+
+def test_a_hand_edited_params_value_that_is_not_an_object_sets_nothing(store):
+    entry = _hand_edited(type="gemini", params=["high"])
+    assert store.entry_options(entry) == {}
+
+
+@pytest.mark.parametrize("temperature", [float("nan"), float("inf"), float("-inf")])
+def test_nonfinite_parameters_are_refused_on_save_and_omitted_on_read(store, paths, temperature):
+    entry = _hand_edited(
+        type="gemini", params={"temperature": temperature, "max_output_tokens": 2048}
+    )
+    with pytest.raises(ValueError, match="temperature"):
+        store.save_config(entry)
+    cfg = Config.for_paths(paths)
+    store.derive_onto(cfg, entry)
+    built = model_config(cfg)
+    assert built.temperature is None
+    assert built.max_output_tokens == 2048
+
+
+def test_a_hand_edited_parameter_cannot_reach_a_type_that_offers_none(store):
+    entry = _hand_edited(type="codex", params={"temperature": 0.3})
+    assert store.entry_options(entry) == {}
+
+
+# ---- Provider-tool options ---------------------------------------------------------
+
+
+def _anthropic(store, builtin_tools):
+    return store.save_config(
+        {"name": "A", "type": "anthropic", "model": "claude", "builtin_tools": builtin_tools}
+    )
+
+
+def test_a_provider_tool_s_options_are_saved_with_it(store):
+    options = {"max_uses": 3, "allowed_domains": ["docs.python.org", "example.com"]}
+    entry = _anthropic(store, {"web_search": options})
+    assert store.get_config(entry["id"])["builtin_tools"] == {"web_search": options}
+
+
+def test_an_option_the_type_does_not_honour_is_dropped(store):
+    """The Responses mapper reads allowed_domains and discards blocked_domains."""
+    entry = store.save_config(
+        {
+            "name": "R",
+            "type": "openai_responses",
+            "model": "gpt-5",
+            "builtin_tools": {
+                "web_search": {
+                    "allowed_domains": ["example.com"],
+                    "blocked_domains": ["spam.example"],
+                    "invented": 1,
+                }
+            },
+        }
+    )
+    assert entry["builtin_tools"] == {"web_search": {"allowed_domains": ["example.com"]}}
+
+
+def test_an_emptied_option_is_not_stored(store):
+    entry = _anthropic(store, {"web_search": {"max_uses": None, "blocked_domains": []}})
+    assert entry["builtin_tools"] == {"web_search": {}}
+
+
+@pytest.mark.parametrize(
+    ("options", "named"),
+    [
+        ({"max_uses": 0}, "max_uses"),
+        ({"max_uses": "few"}, "max_uses"),
+        ({"max_uses": True}, "max_uses"),
+        ({"allowed_domains": "example.com"}, "allowed_domains"),
+        ({"blocked_domains": ["ok.example", ""]}, "blocked_domains"),
+        ({"blocked_domains": [7]}, "blocked_domains"),
+    ],
+)
+def test_a_malformed_option_is_refused(store, options, named):
+    with pytest.raises(ValueError, match=named):
+        _anthropic(store, {"web_search": options})
+
+
+def test_allowed_and_blocked_domains_cannot_be_combined(store):
+    """Anthropic refuses a tool that carries both lists."""
+    both = {"allowed_domains": ["a.example"], "blocked_domains": ["b.example"]}
+    with pytest.raises(ValueError, match="allowed_domains"):
+        _anthropic(store, {"web_fetch": both})
+
+
+def test_switching_a_provider_tool_off_forgets_its_options(store):
+    on = _anthropic(store, {"web_search": {"max_uses": 3}})
+    off = store.save_config({**on, "builtin_tools": {}})
+    again = store.save_config({**off, "builtin_tools": {"web_search": {}}})
+    assert again["builtin_tools"] == {"web_search": {}}
