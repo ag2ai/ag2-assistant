@@ -4,7 +4,7 @@ import { LiveConfigList, LlmConfig, LlmConfigList, PingResult } from './llm.ts'
 
 const base = {
   id: 'c1', name: 'GPT', type: 'openai', model: 'gpt-5', base_url: '', host: '',
-  options: {}, builtin_tools: {}, secret_id: 's1', secret: { id: 's1', name: 'k', hint: '…1234' },
+  options: {}, builtin_tools: {}, params: {}, secret_id: 's1', secret: { id: 's1', name: 'k', hint: '…1234' },
   secret_missing: false, key_source: 'secret', images: true,
   deps: { ok: true, extra: '', install: '' },
   shared_key: { env: 'OPENAI_API_KEY', set: true, hint: '…9999' },
@@ -38,7 +38,7 @@ test('LlmConfig rejects an unknown key_source', () => {
 test('LlmConfigList allows a null active id and a null env override', () => {
   const parsed = LlmConfigList.parse({
     configs: [base], active: null, env_override: null, provider_deps: {},
-    builtin_tools_by_type: {},
+    builtin_tools_by_type: {}, builtin_options_by_type: {}, params_by_type: {},
   })
   assert.equal(parsed.active, null)
 })
@@ -47,9 +47,27 @@ test('LlmConfigList carries per-type provider deps for unconfigured types too', 
   const parsed = LlmConfigList.parse({
     configs: [], active: null, env_override: { provider: 'openai' },
     provider_deps: { anthropic: { ok: false, extra: 'anthropic', install: 'pip install x' } },
-    builtin_tools_by_type: {},
+    builtin_tools_by_type: {}, builtin_options_by_type: {}, params_by_type: {},
   })
   assert.equal(parsed.provider_deps.anthropic.ok, false)
+})
+
+test('LlmConfigList describes the parameters each type offers', () => {
+  const parsed = LlmConfigList.parse({
+    configs: [{ ...base, params: { reasoning_effort: 'high' } }], active: null, env_override: null,
+    provider_deps: {}, builtin_tools_by_type: {},
+    builtin_options_by_type: { openai_responses: { web_search: [{ id: 'allowed_domains', kind: 'domains' }] } },
+    params_by_type: {
+      openai: [
+        { id: 'reasoning_effort', kind: 'choice', choices: ['low', 'high'], minimum: null, maximum: null },
+        { id: 'temperature', kind: 'float', choices: [], minimum: 0, maximum: 2 },
+      ],
+    },
+  })
+  assert.deepEqual(parsed.params_by_type.openai[0].choices, ['low', 'high'])
+  assert.equal(parsed.params_by_type.openai[1].maximum, 2)
+  assert.equal(parsed.builtin_options_by_type.openai_responses.web_search[0].kind, 'domains')
+  assert.equal(parsed.configs[0].params.reasoning_effort, 'high')
 })
 
 test('LiveConfigList carries the provider catalog', () => {
@@ -72,7 +90,7 @@ test('LlmConfig carries the provider tools switched on', () => {
 test('LlmConfigList carries per-type provider tool availability', () => {
   const parsed = LlmConfigList.parse({
     configs: [], active: null, env_override: null, provider_deps: {},
-    builtin_tools_by_type: { gemini: ['web_search'], openai: [] },
+    builtin_tools_by_type: { gemini: ['web_search'], openai: [] }, builtin_options_by_type: {}, params_by_type: {},
   })
   assert.deepEqual(parsed.builtin_tools_by_type.gemini, ['web_search'])
   assert.deepEqual(parsed.builtin_tools_by_type.openai, [])
