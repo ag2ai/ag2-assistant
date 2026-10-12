@@ -89,6 +89,13 @@ permission/HITL prompts rendered inline as cards. The **History** button lists
 past conversations and lets you resume any of them. Use it as-is or as a reference
 for building your own front-end against the API below.
 
+**Long messages.** User messages taller than twelve displayed lines start with a
+compact preview; **Show full message** expands the complete text, and **Collapse
+message** restores the preview. Assistant code blocks and Markdown sections with
+headings have their own Expand/Collapse buttons. Long code blocks stay open while
+streaming and fold after generation finishes; manual choices survive streaming
+updates. Folding only changes the display, keeping the original message intact.
+
 **Resumable conversations.** Each chat's full event history is persisted to
 `~/.ag2assistant/chats.db` after every turn (via AG2's event log) and reloaded into a
 fresh stream on demand — so conversations survive a gateway restart with complete
