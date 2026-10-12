@@ -1,6 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { BUILTIN_TOOL_TEXT, builtinToolText, builtinChip } from './builtinTools.ts'
+import {
+  BUILTIN_TOOL_TEXT, builtinChip, builtinOptionText, builtinToolText, formatOption, parseOption,
+} from './builtinTools.ts'
 
 // Mirrors assistant/builtin_tools.py's registry. The Python side is the authority
 // on which tools exist and ships them as ids; this table only supplies the words,
@@ -64,4 +66,29 @@ test('row chips are short, and fall back to the id', () => {
   assert.equal(builtinChip('web_fetch'), 'fetch')
   assert.equal(builtinChip('code_execution'), 'code')
   assert.equal(builtinChip('brand_new'), 'brand_new')
+})
+
+test('every option the server can offer has words', () => {
+  // Mirrors builtin_tools.OPTION_KINDS.
+  for (const id of ['max_uses', 'allowed_domains', 'blocked_domains']) {
+    const t = builtinOptionText(id)
+    assert.ok(t.label && t.label !== id, `${id} has no label`)
+  }
+  assert.deepEqual(builtinOptionText('brand_new'), { label: 'brand_new', description: '' })
+})
+
+test('a domain list is typed with commas and stored as a list', () => {
+  assert.deepEqual(parseOption('domains', ' docs.python.org,example.com , '), ['docs.python.org', 'example.com'])
+  assert.equal(formatOption(['docs.python.org', 'example.com']), 'docs.python.org, example.com')
+})
+
+test('an emptied option is not set at all', () => {
+  assert.equal(parseOption('domains', ' , '), undefined)
+  assert.equal(parseOption('int', ''), undefined)
+  assert.equal(formatOption(undefined), '')
+})
+
+test('a use limit is stored as a number', () => {
+  assert.equal(parseOption('int', '3'), 3)
+  assert.equal(formatOption(3), '3')
 })

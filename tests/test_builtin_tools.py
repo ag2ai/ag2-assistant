@@ -1,10 +1,14 @@
 """Provider-native tool registry: availability per type, capability gating, and
 the suppression that replaces the old _NATIVE_WEB_FETCH_PROVIDERS branch."""
 
+import json
+
+import ag2
 import pytest
 from ag2.tools import CodeExecutionTool, WebFetchTool, WebSearchTool
 
 from assistant import llm_configs
+from assistant.agent import model_config
 from assistant.builtin_tools import (
     BuiltinTool,
     active_builtins,
@@ -14,7 +18,9 @@ from assistant.builtin_tools import (
     find_builtin,
     suppressed_by,
 )
+from assistant.config import Config, update_global_section
 from assistant.tools import CAPABILITIES, build_agent_tools
+from tests.support.http import async_client, recording_responder
 
 
 def names(tools):
@@ -155,3 +161,249 @@ def test_no_builtins_leaves_the_local_toolset_exactly_as_before():
             "get_weather",
             "get_quotes",
         ]
+
+
+# --- options ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "ctype,tool_id,expected",
+    [
+        ("anthropic", "web_search", ("max_uses", "allowed_domains", "blocked_domains")),
+        ("anthropic", "web_fetch", ("max_uses", "allowed_domains", "blocked_domains")),
+        ("anthropic", "code_execution", ()),
+        ("openai_responses", "web_search", ("allowed_domains",)),
+        ("gemini", "web_search", ()),
+        ("gemini", "web_fetch", ()),
+    ],
+)
+def test_each_tool_offers_only_the_options_its_provider_api_supports(ctype, tool_id, expected):
+    assert find_builtin(ctype, tool_id).fields == expected
+
+
+async def test_a_saved_option_is_on_the_provider_tool_the_agent_is_built_with():
+    tools = build_agent_tools(
+        "anthropic",
+        capabilities=["web"],
+        builtin={"web_search": {"max_uses": 3, "blocked_domains": ["spam.example"]}},
+    )
+    search = next(t for t in tools if getattr(t, "name", "") == "web_search")
+    # Options are plain values, so the schema resolves without a conversation context.
+    (schema,) = await search.schemas(None)
+    assert schema.max_uses == 3
+    assert schema.blocked_domains == ["spam.example"]
+    assert schema.allowed_domains is None
+
+
+@pytest.mark.parametrize(
+    "ctype,tool_id,options,expected",
+    [
+        (
+            "anthropic",
+            "web_fetch",
+            {"max_content_tokens": 1024, "citations": False, "max_uses": 3},
+            {"max_content_tokens": 1024, "citations": False, "max_uses": 3},
+        ),
+        (
+            "openai_responses",
+            "web_search",
+            {"search_context_size": "high", "allowed_domains": ["example.com"]},
+            {"search_context_size": "high", "allowed_domains": ["example.com"]},
+        ),
+        (
+            "anthropic",
+            "code_execution",
+            {"version": "code_execution_20260120"},
+            {"version": "code_execution_20260120"},
+        ),
+    ],
+)
+async def test_persisted_options_without_ui_controls_reach_the_provider_tool(
+    paths, ctype, tool_id, options, expected
+):
+    store = llm_configs.LlmConfigStore(paths)
+    entry = {
+        "id": "c_existing",
+        "name": "M",
+        "type": ctype,
+        "model": "m",
+        "builtin_tools": {tool_id: options},
+    }
+    update_global_section(paths, "llm_configs", {"configs": [entry], "active": None})
+    for _ in range(2):
+        saved = store.get_config(entry["id"])
+        assert saved["builtin_tools"] == {tool_id: options}
+        tools = build_agent_tools(ctype, builtin=saved["builtin_tools"])
+        tool = next(t for t in tools if getattr(t, "name", "") == tool_id)
+        (schema,) = await tool.schemas(None)
+        for name, value in expected.items():
+            assert getattr(schema, name) == value
+        store.save_config(saved)
+
+
+def test_a_hand_edited_option_the_type_does_not_honour_never_reaches_the_tool():
+    """max_uses is Anthropic's; the Responses registration does not declare it."""
+    stored = {"web_search": {"max_uses": 3, "allowed_domains": ["example.com"], "invented": 1}}
+    ((_, options),) = active_builtins("openai_responses", stored)
+    assert options == {"allowed_domains": ["example.com"]}
+
+
+def test_a_malformed_usage_limit_keeps_valid_domain_restrictions():
+    stored = {"web_search": {"max_uses": "few", "blocked_domains": ["spam.example"]}}
+    ((spec, options),) = active_builtins("anthropic", stored)
+    assert spec.id == "web_search"
+    assert options == {"blocked_domains": ["spam.example"]}
+
+
+@pytest.mark.parametrize(
+    "options",
+    [{"blocked_domains": ["example.com"]}, [["blocked_domains", ["example.com"]]]],
+)
+def test_stored_gemini_domain_restrictions_never_become_unrestricted_tools(paths, options):
+    entry = {
+        "id": "c_gemini_filter",
+        "name": "Gemini",
+        "type": "gemini",
+        "model": "gemini-2.5-flash",
+        "builtin_tools": {"web_search": options},
+    }
+    update_global_section(paths, "llm_configs", {"configs": [entry], "active": None})
+    cfg = Config.for_paths(paths)
+    store = llm_configs.LlmConfigStore(paths)
+    store.derive_onto(cfg, store.get_config(entry["id"]))
+    with pytest.raises(ValueError, match="blocked_domains.*not supported"):
+        build_agent_tools(cfg.llm.config_type, builtin=cfg.llm.builtin_tools, capabilities=["web"])
+    assert store.get_config(entry["id"])["builtin_tools"] == entry["builtin_tools"]
+
+
+@pytest.mark.parametrize("options", [{}, {"blocked_domains": []}])
+async def test_gemini_search_defaults_reach_the_developer_api(paths, options):
+    store = llm_configs.LlmConfigStore(paths)
+    entry = store.save_config(
+        {
+            "name": "Gemini",
+            "type": "gemini",
+            "model": "gemini-2.5-flash",
+            "builtin_tools": {"web_search": options},
+        }
+    )
+    cfg = Config.for_paths(paths)
+    store.derive_onto(cfg, entry)
+    handler, sent = recording_responder(
+        {
+            "candidates": [
+                {
+                    "content": {"role": "model", "parts": [{"text": "PONG"}]},
+                    "finishReason": "STOP",
+                }
+            ],
+            "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 1},
+        }
+    )
+    async with async_client(handler) as network:
+        provider = model_config(cfg).copy(api_key="fake-key", streaming=False, http_client=network)
+        tools = build_agent_tools("gemini", builtin=cfg.llm.builtin_tools, capabilities=["web"])
+        reply = await ag2.Agent("test", config=provider, tools=tools).ask("Reply PONG")
+    assert reply.body == "PONG"
+    sent_tools = json.loads(sent[0]["body"])["tools"]
+    assert [tool["googleSearch"] for tool in sent_tools if "googleSearch" in tool] == [{}]
+
+
+@pytest.mark.parametrize("tool_id", ["web_search", "web_fetch"])
+@pytest.mark.parametrize("option", ["allowed_domains", "blocked_domains"])
+@pytest.mark.parametrize("domain", ["https://example.com", "*.example.com"])
+def test_invalid_stored_domain_filters_never_become_unrestricted_tools(tool_id, option, domain):
+    with pytest.raises(ValueError, match=option):
+        build_agent_tools("anthropic", builtin={tool_id: {option: [domain]}})
+
+
+def test_conflicting_stored_domain_filters_never_become_an_unrestricted_tool():
+    with pytest.raises(ValueError, match="allowed_domains"):
+        build_agent_tools(
+            "anthropic",
+            builtin={
+                "web_search": {
+                    "allowed_domains": ["example.com"],
+                    "blocked_domains": ["spam.example"],
+                }
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    "domains",
+    [
+        ["https://example.com"],
+        ["*.example.com"],
+        ["example.com/blog"],
+        [f"site{i}.example.com" for i in range(101)],
+    ],
+)
+def test_invalid_responses_domain_filters_never_become_unrestricted_tools(domains):
+    with pytest.raises(ValueError, match="allowed_domains"):
+        build_agent_tools(
+            "openai_responses",
+            builtin={"web_search": {"allowed_domains": domains}},
+            capabilities=["web"],
+        )
+
+
+async def test_responses_passes_the_maximum_valid_domain_filter_to_the_tool():
+    domains = [f"site{i}.example.com" for i in range(100)]
+    tools = build_agent_tools(
+        "openai_responses",
+        builtin={"web_search": {"allowed_domains": domains}},
+        capabilities=["web"],
+    )
+    search = next(tool for tool in tools if getattr(tool, "name", "") == "web_search")
+    (schema,) = await search.schemas(None)
+    assert schema.allowed_domains == domains
+
+
+@pytest.mark.parametrize("tool_id", ["web_search", "web_fetch"])
+@pytest.mark.parametrize("option", ["allowed_domains", "blocked_domains"])
+async def test_persisted_option_pairs_keep_their_domain_restrictions(paths, tool_id, option):
+    entry = {
+        "id": "c_pairs",
+        "name": "M",
+        "type": "anthropic",
+        "model": "m",
+        "builtin_tools": {tool_id: [[option, ["example.com"]], ["max_uses", 3]]},
+    }
+    update_global_section(paths, "llm_configs", {"configs": [entry], "active": None})
+    store = llm_configs.LlmConfigStore(paths)
+    for _ in range(2):
+        config = Config.for_paths(paths)
+        store.derive_onto(config, store.get_config(entry["id"]))
+        tools = build_agent_tools(
+            config.llm.config_type, builtin=config.llm.builtin_tools, capabilities=["web"]
+        )
+        tool = next(t for t in tools if getattr(t, "name", "") == tool_id)
+        (schema,) = await tool.schemas(None)
+        assert getattr(schema, option) == ["example.com"]
+        assert schema.max_uses == 3
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        "allowed_domains=example.com",
+        1,
+        True,
+        ["allowed_domains"],
+        [["allowed_domains"]],
+        [["allowed_domains", ["example.com"], "extra"]],
+    ],
+)
+def test_malformed_stored_options_never_become_an_unrestricted_tool(options):
+    with pytest.raises(ValueError, match="options"):
+        build_agent_tools("anthropic", builtin={"web_fetch": options}, capabilities=["web"])
+
+
+@pytest.mark.parametrize("options", [None, {}, []])
+async def test_empty_stored_options_keep_the_provider_defaults(options):
+    tools = build_agent_tools("anthropic", builtin={"web_fetch": options}, capabilities=["web"])
+    fetch = next(t for t in tools if getattr(t, "name", "") == "web_fetch")
+    (schema,) = await fetch.schemas(None)
+    assert schema.allowed_domains is None
+    assert schema.blocked_domains is None
