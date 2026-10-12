@@ -3,6 +3,7 @@
 import asyncio
 import time
 from collections.abc import Callable
+from dataclasses import asdict
 
 import ag2
 from fastapi import APIRouter, Request
@@ -10,7 +11,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from assistant import live_configs, llm_configs, provider_catalog, voice_providers
-from assistant.builtin_tools import builtin_ids_for
+from assistant.builtin_tools import OPTION_KINDS, builtin_ids_for, builtin_tools_for
 from assistant.codex_auth import CodexAuthError
 from assistant.coding.model_catalog import CatalogModel, as_view
 from assistant.config import Config
@@ -25,6 +26,7 @@ from assistant.gateway.schemas import (
     PingResultResponse,
     ProviderCatalogResponse,
 )
+from assistant.model_params import params_for, usable_params
 from assistant.secrets import KEY_ENV, OLLAMA_BASE_ENV
 from assistant.structured import aclose_config
 
@@ -57,6 +59,7 @@ class LlmConfigRequest(BaseModel):
     # None means the client didn't send the field, which llm_configs reads as
     # "predates the feature" — distinct from {}, meaning all switched off.
     builtin_tools: dict | None = None
+    params: dict = Field(default_factory=dict)
     activate: bool = False
 
 
@@ -117,6 +120,7 @@ def build_router(
             "options": entry.get("options", {}),
             # {tool id: options} — the provider-native tools switched on here.
             "builtin_tools": entry.get("builtin_tools", {}),
+            "params": usable_params(entry["type"], entry.get("params")),
             "secret_id": entry.get("secret_id", ""),
             "secret": sec,
             "secret_missing": bool(entry.get("secret_id")) and sec is None,
@@ -195,6 +199,16 @@ def build_router(
             # type -> the provider-native tool ids it offers. Ids only: the labels
             # are the web's (lib/builtinTools.ts), like every other type label.
             "builtin_tools_by_type": {t: list(builtin_ids_for(t)) for t in llm_configs.TYPES},
+            # type -> tool id -> the options that tool takes there, each with its kind.
+            "builtin_options_by_type": {
+                t: {
+                    tool.id: [{"id": f, "kind": OPTION_KINDS[f]} for f in tool.fields]
+                    for tool in builtin_tools_for(t)
+                }
+                for t in llm_configs.TYPES
+            },
+            # type -> the parameters it offers; the words are lib/modelParams.ts's.
+            "params_by_type": {t: [asdict(p) for p in params_for(t)] for t in llm_configs.TYPES},
         }
 
     @r.get("/api/llm-configs/models", response_model=ProviderCatalogResponse)
@@ -256,6 +270,7 @@ def build_router(
             "host": req.host,
             "secret_id": req.secret_id,
             "options": req.options,
+            "params": req.params,
         }
         if req.builtin_tools is not None:
             entry["builtin_tools"] = req.builtin_tools
@@ -342,6 +357,8 @@ def build_router(
                     "host": req.host,
                     "secret_id": req.secret_id or "",
                     "options": req.options,
+                    "params": req.params,
+                    "builtin_tools": req.builtin_tools,
                 }
             )
         except ValueError as exc:

@@ -16,6 +16,23 @@ export type DepsStatus = z.infer<typeof DepsStatus>
 export const KeySource = z.enum(['secret', 'shared', 'not_needed', 'none', 'subscription', 'cli_login'])
 export type KeySource = z.infer<typeof KeySource>
 
+// One parameter a config type offers (assistant.model_params).
+export const ModelParam = z.object({
+  id: z.string(),
+  kind: z.enum(['choice', 'int', 'float']),
+  choices: z.array(z.string()),
+  minimum: z.number().nullable(),
+  maximum: z.number().nullable(),
+})
+export type ModelParam = z.infer<typeof ModelParam>
+
+// One option a provider tool takes on a config type (assistant.builtin_tools).
+export const BuiltinOption = z.object({
+  id: z.string(),
+  kind: z.enum(['int', 'domains']),
+})
+export type BuiltinOption = z.infer<typeof BuiltinOption>
+
 export const LlmConfig = z.object({
   id: z.string(),
   name: z.string(),
@@ -24,10 +41,10 @@ export const LlmConfig = z.object({
   base_url: z.string(),
   host: z.string(),
   options: z.record(z.string(), z.unknown()),
-  // Provider-native tools switched on, as {tool id: options}. Options are always
-  // empty today — every field on the registered tools is optional — but the shape
-  // is a map so an option panel can land without changing the contract.
+  // Provider-native tools switched on, as {tool id: options}.
   builtin_tools: z.record(z.string(), z.record(z.string(), z.unknown())),
+  // {parameter id: value}; unset means the provider's default.
+  params: z.record(z.string(), z.unknown()),
   secret_id: z.string(),
   secret: SecretRef.nullable(),
   secret_missing: z.boolean(),
@@ -57,6 +74,10 @@ export const LlmConfigList = z.object({
   // are lib/builtinTools.ts's. Every type, not just the configured ones, so the
   // form can render a type no config uses yet.
   builtin_tools_by_type: z.record(z.string(), z.array(z.string())),
+  // type -> tool id -> the options that tool takes there.
+  builtin_options_by_type: z.record(z.string(), z.record(z.string(), z.array(BuiltinOption))),
+  // type -> the parameters that type offers; the words are lib/modelParams.ts's.
+  params_by_type: z.record(z.string(), z.array(ModelParam)),
 })
 export type LlmConfigList = z.infer<typeof LlmConfigList>
 

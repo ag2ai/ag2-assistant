@@ -7,6 +7,8 @@
 // tool under each provider: one `web_fetch` is Anthropic's citing fetcher, another
 // is Gemini's `url_context`. Lookups stay total — an id with no entry here reads
 // as its own id rather than vanishing from the form.
+import { parseParam } from './modelParams.ts'
+
 export type BuiltinToolText = { label: string; description: string; note?: string }
 
 // `note` shows only while the switch is on, so a consequence appears at the moment
@@ -77,4 +79,30 @@ const CHIP: Record<string, string> = {
 
 export function builtinChip(id: string): string {
   return CHIP[id] || id
+}
+
+// The words for one tool option, keyed by the option id alone.
+const OPTION_TEXT: Record<string, BuiltinToolText> = {
+  max_uses: { label: 'Use limit', description: 'The most uses per request to the model.' },
+  allowed_domains: { label: 'Only these domains', description: 'Comma-separated.' },
+  blocked_domains: { label: 'Never these domains', description: 'Comma-separated.' },
+}
+
+export function builtinOptionText(id: string): BuiltinToolText {
+  return OPTION_TEXT[id] || { label: id, description: '' }
+}
+
+// A stored option as the text its control shows.
+export function formatOption(value: unknown): string {
+  if (Array.isArray(value)) return value.join(', ')
+  return value == null ? '' : String(value)
+}
+
+// What one option control's text means as a stored value; undefined is "not set".
+export function parseOption(kind: string, text: string): unknown {
+  if (kind === 'domains') {
+    const domains = text.split(',').map((d) => d.trim()).filter(Boolean)
+    return domains.length ? domains : undefined
+  }
+  return parseParam(kind, text)
 }
