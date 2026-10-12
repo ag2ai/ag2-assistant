@@ -119,6 +119,13 @@ Directory in this Profile's Files space. Each confirmed Save creates a new
 `.card-instance.yaml` file; an occupied destination requires a different name.
 Saving an instance and saving its reusable definition are independent choices.
 
+In Chat and Screens, Cards with a data source can refresh when displayed or through
+**Refresh**. Custom Python sources require **Review source → Approve version** in
+each Profile. Once approved, the review button disappears for that version, including
+after a refresh error or reopening the page. Errors retain the last good values and
+show the execution failure; **Refresh** remains available to retry. Changing the code
+or its supporting files requires approval of the new version.
+
 Open the file from Files for a passive Card preview: buttons and inputs are inactive.
 Use **Edit** to change its UTF-8 YAML source, then **Save** and **Preview** to see the
 saved values. Concurrent edits keep the existing **Reload** / **Overwrite** flow.
