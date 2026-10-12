@@ -391,7 +391,7 @@ async def test_compaction_timeout_is_explicit_and_not_retried_as_a_provider_time
     events = list(await stream.history.get_events())
     assert len(failed) == 1
     assert failed[0].error_type == "TimeoutError"
-    assert failed[0].error == "Compaction timed out after 0.05 seconds"
+    assert failed[0].error == "A compaction model call timed out after 0.05 seconds"
     assert completed == []
     assert original in events
     assert await load_checkpoint(knowledge.store, stream.id) is None
@@ -528,6 +528,24 @@ async def test_cancelled_summarization_keeps_source_history_and_usage():
         await task
     assert original in await stream.history.get_events()
     assert await load_checkpoint(knowledge.store, stream.id) is None
+
+
+async def test_compaction_timeout_applies_to_each_summarizer_call():
+    async def slow(messages, context, options):
+        if options.get("response_schema") is CHECKPOINT_SCHEMA:
+            await asyncio.sleep(0.15)
+
+    config = CheckpointTestConfig("done", before_call=slow)
+    limits = CompactionLimits(max_tokens=3_000, timeout_s=0.25)
+    stream = MemoryStream()
+    await stream.history.replace([ModelRequest.ensure_request(["old " + "x" * 40_000])])
+    completed = []
+    stream.where(CompactionCompleted).subscribe(lambda event: completed.append(event))
+    reply = await compacting_agent(config, build_compaction_config(limits=limits)).ask(
+        "continue", stream=stream
+    )
+    assert reply.body == "done"
+    assert completed[0].llm_calls >= 2
 
 
 async def test_summarizer_call_limit_preserves_history():
