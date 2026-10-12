@@ -16,12 +16,22 @@ declares ``.optional()`` and rejects, which is a front-end crash, not a warning.
 """
 
 import pytest
+from ag2.compact import CompactionSummary
+from ag2.events import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    estimated_tokens,
+    is_conversational,
+)
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
+from assistant.gateway.app import create_app
 from assistant.hitl import Question
 from assistant.profiles import ProfileRegistry
 from tests.support.apps import api, make_manager, make_paths, make_profile_app
+from tests.support.fakes import CheckpointTestConfig
 
 
 async def _live_ok(_provider, _key):
@@ -66,10 +76,14 @@ def test_settings_on_a_fresh_profile(client):
         "mcp_servers",
         "focuses",
         "reply_timeout_s",
+        "compact_max_tokens",
+        "preview_browser",
         "fs",
     }
     assert body["mcp_servers"] == []
     assert body["focuses"] == []
+    assert body["compact_max_tokens"] == 50_000
+    assert body["preview_browser"] == ""
     # No config saved and none pinned: both switchers inherit, and there is
     # nothing to inherit either.
     assert body["llm_override"] is None
@@ -217,6 +231,70 @@ def test_reply_timeout_echoes_the_stored_float(client):
     assert r.status_code == 200, r.text
     assert r.json() == {"ok": True, "reply_timeout_s": 480.0}
     assert c.get(api(pid, "/settings")).json()["reply_timeout_s"] == 480.0
+
+
+def test_compaction_rejects_invalid_thresholds_without_changing_settings(client):
+    c, pid = client
+    for value in [0, -1, 1.5, True, "50000", None]:
+        response = c.post(api(pid, "/settings/compaction"), json={"compact_max_tokens": value})
+        assert response.status_code == 422, response.text
+    assert c.get(api(pid, "/settings")).json()["compact_max_tokens"] == 50_000
+
+
+async def test_compaction_setting_applies_to_existing_chat_and_survives_restart(paths):
+    registry = ProfileRegistry(paths)
+    a = registry.create_profile("A", "#109e91")
+    b = registry.create_profile("B", "#109e91")
+    for meta in (a, b):
+        paths.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
+    manager = make_manager(
+        paths,
+        persist=True,
+        memory=True,
+        model_factory=lambda cfg, model=None: CheckpointTestConfig("done"),
+    )
+    app = create_app(manager)
+    async with app.router.lifespan_context(app):
+        gateway = manager.get(a.id).require_gateway()
+        stream = await gateway.stream_for("existing")
+        history = []
+        for index in range(4):
+            history.extend(
+                [
+                    ModelRequest.ensure_request([f"old turn {index}: " + "x" * 30_000]),
+                    ModelResponse(ModelMessage("old reply")),
+                ]
+            )
+        await stream.history.replace(history)
+        await gateway.send_message("continue", chat_id="existing")
+        current = list(await stream.history.get_events())
+        size = sum(estimated_tokens(e, 4) for e in current if is_conversational(e))
+        assert 20_000 < size < 50_000
+        assert not any(isinstance(e, CompactionSummary) for e in current)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as http:
+            response = await http.post(
+                api(a.id, "/settings/compaction"), json={"compact_max_tokens": 10_000}
+            )
+            assert response.status_code == 200, response.text
+            assert response.json() == {"ok": True, "compact_max_tokens": 10_000}
+            assert (await http.get(api(a.id, "/settings"))).json()["compact_max_tokens"] == 10_000
+            assert (await http.get(api(b.id, "/settings"))).json()["compact_max_tokens"] == 50_000
+
+        await gateway.send_message("next turn", chat_id="existing")
+        current = list(await stream.history.get_events())
+        assert any(isinstance(e, CompactionSummary) for e in current)
+        assert sum(estimated_tokens(e, 4) for e in current if is_conversational(e)) < 10_000
+        replay = await gateway.replay_events("existing")
+        assert history[0].to_dict() in [e.to_dict() for e in replay if isinstance(e, ModelRequest)]
+
+    restarted = make_manager(paths, persist=True)
+    await restarted.start()
+    try:
+        assert restarted.get(a.id).require_config().memory.compact_max_tokens == 10_000
+        assert restarted.get(b.id).require_config().memory.compact_max_tokens == 50_000
+    finally:
+        await restarted.close()
 
 
 def test_the_voice_provider_needs_its_key_first(client):

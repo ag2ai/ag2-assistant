@@ -1,6 +1,7 @@
 """AG2 Assistant agent built on AG2."""
 
 from collections.abc import Callable
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal
@@ -13,14 +14,26 @@ from ag2.config import (
     OpenAIResponsesConfig,
 )
 from ag2.config.gemini import GeminiConfig
+from ag2.middleware import Middleware
 from ag2.policies import AlertPolicy
-from ag2.tools import SkillSearchToolkit
+from ag2.tools import LocalEnvironment, SkillSearchToolkit
 from ag2.tools.skills import LocalRuntime, SkillPlugin
 from pydantic import Field
 
 from assistant.a2ui import CardCatalog
 from assistant.a2ui_skill import A2UISkillRuntime
+from assistant.card_author import CardAuthorRuntime
 from assistant.codex_auth import BACKEND_BASE, CodexAuth, default_headers
+from assistant.coding import acp_provider
+from assistant.compaction import (
+    BudgetedModelConfig,
+    CheckpointMiddleware,
+    CompactingAgent,
+    CompactionLimits,
+    SkillCatalogMiddleware,
+    SkillResolver,
+    read_compaction_source,
+)
 from assistant.config import Config, load_config
 from assistant.folders import FolderStore
 from assistant.hitl import Asker, build_hitl_hook
@@ -28,34 +41,33 @@ from assistant.integrations.google_auth import GoogleAuth
 from assistant.memory import (
     build_compaction_config,
     build_knowledge_config,
+    build_profile_store,
     profile_assembly,
     read_profile_sync,
     remember_note,
 )
-from assistant.middleware import LLMRetryMiddleware, LLMTimeoutMiddleware
+from assistant.middleware import ACPInstructionsMiddleware, LLMRetryMiddleware, LLMTimeoutMiddleware
 from assistant.observability import agent_logging_middleware, log_suppressed
 from assistant.observers import build_observers
 from assistant.permissions import PermissionManager, PermissionStore
+from assistant.resources import OwnedSqliteStore, ProfileResources, SharedEnvironment, fingerprint
+from assistant.screen_skill import ScreenSkillRuntime
 from assistant.secrets import DEFAULT_OLLAMA_BASE, KEY_ENV, OLLAMA_BASE_ENV
+from assistant.self_tools import build_self_tools
 from assistant.settings import profile_settings
 from assistant.skills import (
+    SKILL_BLOCKED,
     DiscoveredSkill,
     FilteredSkillRuntime,
     SkillStateStore,
     skill_origin,
 )
-from assistant.tools import build_agent_tools
+from assistant.tools import build_agent_tools, docker_environment
 from assistant.tools.docker_sandbox import build_docker_skill_runtime, docker_available
+from assistant.tools.mcp import build_mcp_tools
 
-# Commands skill scripts must never run (defense-in-depth; skills can ship code).
-_SKILL_BLOCKED = ["rm -rf /", "sudo", "shutdown", "reboot", "mkfs", ":(){"]
-
-# Default (cheaper) model for the passive memory-aggregation pass, per provider.
-# Used only when llm.aggregate_model isn't set. Override via AG2ASSISTANT_AGGREGATE_MODEL.
-# Per-provider default for bulk/background LLM work (aggregation, compaction,
-# research subtasks) — the provider's cheap tier, overridable via
-# `config.llm.aggregate_model`. Ollama is absent on purpose: it's local (nothing
-# to save) and any specific model here might not be pulled.
+# Default model for memory aggregation and background work, overridden by aggregate_model.
+# Ollama uses the main model because a different local model may not be installed.
 _DEFAULT_AGGREGATE_MODEL = {
     "gemini": "gemini-3.1-flash-lite",
     "anthropic": "claude-haiku-4-5-20251001",
@@ -89,8 +101,6 @@ def model_config(config: Config, model: str | None = None):
     if provider in ACP_PROVIDERS:
         # Coding CLI over ACP: the CLI's own disk login is the auth (no key),
         # and the entry's Advanced options are ACPConfig constructor overrides.
-        from assistant.coding import acp_provider
-
         return acp_provider.BUILDERS[provider](config, model=model, options=opts)
     if provider == "anthropic":
         return AnthropicConfig(
@@ -163,6 +173,33 @@ def model_config(config: Config, model: str | None = None):
     )
 
 
+class RefreshingModelConfig:
+    """A constructor policy whose subscription client reads the current credential file."""
+
+    def __init__(self, config: Config, factory: Callable, model: str | None = None) -> None:
+        self._config = config
+        self._factory = factory
+        self._model = model
+        self._initial = factory(config, model)
+
+    @property
+    def provider(self):
+        return self._initial.provider
+
+    @property
+    def model(self):
+        return self._initial.model
+
+    def copy(self):
+        return self
+
+    def create(self):
+        return self._factory(self._config, self._model).create()
+
+    def create_files_client(self):
+        return self._factory(self._config, self._model).create_files_client()
+
+
 def _build_middleware(config: Config) -> list:
     """The per-agent LLM middleware stack for this provider."""
     middleware = [
@@ -180,6 +217,8 @@ def _build_middleware(config: Config) -> list:
         # tool loop, so the per-call ceiling is ACPConfig.turn_timeout; the
         # silence watchdog covers wedges.
         middleware.append(LLMTimeoutMiddleware(config.llm.call_timeout_s))
+    else:
+        middleware.append(ACPInstructionsMiddleware())
     return middleware
 
 
@@ -225,13 +264,13 @@ def build_skills_runtime(config: Config):
         if docker_available(config.search_path):
             return build_docker_skill_runtime(
                 install_dir=config.skills_dir,
-                blocked=_SKILL_BLOCKED,
+                blocked=SKILL_BLOCKED,
                 image=config.tools.docker_image,
                 network=config.tools.docker_network,
                 extra_paths=extra,
             )
 
-    return LocalRuntime(dir=str(config.skills_dir), blocked=_SKILL_BLOCKED, extra_paths=extra)
+    return LocalRuntime(dir=str(config.skills_dir), blocked=SKILL_BLOCKED, extra_paths=extra)
 
 
 def _availability(config: Config) -> Callable[[DiscoveredSkill], bool]:
@@ -266,36 +305,60 @@ def resolve_a2ui_skill(config: Config):
     return FilteredSkillRuntime(A2UISkillRuntime(CardCatalog(config)), _availability(config))
 
 
-def build_skills_plugin(config: Config, runtime):
-    """Progressive-disclosure Skills plugin over `runtime`, filtered by skill state.
+SKILL_USAGE_GUIDANCE = """The following skills provide specialized instructions for specific tasks.
+When a task matches a skill, follow its instructions. Call load_skill(name) before
+using it only if its full instructions are missing from the current context or there
+is evidence they changed. Reuse unchanged instructions and resource text already in
+the current context across messages; a new message alone does not require reloading.
+Use read_skill_resource only for references you need that are missing or changed.
+A catalog entry or compaction summary is not the full instructions or resource text.
+After compaction, reload only the needed texts that are no longer fully present.
+If a skill, resource or Card definition changed, read its current version before use.
+Read mutable user data and current file state separately when the task requires it.
+"""
 
-    `SkillPlugin` injects the `<available_skills>` catalog (name + description +
-    location per skill) straight into the system prompt on startup — the model
-    discovers what's available with no `list_skills` round-trip — and exposes
-    `load_skill` / `read_skill_resource` / `run_skill_script` for those skills.
 
-    What it may show is decided by `resolve_skills`, so a Disabled skill reaches
-    neither the catalog nor the activation tools.
-
-    The catalog and the activation tools are a **construction-time snapshot**: a
-    skill installed or toggled mid-session isn't reflected until the next agent
-    build (a `ProfileManager.reload`) picks it up — which is exactly what the
-    /api/skills routes trigger on every change.
-
-    The A2UI Skill comes first, so a same-named skill on disk shadows it (last wins).
-    """
-    return SkillPlugin(resolve_a2ui_skill(config), resolve_skills(config, runtime))
+def build_skills_plugin(
+    config: Config, runtime, *, catalog=None, snapshot: bool = False, drafts=None, preview=None
+):
+    """Build progressive disclosure and activation tools over resolved Skill availability."""
+    author = FilteredSkillRuntime(
+        CardAuthorRuntime(drafts, catalog or CardCatalog(config)),
+        _availability(config),
+        snapshot=snapshot,
+    )
+    screens = FilteredSkillRuntime(
+        ScreenSkillRuntime(config, catalog or CardCatalog(config), drafts=drafts, preview=preview),
+        _availability(config),
+        snapshot=snapshot,
+    )
+    if snapshot:
+        runtime.invalidate()
+        views = FilteredSkillRuntime(
+            A2UISkillRuntime(catalog or CardCatalog(config)),
+            _availability(config),
+            snapshot=True,
+        )
+        files = FilteredSkillRuntime(runtime, _availability(config), snapshot=True)
+    else:
+        views = resolve_a2ui_skill(config)
+        files = resolve_skills(config, runtime)
+    plugin = SkillPlugin(author, screens, views, files)
+    plugin.add_middleware(
+        Middleware(SkillCatalogMiddleware, resolver=SkillResolver([author, screens, views, files]))
+    )
+    # Keep AG2's catalog and activation tools with context-aware reading instructions.
+    plugin._system_prompt = [
+        SKILL_USAGE_GUIDANCE + part[part.index("<available_skills>") :]
+        if "<available_skills>" in part
+        else part
+        for part in plugin._system_prompt
+    ]
+    return plugin
 
 
 def build_skills_install_tools(config: Config, runtime) -> list:
-    """Registry search/install/remove tools (skills.sh), kept alongside the
-    `SkillPlugin` so the agent can still grow its skill set.
-
-    `SkillSearchToolkit` bundles the local list/load/read/run tools too, but the
-    plugin already owns discovery and execution — so we take only the three
-    registry tools to avoid registering duplicates. They share the plugin's
-    `runtime`, so an install writes to the same store the plugin reads from.
-    """
+    """Build registry tools writing to the runtime's Skill directories."""
     toolkit = SkillSearchToolkit(runtime)
     return [toolkit.search_skills(), toolkit.install_skill(), toolkit.remove_skill()]
 
@@ -554,7 +617,9 @@ def turn_prompt(
     return parts
 
 
-def universal_turn_prompt(config: Config, surface: str = "") -> list[str]:
+def universal_turn_prompt(
+    config: Config, surface: str = "", *, google: bool | None = None
+) -> list[str]:
     """Per-turn prompt for the universal agent: behaviour + capability map + (Google
     when signed in) + the SURFACE it's being addressed on + live env. It follows the
     agent's own system prompt (persona + plugins), which the caller puts first.
@@ -577,7 +642,7 @@ def universal_turn_prompt(config: Config, surface: str = "") -> list[str]:
     if focuses:
         parts.append(focuses)
     try:
-        if GoogleAuth(config.paths).google_ready():
+        if GoogleAuth(config.paths).google_ready() if google is None else google:
             parts.append(GOOGLE_GUIDANCE)
     except Exception as exc:
         log_suppressed("google token check for universal prompt", exc)
@@ -599,38 +664,46 @@ def create_agent(
     model: str | None = None,
     extra_tools: list | None = None,
     compact: bool = False,
+    invocation_only: bool = False,
+    model_factory: Callable = model_config,
+    extra_plugins: list | None = None,
+    default_model=None,
+    resources: ProfileResources | None = None,
+    environment_factory: Callable = docker_environment,
+    compaction_store=None,
 ) -> Agent:
-    """Create an AG2 Assistant agent with the given configuration.
-
-    Args:
-        config: AG2 Assistant configuration (defaults to Config()).
-        memory: Whether to enable the persistent user-profile memory.
-        platform: The channel this session is on (cli, telegram, discord, ...).
-            Observations learned this session are tagged with it.
-        knowledge_store: A shared KnowledgeStore to reuse for the profile. Pass a
-            locked/shared store when multiple agents write the same profile (e.g.
-            the gateway's per-chat agents).
-        skills: Whether to give the agent the skill search/install/run toolkit.
-        asker: An `Asker` for human-in-the-loop questions (routes `context.input()`
-            to the requesting surface). If None, the agent has no HITL hook.
-        single_shot: True for one-turn runs (CLI). Aggregates the profile on
-            conversation end so the single turn is captured; multi-turn callers
-            (gateway/channels) leave this False and rely on the every-N-turns
-            cadence to avoid an aggregation call per message.
-    """
+    """Construct a standalone Agent or a Profile base with invocation-supplied capabilities.
+    Standalone resource ownership is available through dependencies or ``agent_session``."""
     if config is None:
         config = load_config()
 
-    llm_config = model_config(config, model)
+    owner = None if invocation_only else (resources or ProfileResources())
+    factory = model_factory
+
+    def owned_resource(kind, key, factory):
+        assert owner is not None
+        return owner.acquire(kind, key, factory).value
+
+    def owned_model(config, model=None):
+        assert owner is not None
+        key = fingerprint([config.llm.model_dump(), config.secret_env, model])
+        return owner.acquire("model", key, lambda: factory(config, model)).value
+
+    if owner is not None:
+        model_factory = owned_model
+    llm_config = None if invocation_only else model_factory(config, model)
 
     knowledge = None
     assembly: list = []
-    # Profile aggregation and stream compaction are both just summarisation, so
-    # run them on a cheaper model when one is configured (or a sensible
-    # per-provider default). Falls back to the main model if neither applies.
     agg_model = config.llm.aggregate_model or _default_aggregate_model(config)
-    agg_config = model_config(config, agg_model) if agg_model else llm_config
+    agg_config = model_factory(config, agg_model) if memory else None
     if memory:
+        if owner is not None and knowledge_store is None:
+            knowledge_store = owned_resource(
+                "memory",
+                "memory",
+                lambda: OwnedSqliteStore(build_profile_store(config.data_dir / "profile.db")),
+            )
         knowledge = build_knowledge_config(
             platform=platform,
             store_path=config.data_dir / "profile.db",  # this profile's learned memory
@@ -640,27 +713,57 @@ def create_agent(
             on_end=single_shot,
             compact=compact,
             compact_max_tokens=config.memory.compact_max_tokens,
+            compaction_limits=CompactionLimits(
+                max_tokens=config.memory.compact_max_tokens,
+                max_calls=config.memory.compact_max_calls,
+                timeout_s=config.memory.compact_timeout_s,
+                summary_max_tokens=config.memory.compact_summary_max_tokens,
+            ),
+            compaction_store=compaction_store,
         )
         assembly = profile_assembly()
     elif compact:
         # Memory-less agents (task subagents) still get their context bounded.
         knowledge = build_compaction_config(
-            aggregate_config=agg_config,
             max_tokens=config.memory.compact_max_tokens,
+            store=compaction_store,
+            limits=CompactionLimits(
+                max_tokens=config.memory.compact_max_tokens,
+                max_calls=config.memory.compact_max_calls,
+                timeout_s=config.memory.compact_timeout_s,
+                summary_max_tokens=config.memory.compact_summary_max_tokens,
+            ),
         )
 
-    tools = build_agent_tools(
-        config.llm.config_type,
-        sandbox=config.tools.sandbox,
-        docker_image=config.tools.docker_image,
-        docker_network=config.tools.docker_network,
-        capabilities=capabilities,
-        workspace_dir=config.workspace_dir,
-        config=config,  # enables generate_image (needs provider/keys)
-        builtin=config.llm.builtin_tools,
+    tools = (
+        []
+        if invocation_only
+        else build_agent_tools(
+            config.llm.config_type,
+            sandbox=config.tools.sandbox,
+            docker_image=config.tools.docker_image,
+            docker_network=config.tools.docker_network,
+            capabilities=capabilities,
+            workspace_dir=config.workspace_dir,
+            config=config,  # enables generate_image (needs provider/keys)
+            builtin=config.llm.builtin_tools,
+            environment_factory=lambda **kwargs: owned_resource(
+                "docker",
+                fingerprint(kwargs),
+                lambda: SharedEnvironment(environment_factory(**kwargs)),
+            ),
+            local_environment_factory=lambda: owned_resource(
+                "local", "local", lambda: SharedEnvironment(LocalEnvironment())
+            ),
+            mcp_factory=lambda servers: [
+                owned_resource("mcp", fingerprint(server), lambda: build_mcp_tools([server])[0])
+                for server in servers
+                if server.get("enabled", True)
+            ],
+        )
     )
     plugins: list = []
-    if skills and (capabilities is None or "skills" in capabilities):
+    if not invocation_only and skills and (capabilities is None or "skills" in capabilities):
         # One runtime backs both the disclosure/run plugin and the registry
         # install tools, so an install writes to the store the plugin reads from.
         skills_runtime = build_skills_runtime(config)
@@ -673,10 +776,7 @@ def create_agent(
     # here rather than in build_system_tools so every surface gets them.
     # Chat only, like ask_user: a scoped task subagent answers to the task, not to
     # questions about the product.
-    if capabilities is None:
-        from assistant.self_tools import build_self_tools
-        from assistant.settings import profile_settings
-
+    if not invocation_only and capabilities is None:
         settings = profile_settings(config.data_dir, voice_provider=config.voice_provider)
         tools.extend(build_self_tools(config, settings))
 
@@ -685,6 +785,8 @@ def create_agent(
     # schedule included; the chat agent no longer needs a separate start_task tool).
     if extra_tools:
         tools.extend(extra_tools)
+    if compact:
+        tools.append(read_compaction_source)
 
     # When the profile memory is on, let the agent commit an explicit "remember
     # this" immediately (the passive aggregator alone is slow and may filter it).
@@ -710,6 +812,8 @@ def create_agent(
             workspace_dir=config.workspace_dir,
         )
     }
+    if owner is not None:
+        dependencies[ProfileResources] = owner
     if asker is not None:
         # The ask_user tool pulls the turn's asker from dependencies so the model
         # can pose option-carrying Questions (context.input is string-only).
@@ -727,24 +831,51 @@ def create_agent(
     # turn even on the memory-less subagents that hang in the incident.
     assembly = list(assembly) + [AlertPolicy()]
 
-    agent = Agent(
+    middleware = [] if invocation_only else _build_middleware(config)
+    selected_model = default_model or llm_config
+    if compact:
+        assert knowledge is not None
+        if selected_model is not None:
+            selected_model = BudgetedModelConfig(selected_model)
+    agent_cls = CompactingAgent if compact else Agent
+    agent = agent_cls(
         config.agent.name,
-        prompt=config.agent.system_prompt,
-        config=llm_config,
+        prompt=BEHAVIOR_GUIDANCE if invocation_only else config.agent.system_prompt,
+        config=selected_model,
         tools=tools,
-        plugins=plugins,
+        plugins=[*plugins, *(extra_plugins or [])],
         knowledge=knowledge,
         assembly=assembly,
         hitl_hook=hitl_hook,
         dependencies=dependencies,
-        middleware=_build_middleware(config),
+        middleware=middleware,
         observers=build_observers(  # stuck-turn + wedged-turn guards → stream alerts
             silence_alert_s=config.llm.silence_alert_s,
             silence_halt_s=config.llm.silence_halt_s,
         ),
     )
+    if compact:
+        assert knowledge is not None
+        agent.insert_middleware(
+            Middleware(
+                CheckpointMiddleware,
+                strategy=knowledge.compact,
+                actor=config.agent.name,
+                store=knowledge.store,
+            )
+        )
 
     return agent
+
+
+@asynccontextmanager
+async def agent_session(config: Config, **kwargs):
+    """Construct a standalone Agent and dispose its resources when the caller exits."""
+    owner = ProfileResources()
+    try:
+        yield create_agent(config, resources=owner, **kwargs)
+    finally:
+        await owner.aclose()
 
 
 async def ask(
@@ -758,6 +889,8 @@ async def ask(
     when the turn produced no text body."""
     if config is None:
         config = load_config()
-    agent = create_agent(config, memory=memory, platform=platform, asker=asker, single_shot=True)
-    reply = await agent.ask(message, prompt=turn_prompt(config))
-    return reply.body
+    async with agent_session(
+        config, memory=memory, platform=platform, asker=asker, single_shot=True, compact=True
+    ) as agent:
+        reply = await agent.ask(message, prompt=turn_prompt(config))
+        return reply.body

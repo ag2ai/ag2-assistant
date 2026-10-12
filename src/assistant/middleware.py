@@ -1,47 +1,30 @@
-"""AG2 middleware — provider-agnostic guards wrapped around the agent loop.
-
-Two guards, composed so the retry wraps the timeout (each retry gets a fresh
-timeout window):
-
-**Per-LLM-call timeout** (`LLMTimeoutMiddleware`). Provider SDKs (Gemini in
-particular, on a streaming request) can hang a call indefinitely — no error, no
-timeout — leaving the turn awaiting a reply that never comes and a task stuck
-"running" forever. AG2's trigger-driven observers can't fire on the *absence* of
-events, so this wraps each LLM call in ``asyncio.timeout`` and raises when the
-wall clock runs out, turning a silent hang into a clean turn failure.
-
-Why middleware and not a provider timeout: ``GeminiConfig`` exposes only an
-``http_client`` (an ``httpx.AsyncClient``), i.e. transport-level read/connect
-timeouts — which don't cleanly cover a *streaming* call that stalls between
-chunks, and are Gemini-specific anyway. The ``on_llm_call`` hook wraps the whole
-call (streaming included) and is provider-agnostic, so it's the primary guard.
-
-**In-place retry** (`LLMRetryMiddleware`). AG2 ships a ``RetryMiddleware`` whose
-``retry_on`` tuple is the extension hook, but it has *no backoff* (it loops the
-call immediately) and can only match on exception *type* — so it can't tell a
-retryable 429/503 from a fatal 400. We mirror its style (a ``MiddlewareFactory``
-building a per-turn instance, looping ``call_next``) but add: exponential backoff
-(injectable so tests don't sleep) and a transient-only predicate — retry a
-``LLMCallTimeout`` unconditionally and a Gemini provider error only when its HTTP
-status is transient (429 / 500 / 502 / 503 / 504), never a fatal 4xx like a bad
-request. Wired OUTSIDE the timeout in ``agent.py`` so each attempt gets a fresh
-timeout window.
-"""
+"""Bound each LLM call and retry transient provider or transport failures with backoff."""
 
 import asyncio
+import copy
 import random
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 from ag2.annotations import Context
-from ag2.events import BaseEvent, ModelResponse
+from ag2.events import BaseEvent, ModelRequest, ModelResponse, TextInput
 from ag2.middleware.base import BaseMiddleware, LLMCall, MiddlewareFactory
 
-# HTTP statuses worth another try: rate limit + the transient 5xx family. A fatal
-# 4xx (400 bad request, 401/403 auth, 404) is NOT here — retrying it just burns
-# the same error. Mirrors what a provider SDK's own retry policy treats as
-# transient; kept as data so it's obvious and testable.
+from assistant.compaction import ContextBudgetError
+
 _TRANSIENT_HTTP_STATUS = frozenset({429, 500, 502, 503, 504})
+# Match transport base classes without importing optional provider SDKs.
+_TRANSIENT_NETWORK_TYPES = frozenset(
+    {
+        ("openai", "APIConnectionError"),
+        ("anthropic", "APIConnectionError"),
+        *(
+            (module, name)
+            for module in ("httpx", "httpx2")
+            for name in ("TimeoutException", "NetworkError", "RemoteProtocolError")
+        ),
+    }
+)
 
 
 class LLMCallTimeout(Exception):
@@ -86,27 +69,36 @@ class _LLMTimeoutMiddleware(BaseMiddleware):
 
 
 def _is_transient(exc: BaseException) -> bool:
-    """True if `exc` is a transient LLM-call failure worth retrying.
-
-    Always retryable: our own ``LLMCallTimeout`` (a wedged call — the incident's
-    failure mode, and a fresh attempt often succeeds). Provider errors are matched
-    by HTTP status: a Gemini ``google.genai.errors.APIError`` carries a ``.code``
-    (429/5xx → transient; a fatal 4xx → not). Duck-typed on the ``code`` attribute
-    so we don't hard-import the Gemini SDK (other providers surface a comparable
-    ``status_code``); anything without a recognisable transient status is treated
-    as fatal and propagates immediately.
-    """
-    if isinstance(exc, LLMCallTimeout):
-        return True
-    status = getattr(exc, "code", None)
-    if status is None:
-        status = getattr(exc, "status_code", None)
-    if status is None:
-        return False
-    try:
-        return int(status) in _TRANSIENT_HTTP_STATUS
-    except (TypeError, ValueError):
-        return False
+    """Recognize transient HTTP and network failures, including explicit wrapped causes."""
+    seen: set[int] = set()
+    while id(exc) not in seen:
+        seen.add(id(exc))
+        if isinstance(exc, ContextBudgetError):
+            return False
+        for status in (
+            getattr(exc, "status_code", None),
+            getattr(exc, "code", None),
+            getattr(getattr(exc, "response", None), "status_code", None),
+        ):
+            if status is None:
+                continue
+            try:
+                status = int(status)
+            except (TypeError, ValueError):
+                continue
+            if 400 <= status <= 599:
+                return status in _TRANSIENT_HTTP_STATUS
+        if isinstance(exc, (LLMCallTimeout, ConnectionError, TimeoutError)):
+            return True
+        if any(
+            (base.__module__.split(".", 1)[0], base.__name__) in _TRANSIENT_NETWORK_TYPES
+            for base in type(exc).__mro__
+        ):
+            return True
+        if exc.__cause__ is None:
+            break
+        exc = exc.__cause__
+    return False
 
 
 class LLMRetryMiddleware(MiddlewareFactory):
@@ -187,3 +179,25 @@ class _LLMRetryMiddleware(BaseMiddleware):
         """Exponential backoff (base * 2**attempt), capped, with ±25% jitter."""
         delay = min(self._base_delay * (2**attempt), self._max_delay)
         return delay * (1 + random.uniform(-0.25, 0.25))
+
+
+class ACPInstructionsMiddleware(MiddlewareFactory):
+    """Include resolved assistant instructions in ACP's text-only prompt transport."""
+
+    def __call__(self, event: BaseEvent, context: Context) -> BaseMiddleware:
+        return _ACPInstructionsMiddleware(event, context)
+
+
+class _ACPInstructionsMiddleware(BaseMiddleware):
+    async def on_llm_call(
+        self, call_next: LLMCall, events: Sequence[BaseEvent], context: Context
+    ) -> ModelResponse:
+        outgoing = list(events)
+        for index in range(len(outgoing) - 1, -1, -1):
+            if isinstance(request := outgoing[index], ModelRequest):
+                held = copy.copy(request)
+                instructions = "Current assistant instructions:\n" + "\n\n".join(context.prompt)
+                held.parts = [TextInput(content=instructions), *request.parts]
+                outgoing[index] = held
+                break
+        return await call_next(outgoing, context)

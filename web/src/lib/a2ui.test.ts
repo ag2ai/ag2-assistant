@@ -183,8 +183,9 @@ test('a data-model update grows the bound array the layout already repeats over'
     version: 'v1.0',
     updateDataModel: { surfaceId: 's1', path: '/trip', value: { legs: [{ day: 'Mon' }, { day: 'Tue' }] } },
   })
-  assert.equal(childSlots(surface.component.children, surface.data).length, 2)
-  assert.equal(a2uiValue({ path: './day' }, surface.data, '/trip/legs/1'), 'Tue')
+  const updated = items[0] as Extract<ThreadItem, { kind: 'a2ui' }>
+  assert.equal(childSlots(updated.component.children, updated.data).length, 2)
+  assert.equal(a2uiValue({ path: './day' }, updated.data, '/trip/legs/1'), 'Tue')
 })
 
 test('a button in a repeated row submits the item it belongs to', () => {
@@ -239,8 +240,9 @@ test('a card drawn as primitives is titled by the data model that arrives after 
     version: 'v1.0',
     updateDataModel: { surfaceId: 's1', path: '/title', value: 'Ship it' },
   })
-  assert.equal(surface.title, 'Ship it')
-  assert.equal(a2uiValue({ path: '/title' }, surface.data), 'Ship it')
+  const updated = items[0] as Extract<ThreadItem, { kind: 'a2ui' }>
+  assert.equal(updated.title, 'Ship it')
+  assert.equal(a2uiValue({ path: '/title' }, updated.data), 'Ship it')
 })
 
 test('a surface the renderer has never seen is titled and filled like any other', () => {
@@ -260,7 +262,7 @@ test('a surface the renderer has never seen is titled and filled like any other'
     version: 'v1.0',
     updateDataModel: { surfaceId: 's1', path: '/title', value: 'Tea, ranked' },
   })
-  assert.equal(surface.title, 'Tea, ranked')
+  assert.equal((items[0] as Extract<ThreadItem, { kind: 'a2ui' }>).title, 'Tea, ranked')
 })
 
 test('two instances of one card read their own rows, not each other\'s', () => {
@@ -360,15 +362,35 @@ test('a falling metric carries the minus sign it was given', () => {
 
   assert.equal(metric.value, '281.51')
   assert.equal(metric.arrow, '▼')
-  assert.equal(metric.delta, '-0.80%')
+  assert.equal(metric.delta, '-0.8%')
 })
 
 test('a metric with no movement to report is just its value', () => {
   const metric = metricParts({ component: 'Metric', value: { path: '/price' } }, { price: 1234.5 })
 
-  assert.equal(metric.value, '1,234.50')
+  assert.equal(metric.value, '1,234.5')
   assert.equal(metric.arrow, '')
   assert.equal(metric.delta, '')
+})
+
+test('whole metric values and changes have no fractional padding', () => {
+  for (const value of [17, 0, -17, 1234]) {
+    const metric = metricParts(
+      { component: 'Metric', value: { path: '/days' }, unit: 'дней', delta: 2, deltaPercent: -10 },
+      { days: value },
+    )
+    assert.equal(metric.value, value === 1234 ? '1,234' : String(value))
+    assert.equal(metric.unit, 'дней')
+    assert.equal(metric.delta, '+2 (-10%)')
+    assert.equal(metric.arrow, '▼')
+  }
+})
+
+test('metric formatting keeps fractional precision and authored text', () => {
+  for (const [value, expected] of [[17.5, '17.5'], [17.25, '17.25'], [17.256, '17.26'], ['17.00', '17.00']] as const) {
+    assert.equal(metricParts({ component: 'Metric', value }).value, expected)
+  }
+  assert.equal(metricParts({ component: 'Metric', value: 0, delta: 0, deltaPercent: 0 }).delta, '0 (0%)')
 })
 
 test('a component conditional on absent data is not drawn', () => {

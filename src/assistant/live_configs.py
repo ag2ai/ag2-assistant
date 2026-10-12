@@ -25,11 +25,15 @@ empty ``llm_configs`` falling back to the flat ``llm:`` defaults.
 
 from collections.abc import Mapping
 from secrets import token_hex
+from typing import TYPE_CHECKING
 
 from assistant import voice_providers
-from assistant.config import read_global_config, update_global_section
+from assistant.config import Config, read_global_config, update_global_section
 from assistant.paths import Paths
 from assistant.secrets import KEY_ENV, SecretStore
+
+if TYPE_CHECKING:
+    from assistant.settings import Settings
 
 _SECTION = "live_configs"
 
@@ -166,9 +170,12 @@ class LiveConfigStore:
         self._write(data)
         return True
 
-    def active_config(self) -> dict | None:
-        """The active configuration entry, or None when the store is empty or its
-        ``active`` id doesn't resolve to a present entry."""
+    def active_config(self, override_id: str | None = None) -> dict | None:
+        """The profile override when present, otherwise the install-wide active entry."""
+        if override_id:
+            override = self.get_config(override_id)
+            if override is not None:
+                return override
         aid = self.active_id()
         return self.get_config(aid) if aid else None
 
@@ -214,3 +221,16 @@ class LiveConfigStore:
         """Whether this configuration can actually open a session right now — a
         per-config key OR the provider's shared key must be present."""
         return self.key_source(entry, env) != "none"
+
+
+def voice_available(config: Config, settings: "Settings") -> bool:
+    """Whether the profile's selected voice configuration or legacy fallback has a key."""
+    store = LiveConfigStore(config.paths)
+    active = store.active_config(settings.get_live_override())
+    if active is not None:
+        return bool(store.resolve_key(active, config.secret_env))
+    provider = settings.voice_provider()
+    key = config.secret_env.get(KEY_ENV.get(provider, ""), "")
+    if provider == "gemini" and config.llm.provider in ("gemini", "google"):
+        key = key or config.secret_env.get(config.llm.api_key_env, "")
+    return bool(key)

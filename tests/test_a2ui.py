@@ -22,10 +22,10 @@ from assistant.a2ui import (
     wrap_bare_a2ui,
 )
 from assistant.cards import bundled_cards_dir, expand_components, load_cards
+from assistant.cards.bundled.weatherpanel import condition_for
 from assistant.coding.diff import FileDiff
 from assistant.coding.surface import card_fields
 from assistant.events import A2UISurface
-from assistant.tools.weather import condition_for
 from tests.support.cards import card_detail, protocol, skill_body
 
 
@@ -394,6 +394,7 @@ def _market_emit() -> list[dict]:
             "id": "root",
             "component": "MarketBoard",
             "title": "Technology",
+            "_parameters": {"symbols": "NVDA,AAPL", "title": "Technology"},
             "currency": "USD",
             "quotes": [
                 {
@@ -420,7 +421,7 @@ async def test_the_market_board_is_offered_to_the_agent_from_its_file(config):
     schema = assistant_catalog()["components"]["MarketBoard"]
 
     assert schema["description"] == card.description
-    assert schema["required"] == ["id", "component", "title", "quotes"]
+    assert schema["required"] == ["id", "component", "title", "quotes", "_parameters"]
     assert set(schema["properties"]) >= {"id", "component", "title", "quotes"}
 
     assert card.description in await skill_body(config)
@@ -438,6 +439,7 @@ def test_the_market_board_is_drawn_from_the_vocabulary_not_from_a_component():
         "/title",
         "/currency",
         "/quotes",
+        "/_sources/root",
     ]
 
 
@@ -539,7 +541,11 @@ def test_the_task_plan_places_and_brief_are_drawn_from_the_vocabulary():
         drawn = messages[1]["updateComponents"]["components"]
 
         assert {component["component"] for component in drawn} <= CARD_VOCABULARY
-        assert [message["updateDataModel"]["path"] for message in messages[2:]] == fields
+        assert [
+            message["updateDataModel"]["path"]
+            for message in messages[2:]
+            if not message["updateDataModel"]["path"].startswith("/_sources/")
+        ] == fields
 
 
 def test_a_task_plan_stored_before_it_was_a_file_is_redrawn_on_read():
@@ -694,7 +700,11 @@ def test_the_board_the_inbox_and_the_agenda_are_drawn_from_the_vocabulary():
         drawn = messages[1]["updateComponents"]["components"]
 
         assert {component["component"] for component in drawn} <= CARD_VOCABULARY
-        assert [message["updateDataModel"]["path"] for message in messages[2:]] == fields
+        assert [
+            message["updateDataModel"]["path"]
+            for message in messages[2:]
+            if not message["updateDataModel"]["path"].startswith("/_sources/")
+        ] == fields
 
 
 def test_a_row_points_at_the_task_it_describes():
@@ -852,7 +862,11 @@ def test_the_weather_and_the_news_are_drawn_from_the_vocabulary():
         drawn = messages[1]["updateComponents"]["components"]
 
         assert {component["component"] for component in drawn} <= CARD_VOCABULARY
-        assert [message["updateDataModel"]["path"] for message in messages[2:]] == fields
+        assert [
+            message["updateDataModel"]["path"]
+            for message in messages[2:]
+            if not message["updateDataModel"]["path"].startswith("/_sources/")
+        ] == fields
 
 
 def test_the_weather_glyph_is_a_primitive_any_card_can_draw():
@@ -874,6 +888,7 @@ def test_the_condition_vocabulary_belongs_to_the_glyph_not_to_the_card(tmp_path)
     # primitive's vocabulary, still maps into the eight the glyph can draw.
     mine = yaml.safe_load((bundled_cards_dir() / "weatherpanel.card.yaml").read_text())
     mine["fields"]["condition"]["enum"] = ["hail"]
+    mine["example"]["condition"] = "hail"
     (tmp_path / "weatherpanel.card.yaml").write_text(yaml.safe_dump(mine))
     assert load_cards(tmp_path)["WeatherPanel"].fields["condition"]["enum"] == ["hail"]
 
@@ -1299,7 +1314,9 @@ def test_a_drawn_card_persists_its_fields_and_none_of_its_layout():
         )
         data = durable_surfaces_from_messages(drawn)[0].data
 
-        assert data == card.example, name
+        assert {key: value for key, value in data.items() if key != "_sources"} == {
+            key: value for key, value in card.example.items() if key != "_parameters"
+        }, name
 
 
 def test_a_plain_layout_root_contributes_no_data():

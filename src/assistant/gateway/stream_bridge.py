@@ -13,6 +13,7 @@ from uuid import UUID
 
 from ag2.stream import MemoryStream
 
+from assistant.gateway.history import event_cursor, event_page
 from assistant.gateway.wire import as_drawn, is_binary_event, to_wire
 
 
@@ -20,28 +21,65 @@ class StreamBridge:
     """Bridges one chat stream to one WebSocket. Construct, ``open()``, feed
     turns via ``run_turn``, and ``close()`` to detach."""
 
-    def __init__(self, gateway, websocket, chat_id: str):
+    def __init__(
+        self,
+        gateway,
+        websocket,
+        chat_id: str,
+        *,
+        history_limit: int | None = None,
+        history_from: str | None = None,
+    ):
         self._gw = gateway
         self._ws = websocket
         self._sid = chat_id
         self._stream: MemoryStream | None = None
         self._sub: UUID | None = None
+        self._history_limit = history_limit
+        self._history_from = history_from
+        self._pending: list | None = []
 
     async def open(self) -> None:
-        """Replay the persisted stream, then subscribe to forward live events."""
+        """Subscribe before replay and buffer live events until the ready frame."""
         stream: MemoryStream = await self._gw.stream_for(self._sid)
         self._stream = stream
-        for event in await stream.history.get_events():
+        self._sub = stream.subscribe(self._receive)
+        events = await self._gw.replay_events(self._sid)
+        ready: dict = {"type": "ready", "chat": self._sid}
+        selected = events
+        if self._history_limit is not None:
+            try:
+                page = event_page(events, self._history_limit, start=self._history_from)
+            except ValueError:
+                page = event_page(events, self._history_limit)
+            selected = page.events
+            ready["history"] = {"before": page.before, "start": page.start}
+            ready["busy"] = self._gw.is_running(self._sid)
+        for event in selected:
             await self._forward(event)
         with contextlib.suppress(Exception):
-            await self._ws.send_json({"type": "ready", "chat": self._sid})
-        self._sub = stream.subscribe(self._forward)  # event injected positionally
+            await self._ws.send_json(ready)
+        replayed = {event_cursor(event) for event in events}
+        while self._pending:
+            pending, self._pending = self._pending, []
+            for event in pending:
+                if event_cursor(event) not in replayed:
+                    await self._forward(event)
+        self._pending = None
+
+    async def _receive(self, event) -> None:
+        if self._pending is not None:
+            self._pending.append(event)
+        else:
+            await self._forward(event)
 
     async def _forward(self, event) -> None:
         if is_binary_event(event):
             return  # audio rides its own binary frame, not {type, data}
         with contextlib.suppress(Exception):
-            await self._ws.send_json({"event": to_wire(as_drawn(event, self._gw.catalog))})
+            await self._ws.send_json(
+                {"event": to_wire(as_drawn(event, self._gw.catalog, self._gw.card_sources))}
+            )
 
     async def run_turn(
         self,

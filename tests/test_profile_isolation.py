@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 from assistant.llm_configs import LlmConfigStore
 from assistant.profiles import ProfileRegistry
 from tests.support.apps import api, make_manager
-from tests.support.fakes import fake_agent_factory
+from tests.support.fakes import fake_agent_factory, fake_summary_factory, fake_title_factory
 
 
 async def _run_tool(tool, **kwargs):
@@ -410,7 +410,11 @@ def test_voice_system_tool_isolated(registry, paths):
         provider = voice_providers.get(a_settings.voice_provider())
         target = next(v for v in provider.voices if v != provider.default_voice)
 
-        tools = build_system_tools(a_runtime.tasks, a_settings, chats=a_runtime.gateway)
+        voice_config = a_runtime.config.model_copy(deep=True)
+        voice_config.secret_env = {"GEMINI_API_KEY": "test-voice"}
+        tools = build_system_tools(
+            a_runtime.tasks, a_settings, chats=a_runtime.gateway, config=voice_config
+        )
         set_voice = next(t for t in tools if t.name == "set_voice")
         msg = asyncio.run(_run_tool(set_voice, voice=target))
         assert "Voice set to" in msg
@@ -445,8 +449,22 @@ async def test_a_scheduler_fires_while_b_active(registry, paths):
     a_cfg = base.with_profile(a_meta)
     b_cfg = base.with_profile(b_meta)
     fake = fake_agent_factory()
-    a_gw, a_tasks = build_gateway(a_cfg, memory=False, persist=True, agent_factory=fake)
-    b_gw, b_tasks = build_gateway(b_cfg, memory=False, persist=True, agent_factory=fake)
+    a_gw, a_tasks = build_gateway(
+        a_cfg,
+        memory=False,
+        persist=True,
+        agent_factory=fake,
+        title_factory=fake_title_factory(),
+        summary_factory=fake_summary_factory(),
+    )
+    b_gw, b_tasks = build_gateway(
+        b_cfg,
+        memory=False,
+        persist=True,
+        agent_factory=fake,
+        title_factory=fake_title_factory(),
+        summary_factory=fake_summary_factory(),
+    )
     # build_gateway wires the TaskService into the Gateway's agent tools, but the
     # reverse wiring (turns/stops for runs) is the caller's job — normally done by
     # ProfileManager; do it here since this test drives build_gateway directly.

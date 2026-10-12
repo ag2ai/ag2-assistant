@@ -276,9 +276,9 @@ export function sparkPath(values: unknown, w: number, h: number, pad = 3): A2UIS
 
 export type A2UIMetric = { value: string; unit: string; delta: string; arrow: string }
 
-// Numbers a Metric prints: grouped, two decimals, so a column of them lines up.
+// Metric numbers are grouped with up to two decimals, without trailing zeros.
 const decimal = (n: number) =>
-  n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  n.toLocaleString('en-US', { maximumFractionDigits: 2 })
 
 const signed = (n: number) => `${n > 0 ? '+' : ''}${decimal(n)}`
 
@@ -474,7 +474,12 @@ function ensureSurface(
   catalogId: string | undefined,
   version: string,
 ): A2UIItem {
-  let item = items.find((i): i is A2UIItem => i.kind === 'a2ui' && i.surfaceId === surfaceId)
+  const index = items.findIndex((i) => i.kind === 'a2ui' && i.surfaceId === surfaceId)
+  let item = index < 0 ? undefined : items[index] as A2UIItem
+  if (item) {
+    item = { ...item, messages: [...(item.messages || [])] }
+    items[index] = item
+  }
   if (!item) {
     item = {
       id: nextItemId(),

@@ -1,0 +1,257 @@
+"""Progressively disclosed Screen creation over the current Card catalog."""
+
+import uuid
+from collections.abc import Sequence
+from dataclasses import replace
+from datetime import UTC, datetime
+from functools import partial
+from pathlib import Path
+from typing import Any
+
+import yaml
+from ag2.context import ConversationContext
+from ag2.tools.skills import MemoryRuntime, MemorySkill
+from ag2.tools.skills.skill_types import Resource, Script, Skill, SkillMetadata
+
+from assistant.a2ui import CARD_VOCABULARY, CATALOG_ID
+from assistant.a2ui_skill import _fields_from
+from assistant.card_instances import (
+    INSTANCE_SUFFIX,
+    create_document,
+    decode_instance,
+    read_document,
+    read_instance,
+)
+from assistant.cards import (
+    expand_components,
+    generation_contract,
+    validate_card,
+    validate_card_data,
+)
+from assistant.events import CardInstanceReference
+from assistant.screens import SCREEN_SUFFIX, decode_screen, expand_screen, list_screens
+from assistant.visual_preview import VisualPreview
+
+DESCRIPTION = "Create or rearrange Screens: dashboards of saved Cards outside chats. Preview Card or Screen layouts as an image with measured bounds through this skill."
+INSTRUCTIONS = """Screens are pages in the Screens tab, composed from saved Card instance files.
+Reuse unchanged instructions and references whose full text is in the current context.
+Read missing or changed references; a compaction summary is not their full text.
+Use rich-views Card details first. Fetch real initial fields; never invent values.
+Card values can live directly in the instance's message.data; an external data file or
+backend source is optional. For automatic updates, read sources.md: Python code can be
+retained inside the Card itself. Use the existing file tools and Card source mechanism;
+attaching a source does not require a coding agent, ACP bridge or application code changes.
+run_skill_script(name="screens", script="save_instance", args={"path":"weather.card-instance.yaml",
+"card":"WeatherPanel", "fields":{...}}) creates an independent instance from a catalog Card.
+If the Card declares a source, choose its _parameters once; later refresh uses the retained
+source without another Turn. For an existing instance, attach code under message.data._sources
+as shown in sources.md; preserve its layout, values, required envelope fields and references.
+For existing instances, reuse their Files paths instead of copying or regenerating them.
+
+run_skill_script(name="screens", script="save_screen", args={"path":"morning.screen.yaml",
+"document":{"kind":"screen","format_version":1,"title":"Morning","layout":[
+{"id":"root","component":"Column","children":["weather"]},
+{"id":"weather","component":"CardInstance","path":"weather.card-instance.yaml"}]}})
+creates one Screen. Each CardInstance is a reference, never inline Card data or a catalog name.
+Layouts use the Card vocabulary (Column, Row, Text, etc.); relative ./ bindings are permitted
+only within repeated templates. Use card-author's vocabulary when choosing primitives.
+Headings can be Text directly in the Screen layout, without a Card wrapper or instance file.
+Keep message.title when removing a visible heading from an instance: they are separate fields.
+Use card-author's layout.md for sizing. Grid with columns=2 gives equal responsive halves;
+two grow=true columns only share leftover space. width="content" fits a frame to its contents;
+width="fill" fills its container. A parent's align affects the child; inner align does not
+resize the enclosing frame. These properties also work in retained instance layouts.
+For compact activity calendars use CalendarHeatmap and card-author's heatmap.md.
+When editing table density or column widths, use card-author's tables.md. Keep a
+Table with explicit columnWidth bindings; independent Rows do not share aligned columns.
+Paths are relative to the Profile's Files root, including references in nested directories.
+To show the SAME file-backed instance in Chat, use show_instance with its path. This is an
+explicit reference; ordinary drawn Chat Cards and Save instance copies remain independent.
+Create parent directories with file tools first. Save scripts never overwrite existing files.
+Use list_screens and read_screen to discover current Screens. Rearrange an existing Screen
+by editing only its layout through the ordinary Files tools; keep its instance references.
+Before judging a design's sizing, use preview through THIS skill. Use preview.md for the
+arguments. It returns an image and measured component boxes, including horizontal scroll.
+Preview is read-only: it renders retained values without running source scripts. Inspect
+both desktop and narrow viewports and iterate; saving is a separate explicit action.
+Before declaring a property unsupported, read the current vocabulary and relevant layout,
+tables, charts or heatmap reference. Keep illustrative preview values out of saved real data.
+After source changes, validate the Screen and check an actual refresh separately from preview.
+Custom code requires approval in this Profile. Report saved, previewed and refreshed states
+accurately; a denied test run or approval leaves execution unverified.
+Renaming an instance requires updating its references. Missing or invalid references report
+an error; repair the file rather than substituting another Card. Buttons in Screens are passive
+except source Refresh and approval controls. Drag/write-back boards are a separate feature.
+"""
+
+
+class _ScreenSkill(MemorySkill):
+    @property
+    def descriptor(self) -> Skill:
+        return replace(
+            super().descriptor,
+            resources=(Resource(name="preview.md"), Resource(name="sources.md")),
+            scripts=tuple(
+                Script(name=name)
+                for name in (
+                    "save_instance",
+                    "save_screen",
+                    "list_screens",
+                    "read_screen",
+                    "show_instance",
+                    "preview",
+                )
+            ),
+        )
+
+
+def screen_skill_descriptor() -> Skill:
+    """The Bundled Screen Skill entry in Settings."""
+    return Skill(metadata=SkillMetadata(name="screens", description=DESCRIPTION))
+
+
+class ScreenSkillRuntime(MemoryRuntime):
+    """Create independent instance files and Screen layouts through structured scripts."""
+
+    def __init__(self, config, catalog, *, drafts=None, preview=None):
+        super().__init__(
+            _ScreenSkill(name="screens", description=DESCRIPTION, instructions=INSTRUCTIONS)
+        )
+        self.root = config.workspace_dir
+        self.catalog = catalog
+        self.drafts = drafts
+        self.preview = preview or VisualPreview(config.tools.preview_browser)
+
+    async def read(self, name: str, context: ConversationContext) -> str:
+        if name != "screens":
+            return await super().read(name, context)
+        return f'<skill_content name="screens">\n{INSTRUCTIONS.strip()}\n</skill_content>'
+
+    async def read_resource(self, name: str, resource: str, context: ConversationContext) -> str:
+        references = {"preview.md": "PREVIEW.md", "sources.md": "SOURCES.md"}
+        if name == "screens" and resource in references:
+            return (Path(__file__).parent / "cards" / references[resource]).read_text()
+        raise FileNotFoundError(resource)
+
+    async def _preview(self, context, values: dict):
+        options = {key: values.pop(key) for key in ("width", "height", "theme") if key in values}
+        if "document" in values:
+            if set(values) - {"document", "path"}:
+                raise ValueError("Pass document and optional path for a Screen candidate")
+            document = decode_screen(yaml.safe_dump(values["document"]).encode())
+            message = expand_screen(
+                document,
+                values.get("path", "preview.screen.yaml"),
+                partial(read_instance, self.root),
+            ).message
+        elif "definition" in values:
+            if set(values) != {"definition", "data"}:
+                raise ValueError("Pass definition and data for a Card candidate")
+            card = validate_card(values["definition"], CARD_VOCABULARY)
+            if card.name in CARD_VOCABULARY:
+                raise ValueError("Card name must differ from a primitive name")
+            validate_card_data(card.fields, card.required, values["data"])
+            nodes, _ = expand_components(
+                [{**values["data"], "id": "root", "component": card.name}], {card.name: card}
+            )
+            data = values["data"]
+            root = next(node for node in nodes if node["id"] == "root")
+            return await self.preview.render({**root, "_components": nodes}, data, **options)
+        elif "draft_id" in values:
+            if self.drafts is None:
+                raise ValueError("Card drafts require durable Chat history")
+            if set(values) - {"draft_id", "version"}:
+                raise ValueError("Pass draft_id and optional version for a Chat draft")
+            draft = await self.drafts.read(context, **values)
+            return await self.preview.render(draft["component"], draft["data"], **options)
+        elif set(values) == {"path"}:
+            path = values["path"]
+            if path.endswith(INSTANCE_SUFFIX):
+                message = read_instance(self.root, path).message
+            else:
+                document = decode_screen(read_document(self.root, path, SCREEN_SUFFIX))
+                message = expand_screen(document, path, partial(read_instance, self.root)).message
+        else:
+            raise ValueError("Pass path, document, definition/data, or draft_id; read preview.md")
+        return await self.preview.render(message.component, message.data, **options)
+
+    async def execute(
+        self,
+        name: str,
+        script: str,
+        context: ConversationContext,
+        args: dict[str, Any] | Sequence[str] | None = None,
+    ) -> Any:
+        if name != "screens":
+            return await super().execute(name, script, context, args)
+        values = _fields_from(args)
+        if values is None:
+            raise ValueError("Pass named script arguments as an object")
+        if script == "preview":
+            try:
+                return await self._preview(context, dict(values))
+            except (ValueError, TypeError, OSError, TimeoutError) as exc:
+                return f"Preview unavailable: {exc}"
+        if script == "list_screens":
+            return list_screens(self.root).model_dump_json()
+        if script == "read_screen":
+            return read_document(self.root, values["path"], SCREEN_SUFFIX).decode("utf-8")
+        if script == "show_instance":
+            read_instance(self.root, values["path"])
+            await context.send(
+                CardInstanceReference("file:" + values["path"], file_path=values["path"])
+            )
+            return f"Shown a reference to {values['path']} in Chat."
+        if script == "save_screen":
+            encoded = yaml.safe_dump(values["document"], sort_keys=False).encode()
+            document = decode_screen(encoded)
+            expand_screen(document, values["path"], partial(read_instance, self.root))
+            create_document(self.root, values["path"], SCREEN_SUFFIX, encoded)
+            return f"Saved Screen {values['path']}. Open it from Screens."
+        if script == "save_instance":
+            card = self.catalog.cards().get(values["card"])
+            if card is None:
+                raise ValueError("Card is unavailable in this Profile")
+            fields = values["fields"]
+            contract, required = generation_contract(card)
+            validate_card_data(contract, tuple(required), fields)
+            nodes, writes = expand_components(
+                [{**fields, "id": "root", "component": card.name}],
+                {card.name: card},
+                capture_sources=True,
+            )
+            data: dict[str, Any] = {}
+            for pointer, value in writes:
+                parts = [
+                    part.replace("~1", "/").replace("~0", "~") for part in pointer[1:].split("/")
+                ]
+                parent = data
+                for part in parts[:-1]:
+                    parent = parent.setdefault(part, {})
+                parent[parts[-1]] = value
+            identity = str(uuid.uuid4())
+            envelope = {
+                "kind": "card-instance",
+                "format_version": 1,
+                "instance_id": identity,
+                "saved_at": datetime.now(UTC).isoformat(),
+                "save_request_id": identity,
+                "request_hash": "0" * 64,
+                "message": {
+                    "surface_id": identity,
+                    "version": "v1.0",
+                    "catalog_id": CATALOG_ID,
+                    "title": card.name,
+                    "intent": "",
+                    "data": data,
+                    "component": {
+                        **next(node for node in nodes if node["id"] == "root"),
+                        "_components": nodes,
+                    },
+                },
+            }
+            encoded = yaml.safe_dump(envelope, sort_keys=False).encode()
+            decode_instance(encoded)
+            create_document(self.root, values["path"], INSTANCE_SUFFIX, encoded)
+            return f"Saved instance {values['path']}. Reference this file in the Screen."
+        raise FileNotFoundError(f"Unknown Screen script {script!r}")

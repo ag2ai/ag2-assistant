@@ -2,8 +2,9 @@
 // narrows on its tail. Each known event pins the fields the reducer reads; an
 // unknown type falls through to the catch-all so a new backend event never
 // breaks the UI.
+import { CardSourceEvent } from './card_source.ts'
 import { z } from 'zod'
-import type { KeyedToolCard as ToolCard } from '../lib/toolcards.ts'
+import type { ToolCard } from '../lib/toolcards.ts'
 import type { A2UIComponent, A2UIData } from '../lib/a2ui.ts'
 
 const TextPart = z.object({ __event__: z.string().optional(), content: z.string().optional() })
@@ -20,6 +21,13 @@ export const EventData = {
   ToolCallsEvent: z.object({
     calls: z.array(z.object({ name: z.string(), arguments: z.unknown().optional() })).optional(),
   }),
+  CompactionStarted: z.object({ agent: z.string() }),
+  CompactionCompleted: z.object({
+    agent: z.string(),
+    strategy: z.string().optional(),
+    llm_calls: z.number().optional(),
+  }),
+  CompactionFailed: z.object({ agent: z.string(), error: z.string(), error_type: z.string() }),
   TaskCreated: z.object({
     task_id: z.string(),
     title: z.string().optional(),
@@ -64,6 +72,18 @@ export const EventData = {
     components: z.array(z.unknown()).optional(),
     data: z.record(z.string(), z.unknown()).optional(),
   }),
+  CardInstanceReference: z.object({ file_path: z.string(), file_surface_id: z.string() }),
+  EphemeralCard: z.object({
+    draft_id: z.string(),
+    draft_version: z.number().int().positive(),
+    definition: z.object({ name: z.string() }),
+  }),
+  CardDefinitionSaved: z.object({ name: z.string(), path: z.string() }),
+  CardInstanceSaved: z.object({
+    surface_id: z.string(), path: z.string(), instance_id: z.string(),
+    request_id: z.string(), saved_at: z.string(),
+  }),
+  CardSourceUpdated: CardSourceEvent,
   A2UISurfaceDataUpdated: z.object({
     surface_id: z.string(),
     data: z.record(z.string(), z.unknown()).optional(),
@@ -111,9 +131,10 @@ export type EventMeta = z.infer<typeof EventMeta>
 // The event names project.ts folds; anything else is ignored by design.
 export const HANDLED_EVENTS = [
   'ModelRequest', 'DrainedModelRequest', 'ModelMessageChunk', 'ModelResponse',
+  'CompactionStarted', 'CompactionCompleted', 'CompactionFailed',
   'ToolCallsEvent', 'TaskCreated', 'TaskScheduled', 'TaskStarted', 'TaskCompleted',
   'TaskFailed', 'TaskCancelled', 'SubagentTrace', 'ObserverAlert', 'DeliverableProduced',
-  'ImageGenerated', 'A2UISurface', 'A2UISurfaceDataUpdated', 'A2UIActionSubmitted',
+  'ImageGenerated', 'A2UISurface', 'CardInstanceReference', 'EphemeralCard', 'CardDefinitionSaved', 'CardInstanceSaved', 'CardSourceUpdated', 'A2UISurfaceDataUpdated', 'A2UIActionSubmitted',
   'A2UIMessageEvent', 'Attachment', 'InquiryRaised', 'InquiryAnswered', 'TurnCancelled',
   'TurnFailed', 'FeedbackGiven', 'FeedbackCleared',
 ] as const
@@ -124,7 +145,12 @@ export type HandledEvent = (typeof HANDLED_EVENTS)[number]
 export const EventFrame = z.object({ event: WireEvent })
 export type EventFrame = z.infer<typeof EventFrame>
 
-export const ReadyFrame = z.object({ type: z.literal('ready'), chat: z.string().optional() })
+export const ReadyFrame = z.object({
+  type: z.literal('ready'),
+  chat: z.string().optional(),
+  busy: z.boolean().optional(),
+  history: z.object({ before: z.string().nullable(), start: z.string().nullable() }).optional(),
+})
 export type ReadyFrame = z.infer<typeof ReadyFrame>
 
 // `role` comes from the voice socket, which reuses this frame (app.py:3565).
@@ -202,21 +228,21 @@ export type Feedback = { sentiment?: string; reason?: string } | null
 // from the reducer, the controller and a2ui.js never collide. `at` is the source
 // event's created_at (Unix seconds).
 type ItemBase = { id: number; at?: number }
+export type ToolRun = ItemBase & { name: string; detail: string; card?: ToolCard }
 
-// One card per tool call the thread renders alongside the chips — the union
-// lib/toolcards.ts builds, keyed by `id` for the rendered list.
+// Structured provenance and artifact metadata for an individual tool run.
 export type { ToolCard }
 
 export type ThreadItem =
   // `voice` marks a bubble spoken in a live voice session — UserMessage/AgentMessage style it.
   | (ItemBase & { kind: 'user'; text: string; queued?: boolean; voice?: boolean })
-  | (ItemBase & { kind: 'agent'; text: string; streaming?: boolean; empty?: boolean; voice?: boolean; feedback?: Feedback })
-  | (ItemBase & { kind: 'tools'; names: { name: string; n: number }[]; cards: ToolCard[] })
-  | (ItemBase & { kind: 'note'; icon: string; text: string; alert?: boolean; ends?: boolean; pending?: boolean; a2uiActionPending?: boolean; surfaceId?: string })
+  | (ItemBase & { kind: 'agent'; text: string; streaming?: boolean; continues?: boolean; empty?: boolean; voice?: boolean; feedback?: Feedback })
+  | (ItemBase & { kind: 'tools'; names: { name: string; n: number }[]; runs: ToolRun[] })
+  | (ItemBase & { kind: 'note'; icon: string; text: string; alert?: boolean; observerAlert?: boolean; ends?: boolean; pending?: boolean; compactionAgent?: string; a2uiActionPending?: boolean; surfaceId?: string; savedPath?: string; saveRequestId?: string })
   | (ItemBase & { kind: 'taskcard'; taskId: string; title?: string; scheduled: boolean })
   | (ItemBase & { kind: 'subagent'; taskId: string; agent: string; objective: string; status?: string; result?: string; error?: string; items: ThreadItem[] })
   | (ItemBase & { kind: 'deliverable'; taskId?: string; deliverableId: string; description?: string; preview?: string; path?: string; feedback?: Feedback })
   | (ItemBase & { kind: 'genimage'; path: string; prompt?: string; feedback?: Feedback })
   | (ItemBase & { kind: 'attachment'; path: string; name?: string })
   | (ItemBase & { kind: 'inquiry'; inquiryId: string; question: string; detail: string; options: string[]; qkind?: string; resolved: boolean; answer?: string; resolution?: string })
-  | (ItemBase & { kind: 'a2ui'; surfaceId: string; version?: string; catalogId?: string; title?: string; intent?: string; component: A2UIComponent; components?: A2UIComponent[]; data: Record<string, unknown>; messages?: unknown[] })
+  | (ItemBase & { kind: 'a2ui'; filePath?: string; fileSurfaceId?: string; sourceStates?: Record<string, z.infer<typeof CardSourceEvent>>; surfaceId: string; version?: string; catalogId?: string; title?: string; intent?: string; component: A2UIComponent; components?: A2UIComponent[]; data: Record<string, unknown>; messages?: unknown[]; draft?: { id: string; version: number; name: string } })

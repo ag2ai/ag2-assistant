@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { foldEvent, isBusy, queueMessage } from './project.ts'
+import { foldEvent, isBusy, isCompacting, queueMessage } from './project.ts'
 import type { ThreadItem, WireEvent } from './schemas/events.ts'
 
 const user = (text: string): WireEvent => ({
@@ -17,6 +17,10 @@ const a2uiAction = (): WireEvent => ({ type: 'assistant.events.A2UIActionSubmitt
 const response = (content: string): WireEvent => ({
   type: 'ag2.events.ModelResponse',
   data: { message: { content }, tool_calls: { calls: [] } },
+})
+const compaction = (type: 'Started' | 'Completed' | 'Failed', data: Record<string, unknown> = {}): WireEvent => ({
+  type: 'ag2.events.lifecycle.Compaction' + type,
+  data: { agent: 'ag2-assistant', strategy: 'ConversationCompact', ...data },
 })
 
 // Narrow to the one kind a test asserts on, failing the test if it is another.
@@ -33,6 +37,287 @@ test('a user message with no reply yet is busy', () => {
   foldEvent(items, user('hello'))
   assert.equal(isBusy(items), true)
 })
+
+const toolCalls: WireEvent = {
+  type: 'ag2.events.ToolCallsEvent',
+  data: { calls: [{ name: 'read_file', arguments: { path: 'weekly.json' } }] },
+}
+const toolResult: WireEvent = { type: 'ag2.events.ToolResult', data: { content: 'Weekly data' } }
+
+for (const content of ['I will read the data.', '']) {
+  test(`a reply with tools stays busy through execution and replay (${content || 'no text'})`, () => {
+    const events = [user('plot the data'), chunk(content), {
+      ...response(content), data: { message: { content }, tool_calls: toolCalls.data },
+    }, toolCalls, toolResult]
+    const items: ThreadItem[] = []
+    for (const event of events) {
+      foldEvent(items, event)
+      assert.equal(isBusy(items), true)
+    }
+    const agent = itemOfKind(items.find(it => it.kind === 'agent'), 'agent')
+    assert.equal(agent.streaming, false)
+    assert.equal(agent.empty, undefined)
+    assert.equal(items.filter(it => it.kind === 'tools').length, 1)
+
+    const replay: ThreadItem[] = []
+    for (const event of events) foldEvent(replay, event)
+    assert.equal(isBusy(replay), true)
+
+    foldEvent(items, chunk('Here is the result.'))
+    foldEvent(items, response('Here is the result.'))
+    assert.equal(isBusy(items), false)
+  })
+}
+
+test('a tool batch resumes activity after a text-only progress message', () => {
+  const items: ThreadItem[] = []
+  for (const event of [user('plot the data'), response('Reading data…'), toolCalls, toolResult]) {
+    foldEvent(items, event)
+  }
+  assert.equal(isBusy(items), true)
+  foldEvent(items, response('Done'))
+  assert.equal(isBusy(items), false)
+})
+
+for (const streamed of [false, true]) {
+  test(`repeated tool rounds share one counted group, including replay (streamed=${streamed})`, () => {
+    const update: WireEvent = { ...toolCalls, data: { calls: [{ name: 'update_file' }] } }
+    const events = [user('update the view')]
+    for (let i = 0; i < 4; i++) {
+      if (streamed) events.push(chunk(''))
+      events.push({ ...response(''), data: { tool_calls: update.data } }, update, toolResult)
+    }
+    for (let replay = 0; replay < 2; replay++) {
+      const items: ThreadItem[] = []
+      for (const event of events) {
+        foldEvent(items, event)
+        assert.equal(isBusy(items), true)
+      }
+      const groups = items.filter(it => it.kind === 'tools')
+      assert.equal(groups.length, 1)
+      assert.deepEqual(itemOfKind(groups[0], 'tools').names, [{ name: 'update file', n: 4 }])
+      assert.equal(items.some(it => it.kind === 'agent' && (it.text || it.streaming || it.empty)), false)
+      foldEvent(items, response('Updated'))
+      assert.equal(isBusy(items), false)
+    }
+  })
+}
+
+test('grouped skill rounds retain every run and separate visible progress', () => {
+  const preview: WireEvent = { ...toolCalls, data: { calls: [{ name: 'run_skill_script', arguments: { name: 'screens', script: 'preview' } }] } }
+  const items: ThreadItem[] = []
+  const run = () => {
+    foldEvent(items, { ...response(''), data: { tool_calls: preview.data } })
+    foldEvent(items, preview)
+    foldEvent(items, toolResult)
+  }
+  foldEvent(items, user('preview the view'))
+  run(); run()
+  const first = itemOfKind(items.find(it => it.kind === 'tools'), 'tools')
+  assert.deepEqual(first.names, [{ name: 'run skill script', n: 2 }])
+  assert.equal(first.runs.length, 2)
+  assert.equal(new Set(first.runs.map(run => run.id)).size, 2)
+  assert.equal(first.runs.every(run => run.card?.kind === 'skill' && run.card.name === 'screens'), true)
+
+  foldEvent(items, response('Adjusting the layout'))
+  run()
+  const second = itemOfKind(items.filter(it => it.kind === 'tools').at(-1), 'tools')
+  assert.notEqual(second.id, first.id)
+  assert.deepEqual(second.names, [{ name: 'run skill script', n: 1 }])
+  assert.equal(second.runs.length, 1)
+  assert.equal(items.filter(it => it.kind === 'tools').length, 2)
+  assert.equal(isBusy(items), true)
+})
+
+test('tool grouping crosses observer alerts and respects user message boundaries', () => {
+  const items: ThreadItem[] = []
+  const run = () => {
+    foldEvent(items, { ...response(''), data: { tool_calls: toolCalls.data } })
+    foldEvent(items, toolCalls)
+  }
+  foldEvent(items, user('read the data'))
+  run(); run()
+  foldEvent(items, { type: 'assistant.events.ObserverAlert', data: { message: 'Many tool calls' } })
+  run(); run()
+  foldEvent(items, user('now read the other file'))
+  run()
+  assert.deepEqual(items.filter(it => it.kind === 'tools').map(it => itemOfKind(it, 'tools').names[0].n), [4, 1])
+  assert.equal(items.filter(it => it.kind === 'note').length, 1)
+})
+
+test('interleaved tool names aggregate once and retain the ordered run list', () => {
+  const items: ThreadItem[] = []
+  foldEvent(items, user('preview the screen'))
+  for (const [index, name] of ['run_skill_script', 'update_file', 'run_skill_script', 'update_file', 'run_skill_script'].entries()) {
+    foldEvent(items, { ...response(''), data: { tool_calls: { calls: [{ name }] } } })
+    foldEvent(items, { ...toolCalls, data: { created_at: index + 1, calls: [{ name, arguments: { name: 'screens', script: 'preview', path: `file-${index}.yaml` } }] } })
+  }
+  const group = itemOfKind(items.find(it => it.kind === 'tools'), 'tools')
+  assert.deepEqual(group.names, [{ name: 'run skill script', n: 3 }, { name: 'update file', n: 2 }])
+  assert.deepEqual(group.runs.map(run => run.at), [1, 2, 3, 4, 5])
+  assert.equal(group.runs.filter(run => run.name === 'run skill script').length, 3)
+  assert.equal(group.runs[0].detail, 'screens · preview')
+  assert.equal(group.runs[1].detail.includes('file-1.yaml'), true)
+  assert.equal(new Set(group.runs.map(run => run.id)).size, 5)
+})
+
+test('run details name skills, scripts and files across streamed updates and replay', () => {
+  const events: WireEvent[] = [user('prepare a screen')]
+  for (const args of [
+    { name: 'screens', script: 'read_screen', args: { path: 'demo.screen.yaml' } },
+    { name: 'screens', script: 'preview', args: { path: 'demo.screen.yaml' } },
+    { name: 'card-author', script: 'read_draft', args: { draft_id: 'draft-1' } },
+  ]) {
+    events.push({ ...toolCalls, data: { calls: [{ name: 'run_skill_script', arguments: JSON.stringify(args) }] } })
+  }
+  const items: ThreadItem[] = []
+  let previous: ThreadItem | undefined
+  for (const event of events) {
+    previous = items.find(it => it.kind === 'tools')
+    foldEvent(items, event)
+    if (previous) assert.notEqual(items.find(it => it.kind === 'tools'), previous)
+  }
+  const group = itemOfKind(items.find(it => it.kind === 'tools'), 'tools')
+  assert.deepEqual(group.runs.map(run => run.detail), [
+    'screens · read_screen · demo.screen.yaml',
+    'screens · preview · demo.screen.yaml',
+    'card-author · read_draft',
+  ])
+  const replay: ThreadItem[] = []
+  for (const event of events) foldEvent(replay, event)
+  assert.deepEqual(itemOfKind(replay.find(it => it.kind === 'tools'), 'tools').runs.map(run => run.detail), group.runs.map(run => run.detail))
+})
+
+test('file runs retain their own openable artifact paths through aggregation and replay', () => {
+  const events: WireEvent[] = [user('save the reports')]
+  for (const path of ['reports/first.csv', 'reports/second.csv', 'reports/first.csv']) {
+    events.push({ ...toolCalls, data: { calls: [{ name: 'write_file', arguments: { path, content: 'Report' } }] } })
+  }
+  for (let replay = 0; replay < 2; replay++) {
+    const items: ThreadItem[] = []
+    for (const event of events) foldEvent(items, event)
+    const groups = items.filter(item => item.kind === 'tools')
+    assert.equal(groups.length, 1)
+    const group = itemOfKind(groups[0], 'tools')
+    assert.deepEqual(group.names, [{ name: 'write file', n: 3 }])
+    assert.deepEqual(group.runs.map(run => run.card?.kind === 'file' && run.card.path), ['reports/first.csv', 'reports/second.csv', 'reports/first.csv'])
+  }
+})
+
+test('save confirmations distinguish a reusable definition from a card instance', () => {
+  const items: ThreadItem[] = []
+  foldEvent(items, { type: 'assistant.events.CardDefinitionSaved', data: { name: 'WeeklyChart', path: 'cards/weeklychart.card.yaml' } })
+  foldEvent(items, { type: 'assistant.events.CardInstanceSaved', data: {
+    path: 'weekly.card-instance.yaml', surface_id: 'weekly', instance_id: 'weekly',
+    request_id: 'save-weekly', saved_at: '2026-10-11T10:00:00Z',
+  } })
+  assert.equal(itemOfKind(items[0], 'note').text, 'Saved card definition WeeklyChart to cards/weeklychart.card.yaml')
+  assert.equal(itemOfKind(items[1], 'note').text, 'Saved card instance to weekly.card-instance.yaml')
+  assert.equal(itemOfKind(items[1], 'note').savedPath, 'weekly.card-instance.yaml')
+})
+
+for (const ending of [cancelled('Stopped'), failed('Timed out')]) {
+  test(`${ending.type} stops activity after tools`, () => {
+    const items: ThreadItem[] = []
+    for (const event of [user('plot the data'), toolCalls, toolResult, ending]) foldEvent(items, event)
+    assert.equal(isBusy(items), false)
+  })
+}
+
+test('compaction remains visible and busy after the reply and during replay', () => {
+  const events = [user('hello'), response('Hello'), compaction('Started')]
+  const items: ThreadItem[] = []
+  for (const event of events) foldEvent(items, event)
+  const pending = itemOfKind(items.at(-1), 'note')
+  assert.equal(pending.text, 'Compacting history…')
+  assert.equal(pending.pending, true)
+  assert.equal(isBusy(items), true)
+  assert.equal(isCompacting(items), true)
+
+  const replay: ThreadItem[] = []
+  for (const event of events) foldEvent(replay, event)
+  assert.equal(isBusy(replay), true)
+  assert.equal(isCompacting(replay), true)
+
+  foldEvent(items, compaction('Completed'))
+  const completed = itemOfKind(items.at(-1), 'note')
+  assert.notEqual(completed, pending)
+  assert.equal(completed.id, pending.id)
+  assert.equal(completed.text, 'History compacted')
+  assert.equal(completed.pending, false)
+  assert.equal(isBusy(items), false)
+  assert.equal(isCompacting(items), false)
+  assert.equal(items.length, 3)
+})
+
+test('completion renders after history compaction removed the start event', () => {
+  const items: ThreadItem[] = []
+  foldEvent(items, response('Hello'))
+  foldEvent(items, compaction('Completed'))
+  assert.equal(itemOfKind(items.at(-1), 'note').text, 'History compacted')
+  assert.equal(isBusy(items), false)
+})
+
+for (const withStart of [true, false]) {
+  test('excerpt-only checkpoint events add no notice during ' + (withStart ? 'live updates' : 'replay'), () => {
+    const items: ThreadItem[] = []
+    foldEvent(items, user('hello'))
+    foldEvent(items, response('Hello'))
+    if (withStart) foldEvent(items, compaction('Started', { strategy: 'CheckpointCompact' }))
+    foldEvent(items, compaction('Completed', { strategy: 'CheckpointCompact', llm_calls: 0 }))
+    assert.equal(items.some(it => it.kind === 'note'), false)
+    assert.equal(isCompacting(items), false)
+    assert.equal(isBusy(items), false)
+    assert.equal(items.length, 2)
+  })
+}
+
+for (const data of [
+  { strategy: 'CheckpointCompact', llm_calls: 1 },
+  { strategy: 'TailWindowCompact', llm_calls: 0 },
+]) {
+  test('a real history reduction stays visible for ' + data.strategy, () => {
+    const items: ThreadItem[] = []
+    foldEvent(items, user('hello'))
+    foldEvent(items, response('Hello'))
+    foldEvent(items, compaction('Started', data))
+    foldEvent(items, compaction('Completed', data))
+    assert.equal(itemOfKind(items.at(-1), 'note').text, 'History compacted')
+    assert.equal(isCompacting(items), false)
+  })
+}
+
+test('a legacy compaction timeout is identified during replay', () => {
+  const items: ThreadItem[] = []
+  foldEvent(items, compaction('Failed', { error_type: 'TimeoutError', error: 'Compaction cancelled' }))
+  assert.equal(itemOfKind(items.at(-1), 'note').text, 'History compaction failed: Compaction timed out')
+})
+
+test('compaction failure explains the error and ends the pending status', () => {
+  const items: ThreadItem[] = []
+  foldEvent(items, user('hello'))
+  foldEvent(items, response('Hello'))
+  foldEvent(items, compaction('Started'))
+  foldEvent(items, compaction('Failed', { error_type: 'ValueError', error: 'Model unavailable' }))
+  const note = itemOfKind(items.at(-1), 'note')
+  assert.equal(note.text, 'History compaction failed: Model unavailable')
+  assert.equal(note.alert, true)
+  assert.equal(note.pending, false)
+  assert.equal(isBusy(items), false)
+  assert.equal(isCompacting(items), false)
+})
+
+for (const ending of [cancelled('Stopped'), failed('Timed out'), user('next turn')]) {
+  test(`${ending.type} retires an interrupted compaction indicator`, () => {
+    const items: ThreadItem[] = []
+    foldEvent(items, response('Hello'))
+    foldEvent(items, compaction('Started'))
+    foldEvent(items, ending)
+    assert.equal(isCompacting(items), false)
+    assert.equal(itemOfKind(items[1], 'note').text, 'History compaction stopped')
+    assert.equal(isBusy(items), ending.type.endsWith('ModelRequest'))
+  })
+}
 
 test('a message fed to a running turn renders as a user bubble where it landed', () => {
   const items: ThreadItem[] = []
@@ -155,6 +440,58 @@ const drawn = (id: string): WireEvent => ({
   data: { message: { createSurface: { surfaceId: id } } },
 })
 const replies = (items: ThreadItem[]) => items.filter((i) => i.kind === 'agent')
+
+test('streamed surface updates publish new items while preserving the mounted card identity', () => {
+  const items: ThreadItem[] = []
+  foldEvent(items, drawn('calendar'))
+  const empty = itemOfKind(items[0], 'a2ui')
+  foldEvent(items, {
+    type: 'ag2.a2ui.A2UIMessageEvent',
+    data: { message: { updateComponents: { surfaceId: 'calendar', components: [
+      { id: 'root', component: 'Text', text: { path: '/title' } },
+    ] } } },
+  })
+  const layout = itemOfKind(items[0], 'a2ui')
+  assert.notEqual(layout, empty)
+  assert.equal(layout.id, empty.id)
+  assert.equal(layout.component.component, 'Text')
+  assert.deepEqual(empty.component, {})
+
+  foldEvent(items, {
+    type: 'ag2.a2ui.A2UIMessageEvent',
+    data: { message: { updateDataModel: { surfaceId: 'calendar', path: '/title', value: 'Lessons' } } },
+  })
+  const filled = itemOfKind(items[0], 'a2ui')
+  assert.notEqual(filled, layout)
+  assert.equal(filled.id, empty.id)
+  assert.equal(filled.data.title, 'Lessons')
+  assert.equal(layout.data.title, undefined)
+  assert.equal(empty.messages?.length, 1)
+  assert.equal(filled.messages?.length, 3)
+})
+
+test('durable surface and saved data updates replace the rendered item without duplicating it', () => {
+  const items: ThreadItem[] = []
+  foldEvent(items, drawn('calendar'))
+  const empty = itemOfKind(items[0], 'a2ui')
+  foldEvent(items, surface('calendar'))
+  const rendered = itemOfKind(items[0], 'a2ui')
+  assert.notEqual(rendered, empty)
+  assert.equal(rendered.id, empty.id)
+  assert.equal(rendered.component.component, 'Card')
+  assert.deepEqual(empty.component, {})
+
+  foldEvent(items, {
+    type: 'assistant.events.A2UISurfaceDataUpdated',
+    data: { surface_id: 'calendar', data: { title: 'Fresh lessons' } },
+  })
+  const updated = itemOfKind(items[0], 'a2ui')
+  assert.notEqual(updated, rendered)
+  assert.equal(updated.id, empty.id)
+  assert.deepEqual(updated.data, { title: 'Fresh lessons' })
+  assert.deepEqual(rendered.data, {})
+  assert.equal(items.length, 1)
+})
 
 test('a turn that answers with a surface alone says nothing, and is over', () => {
   const items: ThreadItem[] = []

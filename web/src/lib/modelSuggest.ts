@@ -43,6 +43,7 @@ const CATALOG_TYPE: Record<string, { keyless: boolean; browser: boolean }> = {
   openai: { keyless: false, browser: true },
   openai_responses: { keyless: false, browser: true },
   anthropic: { keyless: false, browser: true },
+  openai_subscription: { keyless: false, browser: false },
 }
 
 // Which side reads the catalog for this configuration; '' when nobody can. A keyed
@@ -57,15 +58,11 @@ export function catalogSource(
 ): CatalogSource {
   const rules = CATALOG_TYPE[type]
   if (!rules) return ''
+  if (type === 'openai_subscription') return hasCredential ? 'gateway' : ''
   // An unsaved key goes to the provider that owns it, never to our backend (ADR
   // 0024); once it becomes a Secret the gateway takes over again.
   if (hasPastedKey && rules.browser) return 'browser'
   return rules.keyless || hasCredential || hasEndpoint ? 'gateway' : ''
-}
-
-// The reason a type will never have a catalog, whatever the user does about it.
-export function permanentNoCatalog(type: string): string {
-  return type === 'openai_subscription' ? REASON.NOT_PROBEABLE : ''
 }
 
 // Names positively recognised as not a chat model. OpenAI is the only provider whose
@@ -219,6 +216,6 @@ export function catalogNote(reason: string | undefined, type: string): string {
   if (reason === REASON.NO_LIST_ENDPOINT)
     return 'This endpoint answered but publishes no model list. Type the name it expects — known names are offered below.'
   if (reason === REASON.NOT_PROBEABLE)
-    return `${provider} has no model list to read. Known names are offered below.`
+    return `No credential is available to read ${provider} models. Known names are offered below.`
   return ''
 }

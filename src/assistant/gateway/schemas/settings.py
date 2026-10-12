@@ -126,6 +126,8 @@ class ProfileSettingsResponse(BaseModel):
     mcp_servers: list[McpServerOut]
     focuses: list[str]
     reply_timeout_s: float
+    compact_max_tokens: int
+    preview_browser: str
     fs: FsRootsOut
 
 
@@ -225,3 +227,17 @@ class ReplyTimeoutSavedResponse(BaseModel):
 
     ok: Literal[True]
     reply_timeout_s: float
+
+
+class PreviewBrowserSavedResponse(BaseModel):
+    """The persisted Chromium executable for this Profile."""
+
+    ok: Literal[True]
+    preview_browser: str
+
+
+class CompactionSavedResponse(BaseModel):
+    """POST /api/p/{pid}/settings/compaction — the saved history threshold."""
+
+    ok: Literal[True]
+    compact_max_tokens: int

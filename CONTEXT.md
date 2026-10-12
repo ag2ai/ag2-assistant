@@ -112,11 +112,9 @@ every install and for agent-authored skills. On a name clash, the Profile skill
 wins over the Global one. Fully managed by that profile: Enable/Disable/Delete.
 
 **Skill state** (Enabled / Disabled):
-Whether a skill appears in the agent's `<available_skills>` catalog. A new
-concept: previously a skill was either present on disk (available) or absent.
-**Disabled** keeps the skill installed but out of the catalog. Because the catalog
-is a **construction-time snapshot**, a state change lands immediately in storage
-but only reaches the running agent on its next build.
+Whether an installed skill is offered to the agent: **Disabled** keeps it installed
+but out of the catalog. A change applies to the next **Turn**, including in an
+existing **Chat**, while a Turn already running keeps its previous capabilities.
 _Avoid_: uninstall (that is Delete — removal from disk), archive (a profile
 concept)
 
@@ -140,11 +138,50 @@ _Avoid_: component (the A2UI protocol's word for a node in a rendered tree —
 including the primitive literally named `Card`), widget, template
 
 **Card instance**:
-One Card actually rendered, holding the data of one answer — what the user sees in
-the **Thread**. Many instances of one Card can exist; the instance carries the
-data, the Card carries only the shape.
+A self-contained rendered **Card** message with its own appearance, values and
+optional **Card source** settings. Explicit saving creates an editable copy of its
+current state in **Files**, independent of the Chat instance and reusable definition.
 _Avoid_: surface (the protocol's word, and `surfaceId` in the code; in this
 glossary the rendered thing is a Card instance)
+
+**Screen**:
+A user-composed page outside Chats, stored as a primitive layout and references to
+Card instance files in one Profile's Files. Several Screens and explicit Chat file
+references may display the same instance, sharing its source updates.
+_Avoid_: dashboard (an example), Thread, widget board
+
+**Card source**:
+A backend data provider supplying fresh values to a **Card instance** without an
+assistant **Turn**. Each instance holds its own source settings and **Card parameters**.
+_Avoid_: live Card (ambiguous between a definition and an instance), agent refresh
+
+**Card parameters**:
+The values selecting what a **Card source** fetches for one **Card instance**, such
+as a city or an airport. Distinct from the fetched values displayed by the instance.
+_Avoid_: fields (the displayed data), Card settings (ambiguous with availability)
+
+**Card source approval**:
+One **Profile**'s user authorization for automatic execution of a particular version
+of custom **Card source** code, shared by that Profile's instances of the same code.
+_Avoid_: Card state (catalog availability), trusted Card (does not identify the approved code)
+
+**Card secret binding**:
+A user-selected association between a **Card source**'s key input and one **Secret**.
+Access is authorized within one **Profile**, independently of a copied instance's settings.
+_Avoid_: source secret (the Secret is reusable, not owned by a source)
+
+**Ephemeral Card**:
+A Card generated within a **Chat**, kept in its history across restarts and available
+for experimentation with the same capabilities as a catalogued Card. Its definition
+enters the **Card catalog** only after the user explicitly saves it as a **Profile card**.
+_Avoid_: unsaved Card (ambiguous with a failed file write), temporary Card (does not
+say whether it is rendered or catalogued)
+
+**Card draft**:
+One **Ephemeral Card** being iterated in a **Chat**, with its own identity and current
+version. A Chat may contain several independent drafts; earlier versions remain in
+history, and only the current definition of each draft can be saved for reuse.
+_Avoid_: active draft (there may be several), selected Card (no separate selection state)
 
 **Card catalog**:
 The set of Cards the agent is offered — what it may render into. Resolved for one
@@ -169,11 +206,10 @@ space — so the agent writes one with the ordinary file tools and the user find
 in the Files tree. On a name clash, the Profile card wins over the Global one.
 
 **Card state** (Enabled / Disabled):
-Whether a Card appears in the **Card catalog**. The same shape as **Skill state**,
-including the per-profile **Suppression** override, but recorded separately in its
-own `cards.json` at the Root: a Skill and a Card may share a name and must not share
-a switch. A change reaches the agent on its next message, not its next build — but a
-Card instance already in a **Thread** goes on drawing, whatever the switch now says.
+Whether a Card appears in the **Card catalog**, independently of **Skill state**
+and with its own per-profile **Suppression**. A change applies to the next **Turn**;
+a Turn already running keeps its previous capabilities, and an existing
+**Card instance** goes on drawing whatever the switch now says.
 
 **Card vocabulary**:
 The primitives and styling words a **Card**'s layout is composed from — the visual
@@ -192,16 +228,18 @@ _Avoid_: **File reference** (the `@`-pointer into a message), **Mentioned in** (
 backlink from a file to the conversations touching it)
 
 **Rich view** (the `rich-views` **Skill**):
-The Bundled Skill the **Card catalog** is disclosed through. Its description is the only
-A2UI text a turn carries at all, and names each Card's **topic** — the case it is ready
-for; its body is the index of this profile's Cards and how to draw one; each Card is a
-script of the Skill that draws it (ADR 0040); one Card's schema and worked call, and the
-A2UI protocol at large, are resources read on demand. "Rich view" is what it is called where a user meets it, because the
-switch is theirs: turned off, the profile is offered no Card and its turns carry no A2UI
-runtime — while a Card instance already in a **Thread**, and a Card the server fills for
-itself, go on drawing.
+The Bundled **Skill** that discloses the **Card catalog** and lets the agent draw
+instances of its available Cards. Turning it off stops new drawings through this
+Skill; the independent **Card author**, historical instances and server-filled views
+keep their own availability.
 _Avoid_: A2UI skill (the protocol's name, not the user's), Card skill (that is the Skill
 that *writes* Cards)
+
+**Card author** (the `card-author` **Skill**):
+The Bundled **Skill** for generating and revising **Ephemeral Cards** from the
+**Card vocabulary**. It is enabled independently of **Rich view**; turning it off
+prevents new authoring but leaves historical drafts available for explicit saving.
+_Avoid_: Card skill, rich views (the rendered capability, not the authoring capability)
 
 **Permissions**:
 The security policy of allowed commands (command-prefix and whole-tool grants).
@@ -233,24 +271,27 @@ _Avoid_: archive (archive keeps the data; delete does not)
 
 **Page**:
 The full composition of the main application view — the active **Tab** plus the open
-**Thread** together. This is what the path addresses; switching between Chats, Tasks,
+**Thread**, or a standalone **Screen**. This is what the path addresses; switching between Chats, Tasks,
 and Files, or opening a Chat/Task, moves you between Pages. Distinct from a Settings
 **Section** (nav *inside* a Modal) and from a **Modal** layered on top.
 _Avoid_: screen, route, view
 
 **Tab**:
-The Drawer's top-level switch between **Chats**, **Tasks**, and **Files** — which
-list or tree fills the left rail. Exactly one Tab is active. A Tab is orthogonal to
-the open **Thread**; the two together compose the current **Page**. Switching Tabs
-changes only the rail, never the main pane.
+The Drawer's top-level switch between **Chats**, **Tasks**, **Files**, and **Screens** — which
+list or tree fills the left rail. Exactly one Tab is active. **Files** changes only
+the left rail, preserving the open Thread or Screen. Other Tabs restore their last
+central content, independently for each Profile. The right-rail file preview stays
+open across all Tab switches. Selections survive a refresh within the browser tab;
+the URL addresses the visible Page.
 _Avoid_: section (Settings' nav), page (a Tab is only half of a Page), view
 
 **Thread**:
 A **Chat** or a **Task** as opened in the main pane — the union of the two openable,
-conversation-like items. At most one Thread is open. Orthogonal to the active Tab
-(opening the Files Tab does not close the open Thread); together with the Tab it
-composes the current **Page**. Not a synonym for Chat: a Chat is the persisted
-entity, whereas a Thread is whichever Chat *or* Task is currently on screen.
+conversation-like items. At most one Thread is open. The URL addresses the Thread
+independently of the Tab; opening **Files** or using **Reveal** keeps the current
+Thread open. Together they compose the current **Page**. Not a synonym for
+Chat: a Chat is the persisted entity, whereas a Thread is whichever Chat *or* Task
+is currently on screen.
 _Avoid_: conversation, tab
 
 **Modal**:
@@ -289,8 +330,8 @@ The one file the preview rail is currently showing, reflected back in the Files
 tree as a highlighted row. Derived from the URL's aside slot (`aside=file:<path>`),
 so it is whatever file the rail names — nothing is "active" when the rail is closed
 or holds the Inspector. The `<path>` is either a **Files**-space-relative path or an
-absolute path into a granted **Folder** (the rail and the raw endpoint tell the two
-apart by absoluteness alone). Distinct from **selected** (the Files tree's
+absolute path into a mounted shared **Card** layer or a granted **Folder**.
+Distinct from **selected** (the Files tree's
 upload-target Directory) and from **Active** (model): those are unrelated senses of
 the word.
 _Avoid_: selected (that is the upload target), focused, current, open
@@ -338,6 +379,20 @@ _Note_: a Chat opened in the main pane is a **Thread** (the chat-or-task union) 
 _Note_: a Chat is not owned by the surface that started it. The browser and a
 **Peer** reach the same Chats, and a Peer may attach to a Chat begun in the browser
 (ADR 0020). What a Chat can never do is cross Profiles.
+
+**Turn**:
+One execution of the assistant in a **Chat**, from accepting its initiating message
+for processing until it completes, fails, or is stopped. Further messages fed into
+that execution belong to the same Turn; a Chat can contain many Turns.
+_Avoid_: dialog, chat (that is the persisted conversation), message (additional
+messages can join a running Turn)
+
+**Capabilities**:
+The tools, Skills, and Cards offered to the assistant for one **Turn**, fixed when
+that Turn starts. An existing **Chat** receives the current Capabilities on each
+new Turn; a running Turn keeps its previous set.
+_Avoid_: permissions (that is command policy), config (the choices determining
+Capabilities, rather than the offered set)
 
 **Starred**:
 A user-set flag on a listed **Chat** or **Task** that lifts it into a "Starred"
@@ -499,6 +554,14 @@ Grant a reference), access rule
 
 ## Memory
 
+**Conversation checkpoint**:
+A single Chat's versioned working state after older events leave model context:
+goal, constraints, decisions, completed work, artifacts, pending work, unknown
+outcomes, next action and Skill/resource references. Distinct from Persona memory,
+which records durable preferences across Chats. Full Skill instructions and the
+original event archive remain separate; a checkpoint grants no capabilities.
+_Avoid_: profile memory, transcript, Skill summary
+
 **Persona memory** (profile memory):
 A single Profile's learned-and-curated memory — preferences and context for that
 persona only, which the agent keeps refining as you chat and the user edits freely.
@@ -658,13 +721,13 @@ Known model may not exist; an existing model may be unknown)
 **Secret**:
 A named, reusable API key — a name, a write-only value (only a last-4 hint is ever
 shown back), and an optional provider tag. Referenced by any number of Text and
-Live models; rotating its value re-keys every model that references it. Secrets are
+Live models or authorized **Card sources**; rotating its value re-keys every
+consumer that references it. Secrets are
 unique by value: no two Secrets may hold the same key — pasting a known key in the
 model form snaps to the existing Secret, and an explicit add with a duplicate value
 is rejected with a pointer to it. The provider tag is soft: it groups and sorts,
 never forbids — a Secret with no tag (or any tag) can be attached to any model,
-which is what keeps custom/unknown endpoints workable. Covers LLM provider keys
-only — channel bot tokens and the GitHub token are separate, non-reusable concepts.
+which is what keeps custom/unknown endpoints workable. Covers LLM provider and Card data-provider keys; channel bot tokens and the GitHub token are separate, non-reusable concepts.
 _Avoid_: API key (the value inside a Secret, not the entity), credential, token
 (collides with channel bot tokens), key (bare)
 

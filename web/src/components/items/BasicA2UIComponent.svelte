@@ -1,26 +1,36 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte'
   import Icon from '../Icon.svelte'
   import A2UILink from './A2UILink.svelte'
   import BasicA2UIComponent from './BasicA2UIComponent.svelte'
   import WeatherBanner from './WeatherBanner.svelte'
+  import CalendarHeatmap from './CalendarHeatmap.svelte'
+  import Chart from './Chart.svelte'
   import { a2uiIconName, a2uiPresent, a2uiText, a2uiTone, a2uiValue, actionContext, axisScopes, bindingPath, childSlots, diffLines, markedColumn, metricParts, rows, sparkPath, str, templateStart } from '../../lib/a2ui.ts'
   import type { A2UIAction, A2UIComponent, A2UIData, A2UIOption } from '../../lib/a2ui.ts'
+  import { tableColumn, tableRowVariant } from '../../lib/table.ts'
 
   type Props = {
+    sourceIds?: string[]
+    sourceControls?: Snippet<[string]>
+    sourceWrapped?: boolean
     component: A2UIComponent
     components?: A2UIComponent[]
     data?: A2UIData
     onDataChange?: (path: string, value: unknown) => void
     onAction?: (action: A2UIAction) => void
+    passive?: boolean
     scope?: string
     depth?: number
   }
   let {
+    sourceIds = [], sourceControls, sourceWrapped = false,
     component,
     components = [],
     data = {},
     onDataChange = () => {},
     onAction = () => {},
+    passive = false,
     scope = '',
     depth = 0,
   }: Props = $props()
@@ -43,7 +53,7 @@
   const checkboxPath = $derived(bindingPath(component.value, scope))
 
   function toggleCheckbox(event: Event & { currentTarget: HTMLInputElement }) {
-    if (checkboxPath) onDataChange(checkboxPath, event.currentTarget.checked)
+    if (!passive && checkboxPath) onDataChange(checkboxPath, event.currentTarget.checked)
   }
 
   const valuePath = $derived(bindingPath(component.value, scope))
@@ -66,21 +76,21 @@
   const youtubeEmbed = $derived(youtubeUrl(videoUrl))
 
   function setValue(event: Event & { currentTarget: HTMLInputElement | HTMLTextAreaElement }) {
-    if (valuePath) onDataChange(valuePath, event.currentTarget.value)
+    if (!passive && valuePath) onDataChange(valuePath, event.currentTarget.value)
   }
 
   function setNumber(event: Event & { currentTarget: HTMLInputElement }) {
-    if (valuePath) onDataChange(valuePath, Number(event.currentTarget.value))
+    if (!passive && valuePath) onDataChange(valuePath, Number(event.currentTarget.value))
   }
 
   function setDateTime(event: Event & { currentTarget: HTMLInputElement }) {
-    if (!valuePath) return
+    if (passive || !valuePath) return
     const value = event.currentTarget.value
     onDataChange(valuePath, component.enableDate && component.enableTime && value ? new Date(value).toISOString() : value)
   }
 
   function toggleChoice(option: unknown, selected: boolean) {
-    if (!valuePath) return
+    if (passive || !valuePath) return
     const current: unknown[] = Array.isArray(inputValue) ? inputValue : []
     const next = component.variant === 'multipleSelection'
       ? (selected ? [...new Set([...current, option])] : current.filter((value) => value !== option))
@@ -115,6 +125,10 @@
   const justify = $derived(JUSTIFY[String(component.justify ?? '')] || undefined)
   // A component that takes the room its row has left over.
   const grow = $derived(component.grow === true ? 1 : undefined)
+  const width = $derived(component.width === 'content' ? 'fit-content' : component.width === 'fill' ? '100%' : undefined)
+  const layoutGrow = $derived(component.width === 'content' ? 0 : grow)
+  const gridColumns = $derived(Number.isInteger(component.columns) && Number(component.columns) >= 1 && Number(component.columns) <= 6 ? Number(component.columns) : 1)
+  const gridMin = $derived(component.minColumnWidth === 'sm' ? '16rem' : component.minColumnWidth === 'lg' ? '28rem' : '20rem')
   const tone = $derived(a2uiTone(component.tone, data, scope))
   // A component that says nothing about its tone keeps the class it already had.
   const toneClass = $derived(component.tone === undefined ? '' : `a2ui-tone-${tone}`)
@@ -149,13 +163,14 @@
   const tableRows = $derived(axisScopes(component.rows, data, scope))
   const tablePick = $derived(markedColumn(component.key, component.pick, data, tableColumns, scope))
   const tableLead = $derived(child(component.lead))
+  const tableStyles = $derived(tableColumns.map(column => tableColumn(component, data, column)))
   const tableGrid = $derived(
-    `${tableLead ? 'minmax(118px, .9fr) ' : ''}repeat(${tableColumns.length}, minmax(94px, 1fr))`
+    `${tableLead ? 'minmax(118px, .9fr) ' : ''}${tableStyles.map(column => column.track).join(' ')}`
   )
 
   function clickButton() {
     const event = component.action?.event
-    if (!event?.name) return
+    if (passive || !event?.name) return
     onAction({ name: event.name, sourceComponentId: component.id, context: actionContext(event.context || {}, data, scope) })
   }
 </script>
@@ -163,41 +178,49 @@
 {#snippet kids()}
   {#each childSlots(component.children, data, scope) as slot}
     {@const kid = child(slot.id)}
-    {#if kid}<BasicA2UIComponent component={kid} {components} {data} {onDataChange} {onAction} scope={slot.scope} depth={depth + 1} />{/if}
+    {#if kid}<BasicA2UIComponent {sourceIds} {sourceControls} component={kid} {components} {data} {onDataChange} {onAction} {passive} scope={slot.scope} depth={depth + 1} />{/if}
   {/each}
 {/snippet}
 
-{#if depth >= MAX_DEPTH}
-  <!-- cyclic or pathologically deep component graph — stop recursing -->
-{:else if !present}
-  <!-- the data this component is conditional on is not there -->
+{#if depth >= MAX_DEPTH || !present}
+  <!-- Hidden or unrenderable components do not start source refresh. -->
+{:else if !sourceWrapped && component.id && sourceIds.includes(component.id) && sourceControls}
+  <div class="card-source-frame" style:width={width} style:flex-grow={layoutGrow}>
+    <BasicA2UIComponent {sourceIds} {sourceControls} {component} {components} {data} {onDataChange} {onAction} {passive} {scope} {depth} sourceWrapped />
+    {@render sourceControls(component.id)}
+  </div>
 {:else if type === 'column'}
-  <div class="a2ui-basic-col {markerClass}" style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={grow}>
+  <div data-a2ui-id={component.id} data-a2ui-scope={scope} data-a2ui-type={component.component} class="a2ui-basic-col {markerClass}" style:width={width} style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={layoutGrow}>
     {@render kids()}
   </div>
 {:else if type === 'row'}
-  <div class="a2ui-basic-row {markerClass}" style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={grow}>
+  <div data-a2ui-id={component.id} data-a2ui-scope={scope} data-a2ui-type={component.component} class="a2ui-basic-row {markerClass}" style:width={width} style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={layoutGrow}>
+    {@render kids()}
+  </div>
+{:else if type === 'grid'}
+  <div data-a2ui-id={component.id} data-a2ui-scope={scope} data-a2ui-type={component.component} class="a2ui-grid" style:width={width} style:flex-grow={layoutGrow} style:align-items={align}
+    style:--a2ui-grid-columns={gridColumns} style:--a2ui-grid-min={gridMin} style:--a2ui-grid-gap={gap || 'var(--space-5)'}>
     {@render kids()}
   </div>
 {:else if type === 'list'}
-  <div class="a2ui-list {markerClass}" class:a2ui-ranked={ranked} style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={grow} style:--a2ui-rank-from={rankFrom}>
+  <div data-a2ui-id={component.id} data-a2ui-scope={scope} data-a2ui-type={component.component} class="a2ui-list {markerClass}" class:a2ui-ranked={ranked} style:width={width} style:align-items={align} style:justify-content={justify} style:gap={gap} style:flex-grow={layoutGrow} style:--a2ui-rank-from={rankFrom}>
     {@render kids()}
   </div>
 {:else if type === 'card'}
   {@const kid = child(component.child)}
-  <div class="a2ui-basic-card {markerClass}" class:a2ui-feature={component.variant === 'feature'} style:flex-grow={grow}>
-    {#if kid}<BasicA2UIComponent component={kid} {components} {data} {onDataChange} {onAction} {scope} depth={depth + 1} />{/if}
+  <div data-a2ui-id={component.id} data-a2ui-scope={scope} data-a2ui-type={component.component} class="a2ui-basic-card {markerClass}" class:a2ui-feature={component.variant === 'feature'} style:width={width} style:flex-grow={layoutGrow}>
+    {#if kid}<BasicA2UIComponent {sourceIds} {sourceControls} component={kid} {components} {data} {onDataChange} {onAction} {passive} {scope} depth={depth + 1} />{/if}
   </div>
 {:else if type === 'link'}
   {@const kid = child(component.child)}
-  <A2UILink {component} {data} {scope} {grow}>
-    {#if kid}<BasicA2UIComponent component={kid} {components} {data} {onDataChange} {onAction} {scope} depth={depth + 1} />{/if}
+  <A2UILink {passive} {component} {data} {scope} {grow}>
+    {#if kid}<BasicA2UIComponent {sourceIds} {sourceControls} component={kid} {components} {data} {onDataChange} {onAction} {passive} {scope} depth={depth + 1} />{/if}
   </A2UILink>
 {:else if type === 'text'}
   <!-- Text that resolves to nothing draws nothing, so an optional field a Card
        binds leaves no blank line behind. -->
   {#if textValue}
-    <div class="a2ui-text a2ui-tone-{tone} {textVariant ? `a2ui-t-${textVariant}` : ''}" class:a2ui-main={!textVariant && component.variant && component.variant !== 'body'} class:a2ui-strong={component.emphasis === 'strong'} style:flex-grow={grow}>{textValue}</div>
+    <div class="a2ui-text a2ui-tone-{tone} {textVariant ? `a2ui-t-${textVariant}` : ''}" class:a2ui-main={!textVariant && component.variant && component.variant !== 'body'} class:a2ui-strong={component.emphasis === 'strong'} style:flex-grow={grow} title={textValue}>{textValue}</div>
   {/if}
 {:else if type === 'metric'}
   {#if metric.value || metric.delta}
@@ -222,42 +245,54 @@
       <circle cx={spark.endX} cy={spark.endY} r={sparkBox.dot} class="end" />
     </svg>
   {/if}
+{:else if type === 'chart'}
+  <div class="a2ui-chart-frame" data-a2ui-id={component.id} data-a2ui-scope={scope} data-a2ui-type={component.component} style:width={width || '100%'} style:flex-grow={layoutGrow} style:min-width="0" style:max-width="100%">
+    <Chart {component} {data} {scope} />
+  </div>
+{:else if type === 'calendarheatmap'}
+  <div class="a2ui-calendar-frame" data-a2ui-id={component.id} data-a2ui-scope={scope} data-a2ui-type={component.component} style:width={width} style:flex-grow={layoutGrow}>
+    <CalendarHeatmap {component} {data} {scope} />
+  </div>
 {:else if type === 'table'}
   <!-- Nothing to compare against is no table at all; the grid scrolls inside its own
        frame rather than widening the Card it is in. -->
   {@const head = child(component.header)}
   {@const body = child(component.cell)}
   {#if tableColumns.length}
-  <div class="a2ui-tablewrap" style:flex-grow={grow}>
-    <div class="a2ui-table" style:grid-template-columns={tableGrid}>
+  <div data-a2ui-id={component.id} data-a2ui-scope={scope} data-a2ui-type={component.component} class="a2ui-tablewrap" data-a2ui-scroll-region={component.id} style:width={width} style:flex-grow={layoutGrow}>
+    <div class="a2ui-table" class:a2ui-table-data={component.variant === 'data'} class:a2ui-table-compact={component.density === 'compact'} style:grid-template-columns={tableGrid} role="table">
       {#if head}
-        {#if tableLead}<div class="a2ui-th"></div>{/if}
+        <div class="a2ui-tr" role="row">
+        {#if tableLead}<div class="a2ui-th" role="columnheader"></div>{/if}
         {#each tableColumns as column, index}
-          <div class="a2ui-th" class:pick={index === tablePick}>
-            <BasicA2UIComponent component={head} {components} {data} {onDataChange} {onAction} scope={column} depth={depth + 1} />
+          <div class="a2ui-th a2ui-cell-{tableStyles[index].align}" class:pick={index === tablePick} role="columnheader">
+            <BasicA2UIComponent {sourceIds} {sourceControls} component={head} {components} {data} {onDataChange} {onAction} {passive} scope={column} depth={depth + 1} />
           </div>
         {/each}
+        </div>
       {/if}
       {#each tableRows as row}
         {@const cells = axisScopes(component.cells, data, row)}
         {@const won = markedColumn(component.key, component.win, data, tableColumns, row)}
+        <div class="a2ui-tr a2ui-tr-{tableRowVariant(component, data, row)}" role="row">
         {#if tableLead}
-          <div class="a2ui-td a2ui-th-row">
-            <BasicA2UIComponent component={tableLead} {components} {data} {onDataChange} {onAction} scope={row} depth={depth + 1} />
+          <div class="a2ui-td a2ui-th-row" role="rowheader">
+            <BasicA2UIComponent {sourceIds} {sourceControls} component={tableLead} {components} {data} {onDataChange} {onAction} {passive} scope={row} depth={depth + 1} />
           </div>
         {/if}
         {#each tableColumns as _, index}
           <!-- A row with fewer cells than there are columns keeps the columns it
                does not fill, so every row still lines up under its option. -->
-          <div class="a2ui-td" class:pick={index === tablePick} class:win={index === won}>
+          <div class="a2ui-td a2ui-cell-{tableStyles[index].align} a2ui-overflow-{tableStyles[index].overflow}" class:pick={index === tablePick} class:win={index === won} role="cell">
             {#if body && cells[index] !== undefined}
-              <BasicA2UIComponent component={body} {components} {data} {onDataChange} {onAction} scope={cells[index]} depth={depth + 1} />
+              <BasicA2UIComponent {sourceIds} {sourceControls} component={body} {components} {data} {onDataChange} {onAction} {passive} scope={cells[index]} depth={depth + 1} />
             {:else}
               <span class="a2ui-td-none">—</span>
             {/if}
             {#if index === won}<span class="a2ui-td-win" role="img" aria-label="Wins this row">●</span>{/if}
           </div>
         {/each}
+        </div>
       {/each}
     </div>
   </div>
@@ -266,11 +301,11 @@
   <div class="a2ui-divider" class:strong={component.emphasis === 'strong'} aria-hidden="true"></div>
 {:else if type === 'checkbox'}
   <label class="a2ui-checkbox">
-    <input type="checkbox" checked={checkboxValue} onchange={toggleCheckbox} />
+    <input disabled={passive} type="checkbox" checked={checkboxValue} onchange={toggleCheckbox} />
     <span>{a2uiValue(component.label, data, scope) || ''}</span>
   </label>
 {:else if type === 'button'}
-  <button class:primary={component.variant === 'primary'} class="a2ui-button" onclick={clickButton}>
+  <button disabled={passive} class:primary={component.variant === 'primary'} class="a2ui-button" onclick={clickButton}>
     {a2uiValue(child(component.child)?.text, data, scope) || 'Continue'}
   </button>
 {:else if type === 'image'}
@@ -327,19 +362,19 @@
   <label class="a2ui-field">
     <span>{a2uiValue(component.label, data, scope) || ''}</span>
     {#if component.variant === 'longText'}
-      <textarea value={inputText} placeholder={String(a2uiValue(component.placeholder, data, scope) ?? '')} oninput={setValue}></textarea>
+      <textarea disabled={passive} value={inputText} placeholder={String(a2uiValue(component.placeholder, data, scope) ?? '')} oninput={setValue}></textarea>
     {:else}
-      <input type={component.variant === 'number' ? 'number' : component.variant === 'obscured' ? 'password' : 'text'} value={inputText} placeholder={String(a2uiValue(component.placeholder, data, scope) ?? '')} oninput={setValue} />
+      <input disabled={passive} type={component.variant === 'number' ? 'number' : component.variant === 'obscured' ? 'password' : 'text'} value={inputText} placeholder={String(a2uiValue(component.placeholder, data, scope) ?? '')} oninput={setValue} />
     {/if}
   </label>
 {:else if type === 'choicepicker'}
-  <fieldset class="a2ui-choice">
+  <fieldset disabled={passive} class="a2ui-choice">
     {#if component.label}<legend>{a2uiValue(component.label, data, scope)}</legend>{/if}
     <div class:chips={component.displayStyle === 'chips'}>
       {#each list<A2UIOption>(component.options) as option}
         {@const selected = Array.isArray(inputValue) && inputValue.includes(option.value)}
         <label>
-          <input type={component.variant === 'multipleSelection' ? 'checkbox' : 'radio'} name={(component.id || '') + scope} checked={selected} onchange={(event) => toggleChoice(option.value, event.currentTarget.checked)} />
+          <input disabled={passive} type={component.variant === 'multipleSelection' ? 'checkbox' : 'radio'} name={(component.id || '') + scope} checked={selected} onchange={(event) => toggleChoice(option.value, event.currentTarget.checked)} />
           <span>{a2uiValue(option.label, data, scope) || option.value}</span>
         </label>
       {/each}
@@ -348,13 +383,13 @@
 {:else if type === 'slider'}
   <label class="a2ui-field a2ui-slider">
     {#if component.label}<span>{a2uiValue(component.label, data, scope)}</span>{/if}
-    <input type="range" min={numOr(component.min) ?? 0} max={numOr(component.max)} step={sliderStep} value={inputText} oninput={setNumber} />
+    <input disabled={passive} type="range" min={numOr(component.min) ?? 0} max={numOr(component.max)} step={sliderStep} value={inputText} oninput={setNumber} />
     <output>{inputText}</output>
   </label>
 {:else if type === 'datetimeinput'}
   <label class="a2ui-field">
     {#if component.label}<span>{a2uiValue(component.label, data, scope)}</span>{/if}
-    <input type={component.enableDate && component.enableTime ? 'datetime-local' : component.enableDate ? 'date' : 'time'} value={component.enableDate && component.enableTime && inputText ? inputText.slice(0, 16) : inputText} min={String(a2uiValue(component.min, data, scope) ?? '') || undefined} max={String(a2uiValue(component.max, data, scope) ?? '') || undefined} onchange={setDateTime} />
+    <input disabled={passive} type={component.enableDate && component.enableTime ? 'datetime-local' : component.enableDate ? 'date' : 'time'} value={component.enableDate && component.enableTime && inputText ? inputText.slice(0, 16) : inputText} min={String(a2uiValue(component.min, data, scope) ?? '') || undefined} max={String(a2uiValue(component.max, data, scope) ?? '') || undefined} onchange={setDateTime} />
   </label>
 {:else}
   <!-- Every surface arrives as these primitives, so a name that is none of them is a

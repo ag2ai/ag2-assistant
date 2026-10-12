@@ -11,7 +11,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
-from assistant.gateway.routes.common import reload_all
+from assistant.gateway.routes.common import refresh_all
 from assistant.gateway.routes.deps import GatewayDeps
 from assistant.gateway.schemas import Ok, SecretListResponse, SecretSavedResponse
 from assistant.secrets import DuplicateValue
@@ -53,7 +53,7 @@ def build_router(d: GatewayDeps) -> APIRouter:
         every profile's agent picks up the change on its next turn."""
         if not d.secret_store.set_key(req.provider, req.value):
             return Response(status_code=400)
-        await reload_all(d.manager)
+        await refresh_all(d.manager)
         return {"ok": True}
 
     # ---- Secrets: named reusable API keys (CONTEXT.md "Secrets", ADR 0005).
@@ -97,7 +97,7 @@ def build_router(d: GatewayDeps) -> APIRouter:
             )
         except ValueError as exc:
             return JSONResponse({"ok": False, "error": str(exc)[:300]}, status_code=400)
-        await reload_all(d.manager)
+        await refresh_all(d.manager)
         return {"ok": True, "secret": view}
 
     @r.post(
@@ -120,7 +120,7 @@ def build_router(d: GatewayDeps) -> APIRouter:
             )
         except ValueError as exc:
             return JSONResponse({"ok": False, "error": str(exc)[:300]}, status_code=400)
-        await reload_all(d.manager)
+        await refresh_all(d.manager)
         return {"ok": True, "secret": view}
 
     @r.delete("/api/secrets/{sid}", response_model=Ok)
@@ -129,7 +129,7 @@ def build_router(d: GatewayDeps) -> APIRouter:
         degrade down the resolution order; deleting a Default pops its env var."""
         if not d.secret_store.delete_secret(sid):
             return JSONResponse({"ok": False, "error": f"unknown secret: {sid}"}, status_code=404)
-        await reload_all(d.manager)
+        await refresh_all(d.manager)
         return {"ok": True}
 
     return r

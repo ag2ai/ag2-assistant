@@ -10,6 +10,8 @@
   import type { Profile } from './schemas/index.ts'
   import Onboarding from './components/Onboarding.svelte'
   import Drawer from './components/Drawer.svelte'
+  import ActivityRail from './components/ActivityRail.svelte'
+  import ScreenPage from './components/ScreenPage.svelte'
   import Thread from './components/Thread.svelte'
   import TaskPage from './components/task/TaskPage.svelte'
 import AppBar from './components/AppBar.svelte'
@@ -195,7 +197,7 @@ import AppBar from './components/AppBar.svelte'
     // missing one means the URL isn't a thread — it falls through to the fresh chat.
     if (r.name === 'run' && r.id) openThread('run', r.id)
     else if (r.name === 'chat' && r.id) openThread('chat', r.id)
-    else if (r.name === 'task' || r.name === 'tasks' || r.name === 'files') closeThread()
+    else if (r.name === 'task' || r.name === 'tasks' || r.name === 'files' || r.name === 'screens' || r.name === 'screen') closeThread()
     else { closeThread(); go('/c/' + newChatId()) } // home → a fresh chat
   })
 </script>
@@ -209,12 +211,17 @@ import AppBar from './components/AppBar.svelte'
        tier (see store.animations) without importing the store — same
        attribute-driven pattern as theming. -->
   <div class="app" class:ag2={showInspector} class:rail={showRail} class:railfull={previewFull}
-       style="--drawer-w: {clampDrawerWidth($drawerWidth)}px; --rail-w: {railW}px" data-animations={$animations}>
-    <Drawer />
+       style="--activity-rail-w: 52px; --drawer-w: calc({clampDrawerWidth($drawerWidth)}px + var(--activity-rail-w)); --rail-w: {railW}px" data-animations={$animations}>
+    <div class="navigation-sidebar">
+      <ActivityRail />
+      <Drawer />
+    </div>
     <div class="main">
       <Hitl />
       {#if $route.name === 'chat' || $route.name === 'run'}
         <Thread />
+      {:else if $route.name === 'screen' || $route.name === 'screens'}
+        {#key $route.pid}<ScreenPage />{/key}
       {:else if $route.name === 'task'}
         <TaskPage />
       {:else if $route.name === 'files'}
@@ -246,3 +253,7 @@ import AppBar from './components/AppBar.svelte'
 
 <!-- Transient recovery toast (§4.9); renders in any boot state. -->
 <Notice />
+
+<style>
+  .navigation-sidebar { display: grid; grid-template-columns: var(--activity-rail-w) minmax(0, 1fr); min-width: 0; }
+</style>

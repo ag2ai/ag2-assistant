@@ -31,18 +31,18 @@ from ag2.tools import (
 )
 
 from assistant.builtin_tools import active_builtins, build_builtin_tools, suppressed_by
+from assistant.coding.detect import available_agents, parse_bridge
 from assistant.config import Config
 from assistant.integrations.google_auth import GoogleAuth
 from assistant.settings import profile_settings
 from assistant.tools import docker_sandbox
 from assistant.tools.approval import require_command_approval
 from assistant.tools.ask import ask_user
-from assistant.tools.files import list_folder, read_file, write_file
-from assistant.tools.finance import get_quotes
+from assistant.tools.coding import build_coding_tools
+from assistant.tools.files import list_folder, read_file, update_file, write_file
 from assistant.tools.google import build_google_tools
-from assistant.tools.image_gen import build_image_tool
+from assistant.tools.image_gen import build_image_tool, image_available
 from assistant.tools.mcp import build_mcp_tools
-from assistant.tools.weather import get_weather
 from assistant.tools.web_fetch import web_fetch, web_fetch_tool
 
 # Commands the shell tool must never run.
@@ -51,7 +51,7 @@ _SHELL_BLOCKED = ["rm -rf /", "sudo", "shutdown", "reboot", "mkfs"]
 
 # Capability groups → the tools they unlock. Tasks declare the capabilities they
 # need so an agent is built with EXACTLY those (privacy, focus, speed); chat
-# (capabilities=None) gets everything.
+# (capabilities=None) gets every available group.
 CAPABILITIES = (
     "web",
     "code",
@@ -108,8 +108,14 @@ _GOOGLE_GROUPS = {
 
 
 def available_capabilities(config: Config, *, google: "GoogleAuth | None" = None) -> list[str]:
-    """Capabilities currently usable (Google ones need a token *and* the libs)."""
-    caps = ["web", "code", "coding", "files", "images", "skills", "mcp"]
+    """Capability groups backed by configured credentials, integrations or host adapters."""
+    caps = ["web", "code", "files", "skills"]
+    if parse_bridge(config.acp_bridge) is not None or available_agents(config.search_path):
+        caps.append("coding")
+    if image_available(config):
+        caps.append("images")
+    if any(s.get("enabled", True) for s in profile_settings(config.data_dir).list_mcp_servers()):
+        caps.append("mcp")
     if (google or GoogleAuth(config.paths)).google_ready():
         caps += ["gmail", "calendar", "drive"]
     return caps
@@ -133,10 +139,12 @@ def build_agent_tools(
     google: "GoogleAuth | None" = None,
     environment_factory=None,
     builtin: dict[str, dict] | None = None,
+    mcp_factory=build_mcp_tools,
+    local_environment_factory=LocalEnvironment,
 ) -> list:
     """Build the agent's tools.
 
-    `capabilities=None` → all tools (chat). A list → only those capability groups
+    `capabilities=None` → all available tools (chat). A list → only those capability groups
     (used by tasks so a research subtask can't reach your Drive or run code, etc.).
 
     Args:
@@ -158,8 +166,6 @@ def build_agent_tools(
     if want("web"):
         tools.append(DuckDuckSearchTool(max_results=5))
         tools.append(web_fetch_tool)
-        tools.append(get_weather)  # deterministic weather, not a search spray
-        tools.append(get_quotes)  # deterministic global quotes, not a search spray
 
     if want("code"):
         use_docker = False
@@ -209,7 +215,7 @@ def build_agent_tools(
                     ),
                 ),
                 SandboxCodeTool(
-                    environment=LocalEnvironment(),
+                    environment=local_environment_factory(),
                     middleware=[approval],
                     name="run_code_local",
                     description=(
@@ -220,6 +226,7 @@ def build_agent_tools(
                     ),
                 ),
                 SandboxShellTool(
+                    environment=local_environment_factory(),
                     blocked=_SHELL_BLOCKED,
                     middleware=[approval],
                     name="run_shell_local",
@@ -234,40 +241,40 @@ def build_agent_tools(
         else:
             approval = require_command_approval()
             tools += [
-                SandboxShellTool(blocked=_SHELL_BLOCKED, middleware=[approval]),
-                SandboxCodeTool(environment=LocalEnvironment(), middleware=[approval]),
+                SandboxShellTool(
+                    environment=local_environment_factory(),
+                    blocked=_SHELL_BLOCKED,
+                    middleware=[approval],
+                ),
+                SandboxCodeTool(environment=local_environment_factory(), middleware=[approval]),
             ]
 
     if want("coding"):
         # Drive host CLI coding agents (Claude Code / Codex / OpenCode) over ACP.
         # The tools resolve the PermissionManager/Asker from the turn's context at
         # call time; where the adapters live comes from the config's host facts.
-        from assistant.coding.detect import parse_bridge
-        from assistant.tools.coding import build_coding_tools
+        search_path = config.search_path if config is not None else ()
+        bridge = parse_bridge(config.acp_bridge, config.acp_bridge_token) if config else None
+        coding = build_coding_tools(search_path=search_path, bridge=bridge)
+        can_run = bridge is not None or bool(available_agents(search_path))
+        tools += [t for t in coding if t.name == "list_coding_agents" or can_run]
 
-        tools += build_coding_tools(
-            search_path=config.search_path if config is not None else (),
-            bridge=parse_bridge(config.acp_bridge, config.acp_bridge_token)
-            if config is not None
-            else None,
-        )
-
-    if want("images") and config is not None:
+    if want("images") and config is not None and image_available(config):
         # generate_image: provider-aware image generation + editing → saved to the
         # workspace. Needs `config` (provider/keys) so it's skipped when unavailable.
         tools.append(build_image_tool(config, workspace_dir))
 
     if want("files"):
-        # Host FS, Grant-gated (CONTEXT.md "Folders"): read_file/list_folder need a
-        # read Grant, write_file a read+write Grant; the profile's own workspace is
-        # implicit. write_file also serves the workspace (relative paths), so the
-        # toolkit's write_file is dropped alongside its read_file (name clashes).
-        tools += [read_file, list_folder, write_file]
+        # Host reads and mutations check folder grants; the workspace is implicit.
+        # Keep the toolkit's remaining workspace-only tools.
+        tools += [read_file, list_folder, write_file, update_file]
         if workspace_dir:
             wd = Path(workspace_dir).expanduser()
             wd.mkdir(parents=True, exist_ok=True)
             fk = FilesystemToolkit(base_path=wd)
-            tools += [t for t in fk.tools if t.name not in ("read_file", "write_file")]
+            tools += [
+                t for t in fk.tools if t.name not in ("read_file", "write_file", "update_file")
+            ]
 
     # Google tools (only when signed in AND the [google] extra is installed),
     # per requested group. Registering them without the libs would hand the model
@@ -286,7 +293,9 @@ def build_agent_tools(
         # Read THIS profile's MCP server list (config.data_dir is the profile dir),
         # so an agent only loads the MCP servers configured in its own profile.
         settings = profile_settings(config.data_dir)
-        tools += build_mcp_tools(settings.list_mcp_servers(include_env=True))
+        tools += mcp_factory(
+            [s for s in settings.list_mcp_servers(include_env=True) if s.get("enabled", True)]
+        )
 
     # Provider-native tools, last: a builtin and the local tool it stands in for do
     # the same job, and offering both only invites the model to pick badly — so drop
@@ -313,8 +322,7 @@ __all__ = [
     "read_file",
     "list_folder",
     "write_file",
-    "get_weather",
-    "get_quotes",
+    "update_file",
     "web_fetch",
     "web_fetch_tool",
 ]

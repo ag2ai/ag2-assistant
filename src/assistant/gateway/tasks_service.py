@@ -185,7 +185,7 @@ class TaskService:
         summary_factory: Callable[[Config], Agent] | None = None,
     ) -> None:
         self._config = config or load_config()
-        self._config_factory = config_factory or load_config
+        self._config_factory = config_factory or (lambda: self._config)
         # How the cheap-model distiller (run summaries, task auto-naming) is built.
         self._summary_factory = summary_factory or default_summarizer
         self._store = store
@@ -308,9 +308,8 @@ class TaskService:
 
             log_suppressed("task workdir migration", exc)
 
-    async def reload(self) -> None:
-        """Re-resolve config after a settings change (model set per turn — nothing
-        else to rebuild here; the gateway swaps its own agents)."""
+    async def refresh(self) -> None:
+        """Refresh the configuration used by scheduled work and background summaries."""
         self._config = self._config_factory()
 
     async def close(self) -> None:
@@ -526,6 +525,7 @@ class TaskService:
             raise
 
     async def _turn(self, run_id: str) -> None:
+        self._config = self._config_factory()
         from assistant.hitl import DurableAsker
 
         run = await self._store.get_run(run_id)

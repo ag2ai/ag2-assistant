@@ -1,23 +1,12 @@
-"""Finance/markets tool — one deterministic call for live quotes across global
-exchanges.
-
-Source: Yahoo Finance v8 chart (keyless). Covers US/AU/Europe/Asia/CN equities
-and indices plus crypto under one symbol scheme, e.g. AAPL, BHP.AX, 7203.T,
-VOD.L, ^AXJO, ^FTSE, ^GDAXI, ^N225, ^HSI, 000001.SS, BTC-USD. The agent passes
-the symbols it wants; a plain name (or a slightly-off ticker) falls back to
-Yahoo's search endpoint, so "ASX 200" or "Toyota" still resolve.
-
-The quotes come back as JSON, in the order asked for, so the agent does not have
-to guess prices.
-"""
+"""MarketBoard's global equity, index and crypto quotes from Yahoo Finance."""
 
 import json
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from urllib.parse import quote as urlquote
 
 import httpx
-from ag2 import tool
 
 _CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=1d&interval=5m"
 _SEARCH = "https://query1.finance.yahoo.com/v1/finance/search?q={q}&quotesCount=1&newsCount=0"
@@ -26,12 +15,7 @@ _MAX_SYMBOLS = 10
 
 
 def normalize_spark(closes, n: int = 16) -> list[int]:
-    """Downsample an intraday close series to ``n`` ints in 0..100 (shape only).
-
-    Pure/deterministic. Normalised so the payload is tiny and the agent can copy
-    it verbatim; the renderer scales it to the sparkline box. Returns ``[]`` when
-    there isn't enough data to draw a line.
-    """
+    """Downsample intraday closes to at most n points normalized to 0..100."""
     pts = [c for c in (closes or []) if c is not None]
     if len(pts) < 2:
         return []
@@ -44,12 +28,7 @@ def normalize_spark(closes, n: int = 16) -> list[int]:
 
 
 def market_state(meta: dict) -> str:
-    """Derive 'open' | 'pre' | 'after' | 'closed' from the trading period, or ''.
-
-    Pure/deterministic. Compares the quote's ``regularMarketTime`` against the
-    exchange's ``currentTradingPeriod`` windows — so we only ever claim a market
-    state we can actually prove. Returns '' when the data isn't present.
-    """
+    """Derive open, pre, after or closed from trading periods, or empty when unknown."""
     t = meta.get("regularMarketTime")
     ctp = meta.get("currentTradingPeriod") or {}
     if t is None or not ctp:
@@ -70,11 +49,7 @@ def market_state(meta: dict) -> str:
 
 
 def quote_from_meta(meta: dict, closes) -> dict:
-    """Turn Yahoo chart ``meta`` (+ intraday closes) into one quote.
-
-    Pure/deterministic. Price/change/percent are numbers; optional day range,
-    normalised spark, and trading state are added only when known.
-    """
+    """Convert Yahoo chart metadata and intraday closes into one quote."""
     price = meta.get("regularMarketPrice")
     prev = meta.get("chartPreviousClose")
     if prev is None:
@@ -108,12 +83,7 @@ def quote_from_meta(meta: dict, closes) -> dict:
 
 
 def build_board(results: list[tuple[dict, list]], title: str = "") -> dict:
-    """Assemble the result from per-symbol (meta, closes) pairs.
-
-    Pure/deterministic. Board-level ``currency`` and ``status`` are set ONLY when
-    every quote agrees (a mixed-exchange board honestly shows neither); ``asOf``
-    is the most recent quote time as ISO-8601.
-    """
+    """Assemble MarketBoard fields, including a shared currency and status when available."""
     quotes = [quote_from_meta(m, c) for (m, c) in results]
     board: dict = {"title": title or "Markets", "source": "Yahoo Finance", "quotes": quotes}
 
@@ -162,12 +132,7 @@ def _resolve(client, query: str) -> str | None:
 
 
 def _fetch_one(client, item: str):
-    """Resolve one requested symbol/name to (meta, closes), or None on miss.
-
-    Tries the symbol as-is, then falls back to Yahoo search for a plain name or
-    fuzzy ticker. Self-contained so a whole board's symbols can be fetched
-    concurrently (Yahoo calls are independent and httpx.Client is thread-safe).
-    """
+    """Fetch a symbol's chart, resolving plain names through Yahoo search on a miss."""
     hit = _chart(client, item)
     if hit is None:
         resolved = _resolve(client, item)
@@ -176,43 +141,20 @@ def _fetch_one(client, item: str):
     return hit
 
 
-@tool
-def get_quotes(symbols: str, title: str = "") -> str:
-    """Get the current market price of stocks, ETFs, indices, or crypto on global
-    exchanges. Quoted from the exchange's latest session and may lag the market by a
-    few minutes; `asOf` and `state` say how fresh it is.
-
-    This covers PRICE and today's move only — it knows nothing else about an
-    instrument. Research anything beyond that (news, fundamentals, valuation ratios,
-    history, analysis) the way you would any other fact. Pass the Yahoo symbols you
-    want (US tickers like AAPL; suffixed international tickers like BHP.AX, 7203.T,
-    VOD.L; indices like ^AXJO, ^FTSE, ^GDAXI, ^N225, ^HSI, 000001.SS; crypto like
-    BTC-USD). Plain names ("ASX 200", "Toyota") are resolved via search if a symbol
-    misses.
-
-    The quotes come back in the order the symbols were given.
-
-    Args:
-        symbols: Comma-separated symbols or names, most important first.
-        title: Optional heading for the set, e.g. "Technology", "Asian Markets", "Watchlist".
-
-    Returns:
-        JSON string: {"title","source","currency"?,"status"?,"asOf"?,
-        "quotes":[{"symbol","name","price","change","changePercent","currency",
-        "exchange","dayLow"?,"dayHigh"?,"spark"?,"state"?}, …]}.
-    """
+def fetch_quotes(symbols: str, title: str = "", *, client: httpx.Client | None = None) -> str:
+    """Fetch MarketBoard fields as JSON, preserving the requested symbol order."""
     wanted = [s.strip() for s in str(symbols).split(",") if s.strip()][:_MAX_SYMBOLS]
     if not wanted:
         return "No symbols requested."
 
-    # The per-symbol fetches are independent, so run them concurrently rather than
-    # in series — a 10-symbol board is ~10× faster and won't stack the 15s timeouts.
-    # httpx.Client is safe to share across threads; map() preserves request order.
+    # Independent symbol requests share the thread-safe client and preserve their order.
     results: list[tuple[dict, list]] = []
     try:
-        with httpx.Client(follow_redirects=True) as client:
+        with (
+            nullcontext(client) if client is not None else httpx.Client(follow_redirects=True)
+        ) as http:
             with ThreadPoolExecutor(max_workers=len(wanted)) as pool:
-                for hit in pool.map(lambda item: _fetch_one(client, item), wanted):
+                for hit in pool.map(lambda item: _fetch_one(http, item), wanted):
                     if hit is not None:
                         results.append(hit)
     except httpx.HTTPError as e:

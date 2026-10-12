@@ -241,7 +241,7 @@ async def test_manager_listener_installs_owner_side_approvals_once(paths):
     await mgr.start()
     try:
         cid = listener.connection.id
-        agent = mgr.get(pid).require_gateway().require_agent()
+        agent = await mgr.get(pid).require_gateway().acp_agent()
 
         def count() -> int:
             return sum(

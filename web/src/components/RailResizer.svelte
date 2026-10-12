@@ -1,8 +1,6 @@
 <script lang="ts">
-  // A vertical drag handle for a resizable pane. Defaults resize the right rail
-  // (handle on its left edge, width = viewport-right − pointer-x); pass side="left"
-  // with the drawer's store/clamp to resize the left drawer (width = pointer-x).
-  // Pointer capture keeps the drag tracking across a preview <iframe>.
+  // Resize a pane from its outer edge; pointer capture tracks drags across iframes.
+  // Left panes measure from their own origin, right panes from the viewport edge.
   import type { Writable } from 'svelte/store'
   import { railWidth } from '../store.ts'
   import { clampRailWidth } from '../lib/railWidth.ts'
@@ -29,7 +27,9 @@
     // A release can be missed (pointer crossing into the preview iframe, lost
     // capture) — if no button is held anymore, stop rather than track forever.
     if (e.buttons === 0) { stop(e); return }
-    const px = side === 'left' ? e.clientX : window.innerWidth - e.clientX
+    const px = side === 'left'
+      ? e.clientX - (e.currentTarget.parentElement?.getBoundingClientRect().left ?? 0)
+      : window.innerWidth - e.clientX
     width.set(clamp(px))
   }
   // pointerup and pointercancel both end the drag; the browser fires cancel

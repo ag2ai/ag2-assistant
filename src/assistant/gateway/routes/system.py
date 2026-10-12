@@ -27,7 +27,7 @@ from assistant.codex_auth import (
 )
 from assistant.coding.model_catalog import as_view
 from assistant.gateway.profile_manager import ProfileRuntime
-from assistant.gateway.routes.common import reload_all
+from assistant.gateway.routes.common import refresh_all
 from assistant.gateway.routes.deps import GatewayDeps
 from assistant.gateway.schemas import (
     CodexLoginUrlResponse,
@@ -395,16 +395,15 @@ def build_router(d: GatewayDeps, *, code_reader: Callable[[str], str]) -> APIRou
             email = await asyncio.to_thread(d.google.complete_login, flow, code)
         except Exception as exc:
             return HTMLResponse(_page("Sign-in failed", str(exc)))
-        # Google tools are gated on has_token() at agent build time — reference-swap
-        # reload every runtime so Gmail/Calendar/Drive attach on the next turn.
-        await reload_all(d.manager)
+        # Refresh consumers of the install-wide Google connection.
+        await refresh_all(d.manager)
         return HTMLResponse(_page("Connected ✓", f"AG2 Assistant is now connected to {email}."))
 
     @r.post("/api/google/logout", response_model=Ok)
     async def google_logout():
         ok = d.google.logout()
         # Drop the Google tools from every runtime immediately (same gate, reversed).
-        await reload_all(d.manager)
+        await refresh_all(d.manager)
         return {"ok": ok}
 
     # ---- OpenAI ChatGPT-subscription OAuth ("Sign in with ChatGPT") ----
@@ -438,7 +437,7 @@ def build_router(d: GatewayDeps, *, code_reader: Callable[[str], str]) -> APIRou
                 await asyncio.to_thread(d.codex.exchange_code, code, verifier)
             except Exception:
                 return
-            await reload_all(d.manager)
+            await refresh_all(d.manager)
 
         asyncio.create_task(_complete())
         return {"ok": True, "auth_url": url, "state": state}
@@ -460,13 +459,13 @@ def build_router(d: GatewayDeps, *, code_reader: Callable[[str], str]) -> APIRou
             await asyncio.to_thread(d.codex.exchange_code, code, verifier)
         except CodexAuthError as exc:
             return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
-        await reload_all(d.manager)
+        await refresh_all(d.manager)
         return {"ok": True}
 
     @r.post("/api/codex/logout", response_model=Ok)
     async def codex_logout():
         ok = d.codex.logout()
-        await reload_all(d.manager)
+        await refresh_all(d.manager)
         return {"ok": ok}
 
     return r

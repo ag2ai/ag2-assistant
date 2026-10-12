@@ -5,6 +5,7 @@ from ag2 import ImageInput
 from ag2.events import BinaryType, TextInput
 
 from assistant.attachments import build_input
+from assistant.config import Config
 from assistant.gateway.core import Gateway
 from tests.support.fakes import FakeRunMixin
 
@@ -144,15 +145,22 @@ class _CapturingAgent(FakeRunMixin):
         return _CapturingReply(msg)
 
 
-async def test_gateway_passes_attachments_as_positional_inputs():
+async def test_gateway_passes_attachments_as_positional_inputs(paths):
 
-    gw = Gateway(memory=False, onboard=False)
     agent = _CapturingAgent()
-    gw._agent = agent
+    gw = Gateway(
+        Config.for_paths(paths),
+        memory=False,
+        onboard=False,
+        persist=False,
+        agent_factory=lambda config, **kwargs: agent,
+    )
+    await gw.start()
 
     img = ImageInput(data=b"img", media_type="image/png")
-    await gw.send_message("look at this", chat_id="s1", attachments=[img])
-
-    # The agent received text + the attachment as positional inputs.
-    assert agent.captured[0] == "look at this"
-    assert agent.captured[1] is img
+    try:
+        await gw.send_message("look at this", chat_id="s1", attachments=[img])
+        assert agent.captured[0] == "look at this"
+        assert agent.captured[1] is img
+    finally:
+        await gw.close()

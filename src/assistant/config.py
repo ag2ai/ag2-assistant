@@ -88,11 +88,8 @@ class LLMConfig(BaseModel):
     # "running" forever. The per-call timeout middleware wraps each call and raises
     # after this many seconds so the turn fails cleanly (env: AG2ASSISTANT_LLM_TIMEOUT).
     call_timeout_s: float = 180.0
-    # How many times to RE-TRY a failed LLM call (a per-call timeout or a transient
-    # provider error — 429/5xx) before letting it propagate. 2 retries = up to 3
-    # total attempts, each with its own fresh timeout window. Turns a one-off wedged
-    # or rate-limited call into a hiccup instead of an attempt/task death
-    # (env: AG2ASSISTANT_LLM_RETRIES). 0 disables retrying.
+    # Retries per LLM call for timeouts, connection/stream failures and transient HTTP errors.
+    # Two retries allow three attempts; 0 disables them (env: AG2ASSISTANT_LLM_RETRIES).
     call_retries: int = 2
     # Event-silence watchdog: emit a CRITICAL alert onto the turn's stream when NO
     # event has been seen for this long during an active turn — the trigger-driven
@@ -160,6 +157,7 @@ class ToolsConfig(BaseModel):
     # "local" = subprocess on the host (command-filtered + approval-gated).
     # "docker" = isolated container with no host FS access (approval dropped).
     sandbox: str = "local"
+    preview_browser: str = ""
     docker_image: str = "python:3.12-slim"
     # "bridge" allows outbound network (pip, fetches); "none" is strictest.
     docker_network: str = "bridge"
@@ -170,10 +168,11 @@ class MemoryConfig(BaseModel):
 
     # Distil the profile every N conversation turns (an LLM call each time).
     aggregate_every_n_turns: int = 4
-    # Summarise the oldest stream events (an LLM call on the cheap model) once a
-    # conversation's history crosses this many tokens, keeping long chats and
-    # task runs inside the context window.
-    compact_max_tokens: int = 20_000
+    # Budget the estimated full model input; zero disables new compaction.
+    compact_max_tokens: int = 50_000
+    compact_max_calls: int = Field(default=8, gt=0)
+    compact_timeout_s: float = Field(default=60, gt=0)
+    compact_summary_max_tokens: int = Field(default=2_000, gt=0)
 
 
 # The Config sections a profile's config.yaml may overlay. Settings keys in the same

@@ -11,6 +11,7 @@ from ag2.stream import MemoryStream
 from assistant.config import Config
 from assistant.hitl.base import Asker, PendingGuard
 from assistant.permissions import PermissionManager
+from assistant.tools import CAPABILITIES, available_capabilities, build_agent_tools
 from assistant.tools.coding import build_coding_functions
 from tests.support.stubs import write_stub
 
@@ -119,17 +120,28 @@ async def test_list_coding_agents_on_an_empty_host(tmp_path):
     assert "available" not in out.replace("not installed", "")
 
 
-def test_coding_capability_registered(paths):
-    from assistant.tools import CAPABILITIES, available_capabilities
-
+def test_coding_capability_requires_an_adapter_or_bridge(paths, tmp_path):
     assert "coding" in CAPABILITIES
-    assert "coding" in available_capabilities(Config.for_paths(paths))
+    config = Config.for_paths(paths)
+    assert "coding" not in available_capabilities(config)
+    config.search_path = _bin(tmp_path, "codex-acp")
+    assert "coding" in available_capabilities(config)
+    config.search_path = []
+    config.acp_bridge = "host.test:8801"
+    assert "coding" in available_capabilities(config)
+
+
+def test_missing_cli_keeps_only_inventory_and_a_bridge_enables_execution(paths):
+    config = Config.for_paths(paths)
+    names = {t.name for t in build_agent_tools(capabilities=["coding"], config=config)}
+    assert names == {"list_coding_agents"}
+    config.acp_bridge = "host.test:8801"
+    names = {t.name for t in build_agent_tools(capabilities=["coding"], config=config)}
+    assert names == {"list_coding_agents", "code_with_cli_agent"}
 
 
 def test_build_agent_tools_includes_coding_tool(paths, tmp_path):
     """The toolset takes the search path from the config it is built for."""
-    from assistant.tools import build_agent_tools
-
     config = Config.for_paths(paths, search_path=_bin(tmp_path, "claude-agent-acp"))
     tools = build_agent_tools("gemini", capabilities=["coding"], config=config)
     assert {getattr(t, "name", "") for t in tools} == {

@@ -139,8 +139,13 @@ the HITL hook are attached at construction. See §6 for the full agent inventory
 ### 5.3 Tools & capabilities — `src/assistant/tools/`
 
 `build_agent_tools()` selects tools by **capability** (`web`, `code`, `files`,
-`images`, `skills`, `mcp`, `gmail`, `calendar`, `drive`). Chat gets the full set;
-task subagents are scoped to their declared capabilities.
+`images`, `skills`, `mcp`, `gmail`, `calendar`, `drive`). Chat gets the available set;
+task subagents are scoped to their declared capabilities and the same availability checks.
+Image generation requires a capable model selected for the current Turn and its API
+key or ChatGPT sign-in. CLI execution requires an installed ACP adapter or a configured
+host bridge; `list_coding_agents` remains available for diagnostics. Google requires
+sign-in and its libraries, and disabled MCP servers contribute no tools. Gateway
+rebuilds the tool schemas before each Turn, so settings changes apply to the next message.
 
 | Tool / group     | File                         | Notes                                             |
 | ---------------- | ---------------------------- | ------------------------------------------------- |
@@ -254,6 +259,13 @@ shares the chat's context and tools. Audio is full-duplex over `/api/voice`: 16 
 mono PCM in, 24 kHz PCM out, with transcript + delegated-event JSON frames
 interleaved. No state is persisted per voice session.
 
+`list_voices` and `set_voice` use the same profile override / install-wide Active
+Live model as a voice session. Setting a voice updates that model's saved voice and
+applies to the next session; profiles sharing the model share its voice. With no
+active Live model, the legacy profile provider/voice remains supported when its
+key is configured. Voice controls are omitted from the assistant's schemas when
+the selected configuration has no key. Diagnostic settings tools remain available.
+
 ### 5.9 Channels — `src/assistant/channels/*`
 
 `Channel` adapters (`telegram.py`, `discord.py`, `slack.py`) normalize inbound
@@ -314,6 +326,7 @@ Every model-backed call in the backend. Two model tiers: **main**
 | 6 | **Image generation**    | `tools/image_gen.py`         | provider | `generate_image` tool call          | — (emits `ImageGenerated`)   |
 | 7 | **Memory aggregator**   | `memory.py` (AG2 `WorkingMemoryAggregate`) | aggregate | every N turns / on end | — (markdown profile) |
 | 8 | **CLI single-shot**     | `agent.py` (`ask`)           | main  | `ag2-assistant agent "…"`             | —                            |
+| 9 | **History compaction**  | `compaction.py` (`CheckpointCompact`) | main | estimated full input exceeds the per-profile budget before a model call; uses the current Turn's resolved model configuration | versioned task checkpoint + recent replayable events |
 
 A task run is not a distinct agent — it's the same universal agent (row 1),
 optionally pinned to the task's own model via a cached per-model agent
@@ -437,6 +450,14 @@ links); favicon/`*.svg`; catch-all routes unknown `/api/*` → 404, else → `/a
 `{type:"ready"|"turn_end"|"error", …}`. Client sends `{text, attachments?}`,
 `{type:"answer", id, answer}`, `{type:"feedback", target_id, target_kind, sentiment,
 reason, content?, request?}`.
+
+The SPA connects to `/api/p/{pid}/stream?chat=<id>&history_limit=10` for the
+latest ten complete turns. `ready.history` supplies `start` and the exclusive
+`before` cursor; `ready.busy` reports current turn activity. Scrolling up fetches
+`GET /api/p/{pid}/chats/{id}/events?before=<cursor>&limit=10` and preserves the
+visible scroll anchor. Reconnects pass `history_from=<start>` to restore the
+loaded range. Without `history_limit`, stream clients receive the full replay.
+The model switcher reads `/chats/{id}?limit=1` to avoid downloading the transcript.
 
 **`/api/voice`** — server sends `{type:"ready"|"transcript"|"turn_end"|"error"}`,
 `{event:{type,data}}` (delegated agent events), and binary 24 kHz PCM. Client sends

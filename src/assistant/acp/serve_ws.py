@@ -195,7 +195,7 @@ async def serve_ws(
             agent_factory=agent_factory,
         )
         await gateway.start()
-        agent = gateway.require_agent()
+        agent = await gateway.acp_agent()
         # Owner-side approvals — never the ACP client. See approvals.py.
         asker = DesktopAsker()
         install_owner_side_approvals(agent, gateway, asker)

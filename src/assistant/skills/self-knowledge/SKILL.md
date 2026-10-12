@@ -55,10 +55,11 @@ you hold it in all of them.
 | Page | What it owns |
 |---|---|
 | General | Appearance, animations, notifications, re-run setup (per-device) |
-| Profiles | Personas, and each persona's own config — model, folders, skills, memory, focus |
+| Profiles | Personas, and each persona's own config — model, folders, skills, cards, memory, focus |
 | Models | The LLM configurations, which one is active, and the realtime voice |
 | Secrets | API keys |
 | Skills | Every skill the agent can use — enable/disable each, install more |
+| Cards | Shared rich-view definitions — enable/disable, edit Global files, view Bundled files, and fix load errors |
 | Tools & Permissions | MCP servers, coding agents, and install-wide command permissions |
 | Integrations | Messaging channels, Google sign-in, GitHub token |
 | Advanced | The assistant's current memory and timeout setting  |

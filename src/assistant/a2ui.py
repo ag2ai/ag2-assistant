@@ -3,11 +3,14 @@
 import json
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 from ag2.a2ui import a2ui_action
 from ag2.a2ui.actions import collect_action_declarations, collect_server_actions
 from ag2.a2ui.middleware import A2UIValidationMiddleware, _A2UIValidationMiddleware
 from ag2.a2ui.parser import A2UIResponseParser
+from referencing import Resource
+from referencing.jsonschema import DRAFT202012
 
 from assistant.cards import (
     CARDS_DIR,
@@ -18,6 +21,7 @@ from assistant.cards import (
     cards_fingerprint,
     expand_card_messages,
     expand_components,
+    generation_contract,
     load_cards,
     resolve_cards,
     root_component,
@@ -63,7 +67,18 @@ SUPPORTED_BASIC_COMPONENTS = frozenset(
 # Primitives this renderer draws beyond the Basic Catalog: the visual atoms a Card
 # needs. A Card layout may draw them; the model never emits one directly.
 CARD_PRIMITIVES = frozenset(
-    {"Diff", "Figure", "Link", "Metric", "Sparkline", "Table", "WeatherGlyph"}
+    {
+        "Diff",
+        "Figure",
+        "Grid",
+        "Link",
+        "Metric",
+        "Sparkline",
+        "CalendarHeatmap",
+        "Chart",
+        "Table",
+        "WeatherGlyph",
+    }
 )
 
 # The conditions the WeatherGlyph primitive draws — its vocabulary, not any Card's.
@@ -303,12 +318,28 @@ def durable_surfaces_from_messages(messages: list[Any]) -> list[A2UISurface]:
 def _component_schema(
     name: str, description: str, properties: dict, required: list[str] | None = None
 ) -> dict:
+    """Each Card's field references stay rooted in its own schema resource."""
+    schema_id = f"{CATALOG_ID}/cards/{quote(name, safe='')}"
+
+    def scoped(value: Any) -> Any:
+        if isinstance(value, list):
+            return [scoped(item) for item in value]
+        if isinstance(value, dict):
+            return {
+                key: schema_id + item
+                if key in {"$ref", "$dynamicRef"} and isinstance(item, str) and item.startswith("#")
+                else scoped(item)
+                for key, item in value.items()
+            }
+        return value
+
     props = {
         "id": {"type": "string"},
         "component": {"const": name},
-        **properties,
+        **scoped(properties),
     }
     return {
+        "$id": schema_id,
         "type": "object",
         "description": description,
         "properties": props,
@@ -338,7 +369,9 @@ def assistant_catalog(cards: dict[str, Card] | None = None) -> dict:
         "components": {
             **{
                 card.name: _component_schema(
-                    card.name, card.description, card.fields, list(card.required)
+                    card.name,
+                    card.description,
+                    *generation_contract(card),
                 )
                 for card in (bundled_cards() if cards is None else cards).values()
             },
@@ -454,11 +487,17 @@ class _AssistantA2UIRuntime:
             custom_catalog_rules=CATALOG_RULES,
         )
         self.catalog_id = self.schema_manager.catalog_id
+        component_schemas = self.schema_manager.get_component_schemas()
+        registry = self.schema_manager.build_schema_registry().with_resources(
+            (schema_id, Resource.from_contents(schema, default_specification=DRAFT202012))
+            for schema in component_schemas.values()
+            if isinstance(schema_id := schema.get("$id"), str)
+        )
         self.parser = A2UIResponseParser(
             version_string=self.schema_manager.version_string,
             server_to_client_schema=self.schema_manager.server_to_client_schema,
-            schema_registry=self.schema_manager.build_schema_registry(),
-            component_schemas=self.schema_manager.get_component_schemas(),
+            schema_registry=registry,
+            component_schemas=component_schemas,
             catalog_id=self.schema_manager.catalog_id,
         )
         self.actions = collect_action_declarations(A2UI_ACTIONS)
@@ -482,6 +521,20 @@ class _AssistantA2UIRuntime:
         from ag2.a2ui.capabilities import capabilities_to_prompt
 
         return capabilities_to_prompt(caps, catalog_id=self.schema_manager.catalog_id)
+
+
+class HeldCardCatalog:
+    """One resolved set of Card definitions and its matching A2UI runtime."""
+
+    def __init__(self, cards: dict[str, Card], runtime: "_AssistantA2UIRuntime") -> None:
+        self._cards = cards
+        self._runtime = runtime
+
+    def cards(self) -> dict[str, Card]:
+        return dict(self._cards)
+
+    def runtime(self) -> "_AssistantA2UIRuntime":
+        return self._runtime
 
 
 class CardCatalog:
@@ -508,6 +561,14 @@ class CardCatalog:
         Thread goes on drawing however its Card is switched now."""
         self._resolve()
         return dict(self._drawable)
+
+    def hold(self) -> HeldCardCatalog:
+        """Hold the offered definitions and runtime for one Turn."""
+        self._resolve()
+        cards = dict(self._cards)
+        if self._runtime is None:
+            self._runtime = _AssistantA2UIRuntime(cards)
+        return HeldCardCatalog(cards, self._runtime)
 
     def _resolve(self) -> None:
         fingerprint = (cards_fingerprint(self._layers), self._state.revision())

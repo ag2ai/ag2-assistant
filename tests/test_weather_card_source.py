@@ -1,5 +1,11 @@
+import json
+
+import httpx
+import pytest
+
 from assistant.a2ui import WEATHER_CONDITIONS
-from assistant.tools.weather import build_result, condition_for
+from assistant.cards.bundled.weatherpanel import build_result, condition_for, fetch_weather
+from tests.support.http import client
 
 
 def test_condition_for_maps_known_codes():
@@ -138,3 +144,31 @@ def test_a_reading_with_no_temperature_carries_none():
 
     # A field the tool cannot fill is left out, not filled with an empty string.
     assert "temperature" not in build_result(payload, "Nowhere", "celsius")
+
+
+def test_weather_source_fetches_today_and_uses_the_selected_units():
+    def respond(request):
+        assert request.url.host == "wttr.in"
+        assert request.url.path == "/New York"
+        assert request.url.params["format"] == "j1"
+        return httpx.Response(200, json=_payload(113, "Sunny"))
+
+    with client(respond) as http:
+        result = json.loads(fetch_weather("New York", "fahrenheit", client=http))
+        assert result["condition"] == "sunny"
+        assert result["temperature"] == "54°"
+        assert {row["label"]: row["value"] for row in result["rows"]}["Wind"] == "15 mph"
+        assert not http.is_closed
+
+
+@pytest.mark.parametrize(
+    "response, error",
+    [
+        (httpx.Response(503), "Could not get weather"),
+        (httpx.Response(200, text="invalid JSON"), "Could not parse weather"),
+        (httpx.Response(200, json={}), "No weather data found"),
+    ],
+)
+def test_weather_source_reports_unavailable_data(response, error):
+    with client(lambda request: response) as http:
+        assert fetch_weather("London", client=http).startswith(error)

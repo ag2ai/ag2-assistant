@@ -10,12 +10,13 @@ Also joins the ACP origin onto a chat row/transcript: a Peer with
 now — see ADR 0034.
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from assistant.acp.chats import LIVE_SESSIONS
 from assistant.connections import ConnectionStore
+from assistant.gateway.history import event_page
 from assistant.gateway.profile_manager import ProfileRuntime
 from assistant.gateway.routes.common import chat_asker
 from assistant.gateway.routes.deps import GatewayDeps
@@ -25,6 +26,8 @@ from assistant.gateway.schemas import (
     Ok,
     TranscriptResponse,
 )
+from assistant.gateway.schemas.chat import ChatEventsResponse
+from assistant.gateway.wire import as_drawn, is_binary_event, to_wire
 from assistant.peers import Peer, PeerStore
 from assistant.profiles import ACP_PLATFORM
 
@@ -94,14 +97,19 @@ def build_profile_router(d: GatewayDeps, get_runtime) -> APIRouter:
         return {"chats": _with_origin(rows, d.peer_store, d.connection_store)}
 
     @r.get("/chats/{chat_id}", response_model=TranscriptResponse, response_model_exclude_unset=True)
-    async def chat_transcript(chat_id: str, runtime: ProfileRuntime = Depends(get_runtime)):
+    async def chat_transcript(
+        chat_id: str,
+        limit: int | None = Query(default=None, ge=1, le=200),
+        runtime: ProfileRuntime = Depends(get_runtime),
+    ):
         """The display transcript for a chat, plus its Chat override, the model it
         would run on right now (so the composer's switcher needs no second call),
         and its ACP origin when a Peer owns it."""
         gw = runtime.require_gateway()
+        messages = await gw.transcript(chat_id)
         row = {
             "chat_id": chat_id,
-            "messages": await gw.transcript(chat_id),
+            "messages": messages[-limit:] if limit is not None else messages,
             "model": await gw.chat_model(chat_id),
             "effective_model": await gw.effective_model(chat_id),
         }
@@ -110,6 +118,30 @@ def build_profile_router(d: GatewayDeps, get_runtime) -> APIRouter:
             live_ids = LIVE_SESSIONS.live_chat_ids()
             row.update(_origin_fields(chat_id, peer, d.connection_store, live_ids))
         return row
+
+    @r.get("/chats/{chat_id}/events", response_model=ChatEventsResponse)
+    async def chat_events(
+        chat_id: str,
+        before: str | None = Query(default=None, pattern="^[a-f0-9]{64}$"),
+        limit: int = Query(default=10, ge=1, le=50),
+        runtime: ProfileRuntime = Depends(get_runtime),
+    ):
+        gw = runtime.require_gateway()
+        try:
+            page = event_page(await gw.replay_events(chat_id), limit, before=before)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=409, detail="History cursor is no longer available"
+            ) from exc
+        return {
+            "events": [
+                to_wire(as_drawn(event, gw.catalog, gw.card_sources))
+                for event in page.events
+                if not is_binary_event(event)
+            ],
+            "before": page.before,
+            "start": page.start,
+        }
 
     @r.post("/chats/{chat_id}/acp/close", response_model=Ok)
     async def close_acp_session(chat_id: str, runtime: ProfileRuntime = Depends(get_runtime)):

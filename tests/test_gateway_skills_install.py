@@ -11,8 +11,8 @@ import httpx
 from fastapi.testclient import TestClient
 
 from assistant.gateway.app import create_app
-from tests.support.apps import api, make_manager, make_profile_app
-from tests.support.fakes import skill_catalog_factory
+from tests.support.apps import api, make_manager, make_profile_app, turn_catalog
+from tests.support.fakes import ScriptedModels
 from tests.support.http import ScriptedSkillsClient
 from tests.support.stubs import skill_tarball
 
@@ -90,16 +90,15 @@ def test_search_failure_is_502(paths):
 
 
 def test_install_global_lands_and_fans_out(paths):
-    """A Global install writes into the Global layer and rebuilds every runtime's agent,
-    so the new skill is in every profile's catalog."""
-    agents: dict[str, list] = {}
-    manager = make_manager(paths, agent_factory=skill_catalog_factory(agents))
+    """Future Turns observe availability changes in their resolved Profile scope."""
+    models = ScriptedModels()
+    manager = make_manager(paths, model_factory=models)
     app = create_app(manager, skills_client=_registry())
     with TestClient(app) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
         for pid in ("work", "personal"):
-            assert "standalone" not in agents[pid][-1].catalog
+            assert "standalone" not in turn_catalog(client, models, pid)
 
         r = client.post("/api/skills/install", json={"install_id": "me/standalone"})
         assert r.status_code == 200, r.text
@@ -112,12 +111,12 @@ def test_install_global_lands_and_fans_out(paths):
         assert "installed via registry" in installed.read_text()
         # ...and fanned out to every live runtime.
         for pid in ("work", "personal"):
-            assert "standalone" in agents[pid][-1].catalog
+            assert "standalone" in turn_catalog(client, models, pid)
 
 
 def test_install_profile_lands_only_for_that_profile(paths):
-    agents: dict[str, list] = {}
-    manager = make_manager(paths, persist=True, agent_factory=skill_catalog_factory(agents))
+    models = ScriptedModels()
+    manager = make_manager(paths, persist=True, model_factory=models)
     app = create_app(manager, skills_client=_registry())
     with TestClient(app) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
@@ -128,11 +127,10 @@ def test_install_profile_lands_only_for_that_profile(paths):
         # Present for work as a profile-owned skill...
         w = {s["name"]: s for s in client.get(api("work", "/skills")).json()["skills"]}
         assert w["standalone"]["origin"] == "profile"
-        assert "standalone" in agents["work"][-1].catalog
+        assert "standalone" in turn_catalog(client, models, "work")
         # ...absent for personal, whose agent was never rebuilt.
         p = {s["name"] for s in client.get(api("personal", "/skills")).json()["skills"]}
         assert "standalone" not in p
-        assert len(agents["personal"]) == 1
 
 
 def test_install_collision_replaces(paths):

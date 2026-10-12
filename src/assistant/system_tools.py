@@ -15,6 +15,9 @@ from typing import Annotated
 from ag2 import Context, tool
 from pydantic import Field
 
+from assistant import voice_providers
+from assistant.config import Config
+from assistant.live_configs import LiveConfigStore, voice_available
 from assistant.peers import PeerStore
 
 _CHAT_TAIL_TURNS = 20  # turns of a past conversation read_chat returns
@@ -76,16 +79,15 @@ def _task_line(t: dict) -> str:
 
 
 def build_system_tools(
-    tasks, settings, chats=None, platform: str = "gateway", peers: PeerStore | None = None
+    tasks,
+    settings,
+    chats=None,
+    platform: str = "gateway",
+    peers: PeerStore | None = None,
+    *,
+    config: Config | None = None,
 ) -> list:
-    """Build the system toolkit. `tasks` is a TaskService; `settings` is the profile's
-    `Settings` (the voice get/set tools read/write it, so they touch only this
-    profile); `chats` (optional) is a provider with `list_chats()` and
-    `transcript(chat_id)` (the gateway). `platform` is the surface ("gateway" for
-    web, else a channel name) — on a channel, task confirmations note that follow-up
-    questions are asked in the web app. `peers` (optional) is the install's Peer
-    registry: given one, a task created in a channel conversation remembers the
-    Connection it came from so its outcome is pushed back there."""
+    """Task, chat and inquiry tools, plus voice controls when the profile can use voice."""
     note = _followup_note(platform)
 
     # ---- tasks: a task is name + prompt + optional model + schedule ----
@@ -279,20 +281,26 @@ def build_system_tools(
     @tool
     async def list_voices() -> str:
         """List the available realtime voices (name · style) and the current one."""
-        cur = settings.get_voice()
-        return f"Voice provider: {settings.voice_provider()}\nCurrent voice: {cur}\n" + "\n".join(
-            f"{n} — {s}" + (" (current)" if n == cur else "")
-            for n, s in settings.voices_for().items()
+        assert config is not None
+        active = LiveConfigStore(config.paths).active_config(settings.get_live_override())
+        provider = voice_providers.get(active["provider"] if active else settings.voice_provider())
+        cur = active["voice"] if active else settings.get_voice(provider.name)
+        return f"Voice provider: {provider.name}\nCurrent voice: {cur}\n" + "\n".join(
+            f"{n} — {s}" + (" (current)" if n == cur else "") for n, s in provider.voices.items()
         )
 
     @tool
     async def set_voice(
         voice: Annotated[
-            str, Field(description="Voice name, e.g. Puck, Kore, Sulafat (see list_voices).")
+            str, Field(description="A voice name offered by the active provider (see list_voices).")
         ],
     ) -> str:
         """Change the assistant's realtime voice (persists; applies next voice session)."""
-        if not settings.set_voice(voice):
+        assert config is not None
+        store = LiveConfigStore(config.paths)
+        active = store.active_config(settings.get_live_override())
+        changed = store.set_voice(active["id"], voice) if active else settings.set_voice(voice)
+        if not changed:
             return f"Unknown voice '{voice}'. Use list_voices to see options."
         return f"Voice set to {voice}. It'll apply the next time you start a voice chat."
 
@@ -305,9 +313,9 @@ def build_system_tools(
         delete_task,
         list_open_questions,
         answer_question,
-        list_voices,
-        set_voice,
     ]
+    if config is not None and voice_available(config, settings):
+        out.extend([list_voices, set_voice])
 
     # ---- chats (optional) ----
     if chats is not None:

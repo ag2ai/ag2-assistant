@@ -13,14 +13,18 @@ resolution-markers = [
 
 [[package]]
 name = "ag2"
-version = "1.1.0"
-source = { git = "https://github.com/ag2ai/ag2.git?branch=main#36ea2485a870e612e709c79a3af980fb757d7af3" }
+version = "1.1.2"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
     { name = "fast-depends", extra = ["pydantic"] },
     { name = "httpx" },
     { name = "pydantic" },
     { name = "pyyaml" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/46/61/fda996fca3f63802507b1af2cacb5b7c8adf9638572c1cc8e3d5659d23d8/ag2-1.1.2.tar.gz", hash = "sha256:0d5bc1eea5c6f12ada1236f6d741c7ef4260cb41c9b0576447853e56f21a0e6a", size = 870525, upload-time = "2026-10-03T06:26:23.017Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7f/8a/6262df7308db24fc684e1fbad29c47b79ff63c31d4136c2d690bae5435fd/ag2-1.1.2-py3-none-any.whl", hash = "sha256:bd3bed2697b79483c30f5d89e5fee153ecbc2b6e832917c810b01ee579e97eb2", size = 1155201, upload-time = "2026-10-03T06:26:20.603Z" },
 ]
 
 [package.optional-dependencies]
@@ -61,6 +65,7 @@ dependencies = [
     { name = "discord-py" },
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "jsonschema" },
     { name = "mcp" },
     { name = "pydantic" },
     { name = "python-dotenv" },
@@ -69,6 +74,7 @@ dependencies = [
     { name = "slack-bolt" },
     { name = "typer" },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "websockets" },
 ]
 
 [package.optional-dependencies]
@@ -82,6 +88,7 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
     { name = "ruff" },
+    { name = "types-jsonschema" },
     { name = "types-pyyaml" },
 ]
 google = [
@@ -96,9 +103,9 @@ ollama = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ag2", extras = ["anthropic"], marker = "extra == 'anthropic'", git = "https://github.com/ag2ai/ag2.git?branch=main" },
-    { name = "ag2", extras = ["gemini", "ddgs", "openai", "acp"], git = "https://github.com/ag2ai/ag2.git?branch=main" },
-    { name = "ag2", extras = ["ollama"], marker = "extra == 'ollama'", git = "https://github.com/ag2ai/ag2.git?branch=main" },
+    { name = "ag2", extras = ["anthropic"], marker = "extra == 'anthropic'", specifier = ">=1.1.2" },
+    { name = "ag2", extras = ["gemini", "ddgs", "openai", "acp"], specifier = ">=1.1.2" },
+    { name = "ag2", extras = ["ollama"], marker = "extra == 'ollama'", specifier = ">=1.1.2" },
     { name = "beautifulsoup4", specifier = ">=4.12.0" },
     { name = "cron-descriptor", specifier = ">=1.4" },
     { name = "cronsim", specifier = ">=2.7" },
@@ -108,6 +115,7 @@ requires-dist = [
     { name = "google-auth", marker = "extra == 'google'", specifier = ">=2.0" },
     { name = "google-auth-oauthlib", marker = "extra == 'google'", specifier = ">=1.0" },
     { name = "httpx", specifier = ">=0.28.0" },
+    { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "mcp", specifier = ">=2.2.0,<3" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=2.3,<2.4" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.0.0" },
@@ -122,8 +130,10 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15.18,<0.17" },
     { name = "slack-bolt", specifier = ">=1.18" },
     { name = "typer", specifier = ">=0.15.0" },
+    { name = "types-jsonschema", marker = "extra == 'dev'", specifier = ">=4.26.0.20260518" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
+    { name = "websockets", specifier = ">=15" },
 ]
 provides-extras = ["dev", "anthropic", "ollama", "google"]
 
@@ -2720,6 +2730,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/16/f7/57713ba479fd405eb76de31404b2c744c289e336b2d999511ebf51e496f7/typer-0.27.2.tar.gz", hash = "sha256:269b7eb9d3c202ca84b4bc9618cb04ebb43d3d4d1e567e4c768607232c05f945", size = 204045, upload-time = "2026-08-28T10:26:55.046Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/dc/bf/205d0004930ede8f542fb58f601526fccf4ae7626075ca1e6c4de5d3d652/typer-0.27.2-py3-none-any.whl", hash = "sha256:b3a5fc4342d5fc8fda8fc3010b1cf117e9249aab7fae800c2eff62fd3842d97d", size = 123130, upload-time = "2026-08-28T10:26:53.752Z" },
+]
+
+[[package]]
+name = "types-jsonschema"
+version = "4.26.0.20260518"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "referencing" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/dd/46/73b6a5d61a61015c4248030a8cb07e5bdddb4041430fae9e585a68692578/types_jsonschema-4.26.0.20260518.tar.gz", hash = "sha256:e1dd53dc97a64f5eccdd6fa9839666e09bb500a8ebba2db6fdaf1789faea81a6", size = 16638, upload-time = "2026-05-18T06:06:44.106Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/07/d5/134f8a147dcecda10db7f60cfc6af0578a25a5c53c87b3907a64385e0184/types_jsonschema-4.26.0.20260518-py3-none-any.whl", hash = "sha256:30b30a518c7fe335df85c919fcbcc631b69c03d4a4b5b632fa916bea03065307", size = 16072, upload-time = "2026-05-18T06:06:43.264Z" },
 ]
 
 [[package]]

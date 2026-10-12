@@ -1,21 +1,14 @@
-"""Weather tool — one deterministic call for current weather + a short forecast.
-
-Source: wttr.in (?format=j1), the same provider the bundled `weather` skill uses.
-The returned `condition` is one word from a fixed vocabulary (ADR 0037).
-"""
+"""WeatherPanel's current conditions and today's forecast from wttr.in."""
 
 import json
+from contextlib import nullcontext
 from urllib.parse import quote
 
 import httpx
-from ag2 import tool
 
 from assistant.a2ui import WEATHER_CONDITIONS
 
-# wttr.in exposes World Weather Online (WWO) numeric weather codes in
-# current_condition[0].weatherCode. Map each to one drawable condition.
-# Anything unmapped falls back to "cloudy". `windy` has no WWO code — it's derived
-# from wind speed below.
+# Map World Weather Online codes to drawable conditions; unknown codes use cloudy.
 _CODE_TO_CONDITION = {
     113: "sunny",  # Clear / Sunny
     116: "partly-cloudy",  # Partly cloudy
@@ -57,17 +50,12 @@ for _c in (
 ):
     _CODE_TO_CONDITION[_c] = "snow"
 
-# Above this sustained wind speed we call it "windy" (unless it's actively
-# raining/storming/snowing — those conditions win). ~38 km/h ≈ Beaufort 6.
+# Sustained wind above Beaufort 6 is windy when there is no active precipitation.
 _WINDY_KMPH = 38.0
 
 
 def condition_for(weather_code, windspeed_kmph=0.0) -> str:
-    """Map a WWO weather code (+ wind speed) to a condition the glyph can draw.
-
-    Pure/deterministic — no network. Guaranteed to return a value in
-    ``a2ui.WEATHER_CONDITIONS`` (default ``"cloudy"``).
-    """
+    """Map a WWO weather code and wind speed to a drawable condition."""
     try:
         code = int(weather_code)
     except (TypeError, ValueError):
@@ -144,11 +132,7 @@ def _rain_row(today: dict) -> dict | None:
 
 
 def build_result(data: dict, location: str, units: str = "celsius") -> dict:
-    """Turn a parsed wttr.in j2 payload into the fields a weather Card is drawn from.
-
-    Pure/deterministic — no network. Returns
-    ``{location, condition, temperature, summary, rows}``.
-    """
+    """Convert a wttr.in j1 payload to WeatherPanel fields."""
     metric = str(units).lower() != "fahrenheit"
     cc = (data.get("current_condition") or [{}])[0]
     desc = ((cc.get("weatherDesc") or [{}])[0].get("value") or "").strip() or "Unknown"
@@ -198,36 +182,19 @@ def build_result(data: dict, location: str, units: str = "celsius") -> dict:
     }
 
 
-@tool
-def get_weather(location: str, units: str = "celsius") -> str:
-    """Get the current weather and TODAY's forecast for a location: conditions,
-    temperature range, and — when the forecast carries it — a "Rain" row giving the
-    peak chance of rain today and the hours it is likely.
-
-    This covers today at one place. Research anything beyond that (the days ahead,
-    severe-weather warnings, marine, alpine, historical) the way you would any other
-    fact. `condition` is one of sunny, partly-cloudy, cloudy, foggy, rainy,
-    thunderstorm, snow or windy; `summary` is the whole reading in one line.
-
-    Args:
-        location: City, region, airport code, or "lat,lon".
-        units: "celsius" (default) or "fahrenheit".
-
-    Returns:
-        JSON string: {"location", "condition", "temperature", "summary",
-        "rows": [{"label","value"}, …]}.
-    """
-    # j1 (not j2) — only j1 carries the 3-hourly slots that give rain chance and timing.
+def fetch_weather(
+    location: str, units: str = "celsius", *, client: httpx.Client | None = None
+) -> str:
+    """Fetch WeatherPanel fields as JSON, or a source error when data is unavailable."""
+    # j1 includes the three-hour forecast slots for rain chance and timing.
     url = f"https://wttr.in/{quote(location.strip())}?format=j1"
     try:
-        response = httpx.get(
-            url,
-            follow_redirects=True,
-            timeout=20.0,
-            headers={"User-Agent": "curl/8"},  # wttr.in serves JSON to curl-like UAs
-        )
-        response.raise_for_status()
-        data = response.json()
+        with (
+            nullcontext(client) if client is not None else httpx.Client(follow_redirects=True)
+        ) as http:
+            response = http.get(url, timeout=20.0, headers={"User-Agent": "curl/8"})
+            response.raise_for_status()
+            data = response.json()
     except httpx.HTTPError as e:
         return f"Could not get weather for {location}: {e}"
     except ValueError as e:

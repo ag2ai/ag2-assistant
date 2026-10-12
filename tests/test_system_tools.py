@@ -1,11 +1,17 @@
 """The 6 task tools mirror the UI/REST surface exactly."""
 
+import pytest
+
 from assistant.config import Config
 from assistant.gateway.tasks_service import TaskService
 from assistant.hitl import InquiryStore
+from assistant.live_configs import LiveConfigStore
 from assistant.peers import PeerStore
+from assistant.secrets import SecretStore
+from assistant.settings import profile_settings
 from assistant.system_tools import _origin, _schedule_arg, build_system_tools
 from assistant.tasks.store import TaskStore
+from assistant.voice import voice_realtime_config
 from tests.support.apps import make_paths
 
 
@@ -36,6 +42,73 @@ def _tools(*args, **kwargs):
     a ToolCallEvent rather than plain kwargs — its `.model.call` is the original
     function, still callable directly with normal kwargs)."""
     return {t.name: t.model.call for t in build_system_tools(*args, **kwargs)}
+
+
+def test_voice_tools_require_the_selected_configuration_to_have_a_key(config):
+    settings = profile_settings(config.data_dir)
+    assert not {"list_voices", "set_voice"} & _tools(None, settings, config=config).keys()
+    config.llm.provider = "anthropic"
+    config.llm.api_key_env = "ANTHROPIC_API_KEY"
+    config.secret_env = {"ANTHROPIC_API_KEY": "text-key"}
+    assert not {"list_voices", "set_voice"} & _tools(None, settings, config=config).keys()
+    store = LiveConfigStore(config.paths)
+    active = store.save_config({"name": "Active", "provider": "openai"})
+    store.set_active(active["id"])
+    secret = SecretStore(config.paths).create_secret("Other", "other-key")
+    other = store.save_config({"name": "Other", "provider": "gemini", "secret_id": secret["id"]})
+    assert not {"list_voices", "set_voice"} & _tools(None, settings, config=config).keys()
+    settings.set_live_override(other["id"])
+    assert {"list_voices", "set_voice"} <= _tools(None, settings, config=config).keys()
+    SecretStore(config.paths).delete_secret(secret["id"])
+    assert not {"list_voices", "set_voice"} & _tools(None, settings, config=config).keys()
+
+
+@pytest.mark.parametrize(
+    "provider,target,invalid", [("openai", "cedar", "Kore"), ("gemini", "Kore", "cedar")]
+)
+async def test_voice_tools_update_the_selected_model_and_the_next_session(
+    config, provider, target, invalid
+):
+    settings = profile_settings(config.data_dir)
+    store = LiveConfigStore(config.paths)
+    inherited = store.save_config({"name": "Inherited", "provider": "gemini"})
+    store.set_active(inherited["id"])
+    secret = SecretStore(config.paths).create_secret("Voice key", "voice-key")
+    selected = store.save_config(
+        {"name": "Selected", "provider": provider, "secret_id": secret["id"]}
+    )
+    settings.set_live_override(selected["id"])
+    old_settings_voice = settings.get_voice(provider)
+    tools = _tools(None, settings, config=config)
+    listing = await tools["list_voices"]()
+    assert f"Voice provider: {provider}" in listing
+    assert f"Current voice: {selected['voice']}" in listing
+    assert "Unknown voice" in await tools["set_voice"](voice=invalid)
+    assert store.get_config(selected["id"])["voice"] == selected["voice"]
+    assert "Voice set to" in await tools["set_voice"](voice=target)
+    assert store.get_config(selected["id"])["voice"] == target
+    assert settings.get_voice(provider) == old_settings_voice
+    assert store.get_config(inherited["id"])["voice"] == inherited["voice"]
+    assert store.active_id() == inherited["id"]
+    assert f"Current voice: {target}" in await tools["list_voices"]()
+    realtime = voice_realtime_config(config, settings)
+    session = realtime._build_session()
+    actual = (
+        session["audio"]["output"]["voice"]
+        if provider == "openai"
+        else session["speech_config"]["voice_config"]["prebuilt_voice_config"]["voice_name"]
+    )
+    assert actual == target
+
+
+async def test_legacy_voice_tools_still_update_the_profile_with_a_configured_key(config):
+    config.secret_env = {"OPENAI_API_KEY": "voice-key"}
+    settings = profile_settings(config.data_dir, voice_provider="openai")
+    tools = _tools(None, settings, config=config)
+    assert "Voice set to" in await tools["set_voice"](voice="cedar")
+    assert settings.get_voice("openai") == "cedar"
+    session = voice_realtime_config(config, settings)._build_session()
+    assert session["audio"]["output"]["voice"] == "cedar"
 
 
 def test_origin_is_the_peer_a_chat_was_started_from(paths):

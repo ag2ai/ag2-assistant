@@ -59,11 +59,9 @@ REDIRECT_URI = _const(
 SCOPES = "openid profile email offline_access"
 ORIGINATOR = _const("AG2ASSISTANT_CODEX_ORIGINATOR", "codex_cli_rs")
 OPENAI_BETA = _const("AG2ASSISTANT_CODEX_OPENAI_BETA", "responses=experimental")
-# The backend gates its model catalog on the client's version header: without one
-# (or with an old one) new model families 404 as "Model not found" even though the
-# account has them — observed live when gpt-5.6-* launched while gpt-5.5 kept
-# working. Pin a recent Codex CLI version; bump via env when a new family drops.
-CLIENT_VERSION = _const("AG2ASSISTANT_CODEX_CLIENT_VERSION", "0.144.1")
+# Client version sent with Responses requests and account model-catalog reads.
+# The backend uses it to expose supported model families.
+CLIENT_VERSION = _const("AG2ASSISTANT_CODEX_CLIENT_VERSION", "0.162.0")
 
 # Refresh this many seconds BEFORE the token actually expires (clock-skew margin).
 _REFRESH_MARGIN_S = 60

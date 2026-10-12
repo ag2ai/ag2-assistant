@@ -139,6 +139,9 @@ from assistant.gateway.profile_manager import (
 )
 from assistant.gateway.routes import (
     acp,
+    card,
+    card_instance,
+    card_source,
     chat,
     connection,
     file,
@@ -146,6 +149,7 @@ from assistant.gateway.routes import (
     llm,
     permission,
     profile,
+    screen,
     secret,
     settings,
     skill,
@@ -292,6 +296,8 @@ def create_app(
     llm_catalog_probe: Callable = provider_catalog.probe_provider_models,
     live_probe: Callable = _live_key_probe,
     skills_client: SkillsClient | None = None,
+    card_source_tools: dict[str, Callable] | None = None,
+    card_source_executor: Callable | None = None,
 ) -> FastAPI:
     """Build the FastAPI app around a (constructed-but-not-started) ``ProfileManager``.
 
@@ -476,6 +482,7 @@ def create_app(
     # registry/git/upload installs (ADR 0017) — live in gateway/routes/skill.py,
     # together with their per-profile mirrors, included on `p` below.
     app.include_router(skill.build_router(deps, skills_client=skills_client))
+    app.include_router(card.build_router(deps))
 
     # Profiles (the registry every client boots from) and Connections (an instance
     # of a messaging platform with its exposure, pairing and group tables) are both
@@ -508,6 +515,14 @@ def create_app(
     # task-scoped permission pair — in its own module because a module follows its
     # zod twin (TaskRules is declared in permission.ts).
     p.include_router(chat.build_profile_router(deps, get_runtime))
+    p.include_router(card.build_profile_router(deps, get_runtime))
+    p.include_router(card_instance.build_profile_router(deps, get_runtime))
+    p.include_router(screen.build_profile_router(get_runtime))
+    p.include_router(
+        card_source.build_profile_router(
+            get_runtime, tools=card_source_tools, executor=card_source_executor
+        )
+    )
     p.include_router(task.build_profile_router(deps, get_runtime))
     p.include_router(permission.build_profile_router(deps, get_runtime))
 
@@ -529,6 +544,40 @@ def create_app(
     #  Profile-scoped WebSockets (registered directly, not on the router  #
     #  — Starlette APIRouter WS + Depends is fiddly; resolve inline)      #
     # ------------------------------------------------------------------ #
+
+    @app.websocket("/api/p/{pid}/card-sources/stream")
+    async def file_sources_ws(websocket: WebSocket, pid: str) -> None:
+        """Forward typed file source events to views in the current Profile."""
+        if not _origin_ok(
+            websocket.headers.get("origin"), websocket.headers.get("host"), allowed_origins
+        ):
+            await websocket.close(code=1008)
+            return
+        runtime = await _ws_runtime(websocket, pid)
+        if runtime is None:
+            return
+        await websocket.accept()
+        stream = runtime.require_gateway().card_sources.file_stream
+
+        async def forward(event):
+            with contextlib.suppress(WebSocketDisconnect, RuntimeError, OSError):
+                await websocket.send_json({"event": to_wire(event)})
+
+        async def close():
+            with contextlib.suppress(WebSocketDisconnect, RuntimeError, OSError):
+                await websocket.close(code=_WS_PROFILE_ARCHIVED)
+
+        runtime.on_close(close)
+        subscription = stream.subscribe(forward)
+        try:
+            await websocket.send_json({"type": "ready", "chat": ""})
+            while True:
+                await websocket.receive_text()
+        except WebSocketDisconnect:
+            pass
+        finally:
+            stream.unsubscribe(subscription)
+            runtime.off_close(close)
 
     @app.websocket("/api/p/{pid}/stream")
     async def stream_ws(websocket: WebSocket, pid: str) -> None:
@@ -565,7 +614,21 @@ def create_app(
         # this transport needs no per-task branch here; every turn gets the same
         # surface a normal chat would.
         default_surface = _SURFACES.get(websocket.query_params.get("surface", ""), "")
-        bridge = StreamBridge(gateway, websocket, chat_id)
+        history_limit = websocket.query_params.get("history_limit")
+        try:
+            page_limit = int(history_limit) if history_limit is not None else None
+            if page_limit is not None and not 1 <= page_limit <= 50:
+                raise ValueError("Invalid history limit")
+        except ValueError:
+            await websocket.close(code=1008, reason="invalid-history-limit")
+            return
+        bridge = StreamBridge(
+            gateway,
+            websocket,
+            chat_id,
+            history_limit=page_limit,
+            history_from=websocket.query_params.get("history_from"),
+        )
 
         try:
             await bridge.open()
@@ -823,7 +886,9 @@ def create_app(
             # StreamBridge) so the voice client folds it with the one shared reducer
             # → tool chips/cards, task cards, deliverables, all "for free".
             with contextlib.suppress(Exception):
-                await websocket.send_json({"event": to_wire(as_drawn(event, gateway.catalog))})
+                await websocket.send_json(
+                    {"event": to_wire(as_drawn(event, gateway.catalog, gateway.card_sources))}
+                )
 
         # The voice agent can hang up the call itself via its end_call tool, which
         # trips this event; wait_end() (below) then ends the job race → teardown.

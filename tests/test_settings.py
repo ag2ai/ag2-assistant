@@ -33,6 +33,15 @@ def test_settings_preserve_overlay_sections(tmp_path):
     assert data["focuses"] == ["research"]
 
 
+def test_compaction_setting_preserves_memory_policy_and_other_sections(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("memory:\n  aggregate_every_n_turns: 7\nllm:\n  model: overlay\n")
+    Settings(path).set_compact_max_tokens(75_000)
+    data = yaml.safe_load(path.read_text())
+    assert data["memory"] == {"aggregate_every_n_turns": 7, "compact_max_tokens": 75_000}
+    assert data["llm"] == {"model": "overlay"}
+
+
 def test_profile_settings_accessor(tmp_path):
 
     s = profile_settings(tmp_path)

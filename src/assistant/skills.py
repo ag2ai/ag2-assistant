@@ -17,6 +17,7 @@ from typing import Protocol
 from ag2.context import ConversationContext
 from ag2.exceptions import SkillNotFoundError
 
+from assistant.compaction import SkillTextLoaded
 from assistant.state_store import ORIGIN_BUNDLED, ORIGIN_GLOBAL, ORIGIN_PROFILE, StateStore
 
 
@@ -39,6 +40,7 @@ def skill_origin(location: str | None, bundled_root: Path, profile_root: Path | 
 
 
 SKILLS_DOCUMENT = "skills.json"
+SKILL_BLOCKED = ["rm -rf /", "sudo", "shutdown", "reboot", "mkfs", ":(){"]
 
 
 class SkillStateStore(StateStore):
@@ -69,27 +71,40 @@ class FilteredSkillRuntime:
     set.
     """
 
-    def __init__(self, inner, is_available: Callable[[DiscoveredSkill], bool]) -> None:
+    def __init__(
+        self, inner, is_available: Callable[[DiscoveredSkill], bool], *, snapshot: bool = False
+    ) -> None:
         self._inner = inner
         self._is_available = is_available
+        self._snapshot = self.skills if snapshot else None
 
     @property
     def skills(self):
+        if self.__dict__.get("_snapshot") is not None:
+            return list(self.__dict__["_snapshot"])
         return [skill for skill in self._inner.skills if self._is_available(skill)]
 
     async def read(self, name: str, context: ConversationContext) -> str:
         self._guard(name)
-        return await self._inner.read(name, context)
+        text = await self._inner.read(name, context)
+        await context.send(SkillTextLoaded(name=name, resource="SKILL.md", text=text))
+        return text
 
     async def read_resource(self, name: str, resource: str, context: ConversationContext) -> str:
         self._guard(name)
-        return await self._inner.read_resource(name, resource, context)
+        text = await self._inner.read_resource(name, resource, context)
+        await context.send(SkillTextLoaded(name=name, resource=resource, text=text))
+        return text
 
     async def execute(self, name: str, script: str, context: ConversationContext, args=None) -> str:
         self._guard(name)
         return await self._inner.execute(name, script, context, args)
 
     def _guard(self, name: str) -> None:
+        if self._snapshot is not None:
+            if not any(skill.name == name for skill in self._snapshot):
+                raise SkillNotFoundError(f"Skill {name!r} not found")
+            return
         skill = next((item for item in self._inner.skills if item.name == name), None)
         if skill is None:
             # Not this runtime's: the toolkit's "not mine" signal, raised before the

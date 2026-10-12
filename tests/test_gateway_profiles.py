@@ -14,10 +14,9 @@ from starlette.websockets import WebSocketDisconnect
 from assistant import AG2_VERSION, __version__
 from assistant.gateway.app import create_app
 from assistant.profiles import ProfileRegistry
-from assistant.secrets import SecretStore
 from assistant.usage import _today as t
 from tests.support.apps import api, make_manager
-from tests.support.fakes import fake_agent_factory
+from tests.support.fakes import ScriptedModels, fake_agent_factory
 
 
 def _app(paths, **kw):
@@ -110,24 +109,23 @@ def test_onboarded_endpoint_flips_registry_flag(paths):
 # --- secrets/key reloads all runtimes ---
 
 
-def test_secrets_key_reloads_all_runtimes(paths):
-    """POST /api/secrets/key reloads every runtime — observed through the rebuilt
-    agents (a reload re-asks the agent factory for that profile's config)."""
-
-    built: list = []
-    manager = make_manager(paths, agent_factory=fake_agent_factory(built=built))
+def test_secrets_key_refreshes_all_profiles_next_turns(paths):
+    """An install-wide key update reaches real requests from every live Profile."""
+    models = ScriptedModels()
+    manager = make_manager(paths, model_factory=models)
     with TestClient(create_app(manager)) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
-
-        built.clear()
-        assert client.post("/api/secrets/key", json={"provider": "openai", "value": "sk"}).json()[
-            "ok"
-        ]
-        assert {cfg.data_dir.name for cfg in built} == {"work", "personal"}
-        # the key really landed in the store, and every runtime now resolves it
-        assert SecretStore(paths).status({})["openai"]["set"] is True
-        assert {cfg.secret_env.get("OPENAI_API_KEY") for cfg in built} == {"sk"}
+        for key in ("first-key", "next-key"):
+            assert client.post(
+                "/api/secrets/key", json={"provider": "openai", "value": key}
+            ).json()["ok"]
+            for pid in ("work", "personal"):
+                response = client.post(
+                    api(pid, "/message"), json={"text": "current key", "chat_id": "existing"}
+                )
+                assert response.status_code == 200, response.text
+                assert models.requests[-1][0].secret_env["OPENAI_API_KEY"] == key
 
 
 # --- workspace is derived under the profile dir (not a user choice) ---

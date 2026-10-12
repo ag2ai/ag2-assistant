@@ -138,6 +138,7 @@ layout:
   - {id: foot_asof_value, component: Text, text: {path: /asOf}, variant: caption, format: time}
 
 example:
+  _parameters: {symbols: "NVDA,AAPL", title: Technology}
   title: Technology
   currency: USD
   status: Market open
@@ -164,3 +165,13 @@ example:
       exchange: NasdaqGS
       spark: [100, 82, 90, 60, 66, 48, 40, 20]
       state: open
+
+parameters:
+  symbols: {type: string}
+  title: {type: string, default: ""}
+source:
+  tool: get_quotes
+  args:
+    symbols: {parameter: symbols}
+    title: {parameter: title}
+  interval_seconds: 60

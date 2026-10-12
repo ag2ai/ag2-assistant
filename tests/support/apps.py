@@ -7,9 +7,19 @@ on fixtures — the fixtures in ``conftest.py`` are thin wrappers over these.
 import json
 import time
 
+from ag2.middleware import Middleware
+
+from assistant.agent import create_agent
 from assistant.codex_auth import CodexAuthError
+from assistant.compaction import (
+    BudgetedModelConfig,
+    CheckpointMiddleware,
+    CompactingAgent,
+    read_compaction_source,
+)
 from assistant.config import load_config
 from assistant.gateway.app import create_app
+from assistant.gateway.core import Gateway
 from assistant.gateway.profile_manager import ProfileManager
 from assistant.paths import Paths
 from assistant.profiles import ProfileRegistry
@@ -19,6 +29,22 @@ from tests.support.fakes import (
     fake_summary_factory,
     fake_title_factory,
 )
+
+
+def compacting_agent(config, knowledge, *, tools=(), **options):
+    agent = CompactingAgent(
+        "chat",
+        config=BudgetedModelConfig(config),
+        knowledge=knowledge,
+        tools=[read_compaction_source, *tools],
+        **options,
+    )
+    agent.insert_middleware(
+        Middleware(
+            CheckpointMiddleware, strategy=knowledge.compact, store=knowledge.store, actor="chat"
+        )
+    )
+    return agent
 
 
 def make_paths(root) -> Paths:
@@ -43,6 +69,8 @@ def make_manager(
     title_factory=None,
     summary_factory=None,
     made=None,
+    model_factory=None,
+    environment_factory=None,
 ):
     """A ProfileManager over ``paths`` (or the HOME-isolated layout) whose every
     network-touching collaborator is a fake unless the caller injects its own.
@@ -52,7 +80,10 @@ def make_manager(
         env=env,
         memory=memory,
         persist=persist,
-        agent_factory=agent_factory or fake_agent_factory(),
+        agent_factory=agent_factory
+        or (create_agent if model_factory is not None else fake_agent_factory()),
+        model_factory=model_factory,
+        environment_factory=environment_factory,
         channel_factory=channel_factory or fake_channel_factory(made),
         title_factory=title_factory or fake_title_factory(),
         summary_factory=summary_factory or fake_summary_factory(),
@@ -131,3 +162,18 @@ def write_codex_session(paths, *, access_token="TOK", refresh_token="RX", accoun
             }
         )
     )
+
+
+def turn_catalog(client, models, pid: str) -> str:
+    """The Skill catalog offered to a real Agent through the public message route."""
+    response = client.post(
+        api(pid, "/message"), json={"text": "capabilities", "chat_id": "refresh"}
+    )
+    assert response.status_code == 200, response.text
+    prompt = "\n".join(models.requests[-1][1])
+    return prompt.split("<available_skills>", 1)[-1].split("</available_skills>", 1)[0]
+
+
+def real_gateway(config, **kwargs):
+    """A production Gateway with deterministic background naming for acceptance tests."""
+    return Gateway(config, title_factory=fake_title_factory(), **kwargs)
