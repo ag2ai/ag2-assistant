@@ -499,55 +499,46 @@ class CheckpointCompact:
             return [*protected, *projected]
         spent: list[UsageEvent] = []
         calls = [0]
-        deadline = asyncio.timeout(self.limits.timeout_s)
         try:
-            async with deadline:
-                if available <= 0:
-                    raise ContextBudgetError(
-                        "Instructions and tool schemas exceed the input budget"
-                    )
-                reduced = await self.excerpt(source, session, context, available)
-                if (
-                    request_tokens([*protected, *reduced], context.prompt, tools, response_schema)
-                    <= budget
-                ):
-                    return [*protected, *reduced]
-                await context.send(
-                    CompactionStarted(
-                        agent=session.actor, strategy=type(self).__name__, event_count=len(original)
-                    )
+            if available <= 0:
+                raise ContextBudgetError("Instructions and tool schemas exceed the input budget")
+            reduced = await self.excerpt(source, session, context, available)
+            if (
+                request_tokens([*protected, *reduced], context.prompt, tools, response_schema)
+                <= budget
+            ):
+                return [*protected, *reduced]
+            await context.send(
+                CompactionStarted(
+                    agent=session.actor, strategy=type(self).__name__, event_count=len(original)
                 )
-                reduced = await self.checkpoint(
-                    original,
-                    reduced,
-                    raw,
-                    session,
-                    context,
-                    config,
-                    available,
-                    spent,
-                    calls,
-                    tools,
-                    response_schema,
+            )
+            reduced = await self.checkpoint(
+                original,
+                reduced,
+                raw,
+                session,
+                context,
+                config,
+                available,
+                spent,
+                calls,
+                tools,
+                response_schema,
+            )
+            protected = self.skill_events(reduced, session)
+            if (
+                request_tokens([*protected, *reduced], context.prompt, tools, response_schema)
+                > budget
+            ):
+                raise ContextBudgetError(
+                    "The latest request and protected context exceed the input budget"
                 )
-                protected = self.skill_events(reduced, session)
-                if (
-                    request_tokens([*protected, *reduced], context.prompt, tools, response_schema)
-                    > budget
-                ):
-                    raise ContextBudgetError(
-                        "The latest request and protected context exceed the input budget"
-                    )
         except BaseException as exc:
-            error = (
-                f"Compaction timed out after {self.limits.timeout_s:g} seconds"
-                if isinstance(exc, TimeoutError) and deadline.expired()
-                else str(exc)
-                or (
-                    "Compaction cancelled"
-                    if isinstance(exc, asyncio.CancelledError)
-                    else f"Compaction failed ({type(exc).__name__})"
-                )
+            error = str(exc) or (
+                "Compaction cancelled"
+                if isinstance(exc, asyncio.CancelledError)
+                else f"Compaction failed ({type(exc).__name__})"
             )
             await context.send(
                 CompactionFailed(
@@ -822,13 +813,22 @@ class CheckpointCompact:
                 fragments.pop(0)
             request = ModelRequest.ensure_request(inputs)
             calls[0] += 1
-            response = await client(
-                [request],
-                ConversationContext(MemoryStream()),
-                tools=[],
-                response_schema=CHECKPOINT_SCHEMA,
-                serializer=serializer,
-            )
+            deadline = asyncio.timeout(self.limits.timeout_s)
+            try:
+                async with deadline:
+                    response = await client(
+                        [request],
+                        ConversationContext(MemoryStream()),
+                        tools=[],
+                        response_schema=CHECKPOINT_SCHEMA,
+                        serializer=serializer,
+                    )
+            except TimeoutError as exc:
+                if not deadline.expired():
+                    raise
+                raise TimeoutError(
+                    f"A compaction model call timed out after {self.limits.timeout_s:g} seconds"
+                ) from exc
             usage = UsageEvent(
                 response.usage, kind="compaction", model=response.model, provider=response.provider
             )
