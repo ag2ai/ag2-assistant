@@ -9,7 +9,7 @@ event log). Two families here:
 - `NativeToolLoopDetector` (AG2's `LoopDetector`, narrowed to our own tools): the
   same tool called repeatedly with *identical* arguments — a tight retry loop.
 - `ToolChurnObserver`: a turn that makes *many* tool calls without producing an
-  answer — the flailing case (e.g. 20+ varied searches) the LoopDetector misses
+  answer — the flailing case (e.g. 30+ varied searches) the LoopDetector misses
   because the arguments differ each time.
 
 **Wedged-turn (silence-driven):**
@@ -52,7 +52,7 @@ except ImportError:  # pragma: no cover - older AG2 without the lifecycle events
 from ag2.watch import EventWatch
 
 # A turn that calls this many tools without answering is treated as stuck/flailing.
-_CHURN_THRESHOLD = 20
+_CHURN_THRESHOLD = 30
 
 # Default silence thresholds (seconds). Overridable per-instance / via config.
 _SILENCE_ALERT_S = 300.0
@@ -78,7 +78,7 @@ class NativeToolLoopDetector(LoopDetector):
     provider's own timeouts to catch (see `coding/acp_provider.py`), not ours.
 
     `ToolChurnObserver` deliberately still counts these: its threshold is a
-    volume of calls, not their identity, so a delegation that burns 20+ tool
+    volume of calls, not their identity, so a delegation that burns 30+ tool
     calls without answering is worth flagging however it was spawned.
     """
 
