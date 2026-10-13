@@ -137,6 +137,7 @@ class CardSourceUpdated(AssistantEvent):
     error: str = ""
     data: dict = Field(default_factory=dict)
     code_version: str = ""
+    approval_required: bool = True
 
 
 class A2UIActionSubmitted(AssistantEvent):

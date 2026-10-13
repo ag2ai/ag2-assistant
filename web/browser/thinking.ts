@@ -267,4 +267,18 @@ results.push({ name: 'read chat shows clickable title and identifier with unavai
 chatPopup.querySelector<HTMLButtonElement>('.chat-name')!.click()
 await tick()
 results.push({ name: 'read chat opens the named conversation and dismisses the run list', failures: location.pathname.endsWith('/c/web-history') && !target.querySelector('.tool-runs:popover-open') ? [] : ['Conversation navigation failed or popover remains open'] })
+reset()
+emit(request)
+emit(response('A reply aligned with the input.'))
+for (const width of [360, 620, 780, 1000]) {
+  target.style.width = `${width}px`
+  await tick()
+  await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+  const reply = target.querySelector<HTMLElement>('.msg.agent .bubble')!.getBoundingClientRect()
+  const input = target.querySelector<HTMLElement>('.inputbox')!.getBoundingClientRect()
+  const failures: string[] = []
+  if (Math.abs(reply.left - input.left) > 1 || Math.abs(reply.right - input.right) > 1) failures.push('Messages and input use different column bounds')
+  results.push({ name: `chat column/${width}`, failures })
+}
+target.style.width = ''
 Object.assign(window, { layoutResults: results })

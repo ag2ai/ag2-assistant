@@ -504,7 +504,7 @@
    accent shows only as a thin inset "signal bar" on the leading edge + a faint
    tint/border (tokens in colors.css) — never a solid fill, so any accent stays
    readable. Matches the sidebar's active-row signal language. */
-.msg.user .bubble { background: var(--user-bg); color: var(--user-ink); border: 1px solid var(--user-bubble-border); box-shadow: inset 2px 0 0 var(--accent); white-space: pre-wrap; max-width: 72%; }
+.msg.user .bubble { background: var(--user-bg); color: var(--user-ink); border: 1px solid var(--user-bubble-border); box-shadow: inset 2px 0 0 var(--accent); max-width: 72%; }
 /* A message fed to the running turn: dimmed until the agent picks it up (it resolves to
    a normal bubble when AG2 drains it), with a line saying that's what's happening. */
 .msg.user.queued { flex-direction: column; align-items: flex-end; gap: 4px; }
@@ -513,12 +513,25 @@
 /* Assistant replies read as plain prose (ChatGPT / Claude style): no bubble
    background, border, or padding — just full-width text. Only the user's messages
    keep a bubble. */
-.msg.agent .bubble { background: none; border: none; padding: 0; max-width: 100%; }
+.msg.agent .bubble { background: none; border: none; padding: 0; width: 100%; max-width: 100%; min-width: 0; }
 .msg.agent .bubble.empty { color: var(--muted); }
 .bubble :first-child { margin-top: 0; } .bubble :last-child { margin-bottom: 0; }
 .bubble a { color: var(--accent); }
 .bubble pre { background: var(--code); padding: 10px; border-radius: 8px; overflow-x: auto; font-family: var(--mono); font-size: 13px; }
 .bubble code { font-family: var(--mono); font-size: .9em; }
+.message-disclosure-button { flex: none; border: 1px solid var(--line); border-radius: var(--radius-pill); background: var(--surface); color: var(--muted); padding: 4px 10px; font: inherit; font-size: 12px; line-height: 1.4; cursor: pointer; }
+.message-disclosure-button:hover { color: var(--ink); border-color: var(--accent); }
+.message-disclosure-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.message-code { margin: 1em 0; border: 1px solid var(--line); border-radius: 8px; background: var(--code); overflow: hidden; }
+.message-code-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px; border-bottom: 1px solid var(--line); color: var(--muted); font: 12px var(--mono); }
+.message-code-header > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.message-code-content { font-size: 13px; line-height: 1.6; }
+.message-code-content.is-collapsed { max-height: calc(var(--message-preview-lines) * 1lh + 20px); overflow: hidden; mask-image: linear-gradient(#000 calc(100% - 1.5lh), transparent); }
+.message-code-content[hidden], .message-section-content[hidden] { display: none; }
+.bubble .message-code pre { margin: 0; border-radius: 0; }
+.message-section { margin: 1.25em 0; }
+.message-section-heading { display: flex; align-items: baseline; gap: 12px; margin-bottom: .6em; }
+.message-section-heading > :is(h1, h2, h3, h4, h5, h6) { flex: 1; min-width: 0; margin: 0; }
 /* Contain markdown-embedded images so a wide one fits its box instead of pushing
    off the side (workspace images the agent inlines via ![](…)). */
 .bubble img, .asset img, .viewer .vbody img { max-width: 100%; height: auto; display: block; margin: 8px 0; border: 1px solid var(--line); border-radius: 10px; }
@@ -607,7 +620,7 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 .a2ui-t-quote { font-size: 12.5px; line-height: 1.5; padding-left: 12px; border-left: 2px solid var(--a2ui-accent, var(--accent)); }
 /* A pill is a chip rather than a step on the type scale: a short label a Card
    sets beside others — a filter, a section, a cadence. Its ink is its tone's. */
-.a2ui-t-pill { display: inline-flex; align-items: center; flex: none; align-self: flex-start; border: 1px solid var(--line); background: var(--surface); border-radius: var(--radius-pill); padding: 3px 9px; font-size: 11.5px; line-height: 1.35; }
+.a2ui-t-pill { display: inline-flex; align-items: center; flex: none; align-self: flex-start; max-width: 100%; border: 1px solid var(--line); background: var(--surface); border-radius: var(--radius-pill); padding: 3px 9px; font-size: 11.5px; line-height: 1.35; }
 /* A badge is a status mark: one short word a Card sets against a row, outlined in
    its own tone rather than in the surface's rule colour. */
 .a2ui-t-badge { display: inline-flex; align-items: center; flex: none; align-self: flex-start; border: 1px solid currentColor; border-radius: var(--radius-sm); padding: 1px 7px; font-family: var(--font-mono); font-size: 9px; font-weight: var(--fw-bold); letter-spacing: .14em; line-height: 1.6; text-transform: uppercase; }
@@ -899,7 +912,8 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
    right — a full-bleed gradient paints over the scrollbar and makes its thumb appear
    to fade out in the corner. The insets sit over empty margin, so the fade over the
    (centered) message column is unaffected. */
-.composer { position: absolute; left: 16px; right: 16px; bottom: 0; padding: 28px 20px 16px; background: linear-gradient(to bottom, transparent, var(--bg) 42%); pointer-events: none; }
+/* The inset and padding share the message column's 20px gutter. */
+.composer { position: absolute; left: 16px; right: 16px; bottom: 0; padding: 28px 4px 16px; background: linear-gradient(to bottom, transparent, var(--bg) 42%); pointer-events: none; }
 .composer > * { pointer-events: auto; }
 .cnote { max-width: calc(var(--thread-max) - 40px); margin: 8px auto 0; text-align: center; font-size: 12px; color: var(--muted); }
 /* Scroll-to-latest — floats above the composer, centered, only when unpinned. Its

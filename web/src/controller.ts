@@ -149,8 +149,8 @@ export function openThread(kind: ThreadKind, id: string): void {
   }
 }
 
-export function send(text: string, attachments: AttachmentPayload[] = []): void {
-  if (!client || (!text.trim() && !attachments.length)) return
+export function send(text: string, attachments: AttachmentPayload[] = []): boolean {
+  if (!client || (!text.trim() && !attachments.length)) return false
   thread.update((t) => ({ ...t, busy: true }))
   const t = get(thread)
   // A model chosen before this chat existed rides the message that creates it; empty
@@ -183,6 +183,7 @@ export function send(text: string, attachments: AttachmentPayload[] = []): void 
           ]
     )
   }
+  return true
 }
 
 // Stop the running turn. Stays busy until the server confirms — the turn ends when

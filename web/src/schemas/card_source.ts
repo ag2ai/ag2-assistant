@@ -13,10 +13,11 @@ export const CardSourceEvent = z.object({
   created_at: z.number().optional(), surface_id: z.string(), source_id: z.string(), path: z.string(),
   status: z.enum(['updated', 'error', 'approval_required', 'discarded', 'configured']),
   error: z.string(), data: z.record(z.string(), z.unknown()), code_version: z.string(),
+  approval_required: z.boolean(),
 })
 export type CardSourceEvent = z.infer<typeof CardSourceEvent>
 export const CardSourceResponse = z.object({
   status: z.enum(['updated', 'error', 'approval_required', 'discarded', 'configured']),
-  events: z.array(z.object({ type: z.string(), data: z.record(z.string(), z.unknown()) })),
+  events: z.array(z.object({ type: z.string(), data: CardSourceEvent })),
 })
 export type SourceTarget = { source_id: string; path?: string; chat_id?: string; surface_id?: string }

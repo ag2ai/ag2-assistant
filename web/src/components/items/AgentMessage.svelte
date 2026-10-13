@@ -1,5 +1,6 @@
 <script lang="ts">
   import { renderMarkdown, linkifyDom, bindImages } from '../../lib/markdown.ts'
+  import { bindMessageBlocks, MESSAGE_PREVIEW_LINES } from '../../lib/messageBlocks.ts'
   import { a2uiComposingSurfaceId, splitA2UIText } from '../../lib/a2ui.ts'
   import A2UIComposing from './A2UIComposing.svelte'
   import { go, openAsideFile } from '../../router.ts'
@@ -22,11 +23,13 @@
   )
   // bind:this target: the effect below reads it, so it has to be reactive.
   let el: HTMLDivElement | undefined = $state()
+  const blockState = new Map<string, boolean>()
   $effect(() => {
     if (!el) return
     el.innerHTML = renderMarkdown(displayText)        // re-runs when item.text changes (streaming)
     linkifyDom(el, (id) => go('/t/' + id))
     bindImages(el, (i) => openAsideFile(i.path))
+    bindMessageBlocks(el, { id: `agent-message-${item.id}`, streaming: !!item.streaming, state: blockState })
   })
   // Rate only finalized, non-empty replies that carry a stable key (created_at) —
   // which is also the feedback target id, so the two travel together.
@@ -36,7 +39,7 @@
 
 <!-- An A2UI-only reply (payload, no prose) has nothing to put in the bubble. -->
 {#if displayText || item.empty || (item.streaming && !composing)}
-  <div class="msg agent"><div class="bubble" class:voice={item.voice} class:empty={item.empty} bind:this={el}></div></div>
+  <div class="msg agent"><div class="bubble" class:voice={item.voice} class:empty={item.empty} style={`--message-preview-lines: ${MESSAGE_PREVIEW_LINES}`} bind:this={el}></div></div>
 {/if}
 {#if composing && !replacesCanvas}
   <A2UIComposing />
