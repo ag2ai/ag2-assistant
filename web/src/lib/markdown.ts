@@ -2,7 +2,6 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { api as P } from './profile.ts'
 import { foreignBlock } from './foreignBlock.ts'
-import { inlineMarkdownHtml } from './a2ui.ts'
 
 marked.use({ extensions: [foreignBlock] })
 
@@ -51,11 +50,6 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
 export function renderMarkdown(text: string | null | undefined): string {
   // marked.parse is sync unless async:true is set, which this app never does.
   return DOMPurify.sanitize(marked.parse(text || '') as string)
-}
-
-// Inline Markdown as sanitized HTML, for one line or paragraph inside a Card.
-export function renderInlineMarkdown(text: string): string {
-  return DOMPurify.sanitize(inlineMarkdownHtml(text))
 }
 
 // The image the Viewer is asked to open.
