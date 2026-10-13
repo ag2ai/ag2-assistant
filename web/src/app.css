@@ -614,6 +614,8 @@ a.tasklink { color: var(--accent); font-weight: 600; border-bottom: 1px dashed v
 /* Code is a path or a literal: the monospace face, at body size, so a file path
    reads as the thing it names rather than as prose. */
 .a2ui-t-code { font-family: var(--font-mono); font-size: 11.5px; line-height: 1.4; overflow-wrap: anywhere; }
+.a2ui-text code { font-family: var(--font-mono); font-size: 0.92em; background: var(--code); padding: 1px 4px; border-radius: 4px; }
+.a2ui-text a { color: var(--a2ui-accent, var(--accent)); }
 .a2ui-strong { font-weight: var(--fw-bold); }
 
 /* A marker: a rule down a layout's leading edge, in its own tone — the mark a Card

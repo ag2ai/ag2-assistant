@@ -2,7 +2,7 @@
 // chat shows while that happens. Run: node --test src/lib
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { a2uiComposingSurfaceId, a2uiIconName, a2uiLink, a2uiPresent, a2uiText, a2uiTone, a2uiValue, actionContext, applyA2UIMessage, axisScopes, bindingPath, childSlots, diffLines, markedColumn, metricParts, sparkPath, splitA2UIText, templateStart, withA2UIValue } from './a2ui.ts'
+import { a2uiComposingSurfaceId, a2uiIconName, a2uiLink, a2uiPresent, a2uiProse, a2uiText, a2uiTone, a2uiValue, actionContext, applyA2UIMessage, axisScopes, bindingPath, childSlots, diffLines, inlineMarkdownHtml, markedColumn, metricParts, sparkPath, splitA2UIText, stripInlineMarks, templateStart, withA2UIValue } from './a2ui.ts'
 import type { ThreadItem } from '../schemas/events.ts'
 
 const PROSE = "Here's the current tech picture on OzBargain."
@@ -613,4 +613,16 @@ test('nothing to draw is no diff at all', () => {
   assert.deepEqual(diffLines(''), [])
   assert.deepEqual(diffLines(undefined), [])
   assert.deepEqual(diffLines(42), [])
+})
+
+test('prose Text draws inline Markdown, block syntax stays text', () => {
+  assert.equal(inlineMarkdownHtml('**S&P 500:** up `1%`'), '<strong>S&amp;P 500:</strong> up <code>1%</code>')
+  assert.equal(inlineMarkdownHtml('# Not a heading'), '# Not a heading')
+  assert.ok(a2uiProse(undefined) && a2uiProse('body') && a2uiProse('quote'))
+  assert.ok(!a2uiProse('h4') && !a2uiProse('pill') && !a2uiProse('code'))
+})
+
+test('label Text drops paired bold and code marks', () => {
+  assert.equal(stripInlineMarks('**Up** __1%__ in `XLE`'), 'Up 1% in XLE')
+  assert.equal(stripInlineMarks('2 ** 3 and a*b'), '2 ** 3 and a*b')
 })
