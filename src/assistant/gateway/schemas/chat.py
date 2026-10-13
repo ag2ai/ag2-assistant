@@ -9,6 +9,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from assistant.gateway.chat_activity import ChatStatus
+
 
 class TranscriptMessageOut(BaseModel):
     """One display turn: gateway/core.py writes {role, text} pairs."""
@@ -32,6 +34,10 @@ class ChatRowOut(BaseModel):
     starred: bool
     preview: str
     turns: int
+    status: ChatStatus | None
+    status_version: str
+    status_updated: float
+    unread: bool
     # "acp" for now; the platform an externally-driven chat arrived on.
     origin_platform: str | None = None
     # The listener Connection's display name — the truth, never the client's own
@@ -45,6 +51,15 @@ class ChatListResponse(BaseModel):
     """GET /api/p/{pid}/chats — newest first."""
 
     chats: list[ChatRowOut]
+
+
+class ChatSeenResponse(BaseModel):
+    """The sidebar activity after acknowledging a particular Turn."""
+
+    status: ChatStatus | None
+    status_version: str
+    status_updated: float
+    unread: bool
 
 
 class TranscriptResponse(BaseModel):

@@ -8,6 +8,7 @@ test('ChatRow parses a plain chat with no origin fields', () => {
   const parsed = ChatRow.parse({
     chat_id: 'c1', updated: '2026-01-01T00:00:00Z', title: 'Hi',
     starred: false, preview: 'hi', turns: 1,
+    status: null, status_version: '', status_updated: 0, unread: false,
   })
   assert.equal(parsed.origin_platform, undefined)
   assert.equal(parsed.origin_name, undefined)
@@ -18,6 +19,7 @@ test('ChatRow parses an ACP chat carrying its origin', () => {
   const parsed = ChatRow.parse({
     chat_id: 'acp-1', updated: '2026-01-01T00:00:00Z', title: '',
     starred: false, preview: 'hi', turns: 1,
+    status: 'running', status_version: 'turn-1', status_updated: 1, unread: false,
     origin_platform: 'acp', origin_name: 'Space', origin_live: true,
   })
   assert.equal(parsed.origin_platform, 'acp')

@@ -4,8 +4,10 @@
   import { chats, tasks, listsLoaded, profiles, profileEpoch, pendingTaskEdit } from '../store.ts'
   import { route, go, goTab, newChatId } from '../router.ts'
   import { api } from '../transport/api/index.ts'
-  import { switchProfile } from '../controller.ts'
+  import { switchProfile, chatHistory } from '../controller.ts'
   import Icon from './Icon.svelte'
+  import ChatStatusIcon from './ChatStatusIcon.svelte'
+  import { mergeChatRows, mergeChatStatus } from '../lib/chatActivity.ts'
   import RailResizer from './RailResizer.svelte'
   import { drawerWidth } from '../store.ts'
   import { clampDrawerWidth } from '../lib/railWidth.ts'
@@ -94,6 +96,31 @@
   // The active profile's own totals, derived from the roll-up (one request, not two).
   const usage = $derived((usageAll?.profiles || []).find((p) => p.pid === $profiles.activeId) || null)
   let statusById = $state<Record<string, StatusRow | undefined>>({}) // pid -> row from GET /api/status
+  let viewVisible = $state(document.visibilityState === 'visible' && document.hasFocus())
+  const readVersions = new Map<string, string>()
+  const updateVisibility = () => { viewVisible = document.visibilityState === 'visible' && document.hasFocus() }
+
+  async function markChatSeen(chat: ChatRow) {
+    const epoch = get(profileEpoch)
+    const version = chat.status_version
+    readVersions.set(chat.chat_id, version)
+    $chats = $chats.map((row) => row.chat_id === chat.chat_id && row.status_version === version
+      ? { ...row, status: null, unread: false } : row)
+    try {
+      const snapshot = await api.chatSeen(chat.chat_id, version)
+      if (get(profileEpoch) !== epoch) return
+      $chats = $chats.map((row) => row.chat_id === chat.chat_id ? mergeChatStatus(row, snapshot) : row)
+    } catch {
+      if (get(profileEpoch) !== epoch) return
+      readVersions.delete(chat.chat_id)
+    }
+  }
+
+  $effect(() => {
+    if (!viewVisible || $route.name !== 'chat' || $chatHistory.loading || $chatHistory.chat !== $route.id) return
+    const chat = $chats.find((row) => row.chat_id === $route.id)
+    if (chat?.unread && chat.status_version && readVersions.get(chat.chat_id) !== chat.status_version) markChatSeen(chat)
+  })
   // A chip's dot: true when that profile has finished tasks the user hasn't opened
   // yet (rolls up the nav's per-row unread marker to the profile). Clears on the
   // next 5s poll once the run is opened (api.runSeen).
@@ -106,9 +133,7 @@
     try {
       const server = await api.chats()
       if (get(profileEpoch) === epoch) {
-        const ids = new Set(server.map((s) => s.chat_id))
-        // keep optimistic, not-yet-persisted chats (just sent, agent still replying)
-        $chats = [...$chats.filter((s) => !ids.has(s.chat_id)), ...server]
+        $chats = mergeChatRows($chats, server, readVersions)
       }
     } catch {}
     try { const all = await api.tasks(); if (get(profileEpoch) === epoch) $tasks = all } catch {}
@@ -164,10 +189,16 @@
     const t = setInterval(refresh, 5000)
     document.addEventListener('pointerdown', onDocPointer, true)
     document.addEventListener('keydown', onDocKey)
+    document.addEventListener('visibilitychange', updateVisibility)
+    window.addEventListener('focus', updateVisibility)
+    window.addEventListener('blur', updateVisibility)
     return () => {
       clearInterval(t)
       document.removeEventListener('pointerdown', onDocPointer, true)
       document.removeEventListener('keydown', onDocKey)
+      document.removeEventListener('visibilitychange', updateVisibility)
+      window.removeEventListener('focus', updateVisibility)
+      window.removeEventListener('blur', updateVisibility)
     }
   })
 
@@ -179,6 +210,7 @@
     if (lastEpoch === -1) { lastEpoch = e; return }  // initial load is onMount's job
     if (e === lastEpoch) return
     lastEpoch = e
+    readVersions.clear()
     $listsLoaded = false
     refresh()
   })
@@ -438,7 +470,7 @@
   {/if}
 
   {#snippet chatRow(s: ChatRow)}
-    <div class="drow chatrow" class:on={$route.name === 'chat' && $route.id === s.chat_id}
+    <div class="drow chatrow" class:on={$route.name === 'chat' && $route.id === s.chat_id} class:chatunread={s.unread}
          role="button" tabindex="0"
          onclick={() => openChat(s.chat_id)} onkeydown={(e) => rowKey(e, () => openChat(s.chat_id))}>
       {#if s.origin_platform === 'acp'}
@@ -468,6 +500,7 @@
         </span>
       {:else if renameChat !== s.chat_id}
         {#if s.updated}<span class="rowtime">{fmtAgoShort(s.updated)}</span>{/if}
+        <ChatStatusIcon status={s.status} />
         <button class="rowkebab" title="Chat actions" aria-haspopup="menu" aria-expanded={menuChat === s.chat_id}
           onclick={(e) => toggleMenu(e, s)}><Icon name="ellipsis-vertical" size={14} /></button>
         {#if menuChat === s.chat_id}
@@ -680,6 +713,7 @@
   .datesep:first-child { margin-top: 2px; }
   .chatrow { display: flex; align-items: center; gap: 8px; }
   .clabel { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chatunread .clabel { font-weight: 600; }
   /* ACP origin badge: the listener Connection's name, never the
      client's own self-reported clientInfo. The live dot marks a remote client
      driving the chat right now. */

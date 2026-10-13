@@ -224,6 +224,27 @@ class FeedbackCleared(AssistantEvent):
     target_kind: str = "message"  # "message" | "image" | "deliverable"
 
 
+class TurnStarted(AssistantEvent):
+    """A chat accepted a new Turn, including model and tool preparation."""
+
+    chat_id: str = Field(kw_only=False)
+    turn_id: str = ""
+
+
+class TurnCompleted(AssistantEvent):
+    """A chat Turn completed successfully."""
+
+    chat_id: str = Field(kw_only=False)
+    turn_id: str = ""
+
+
+class ChatSeen(AssistantEvent):
+    """The user read the outcome of a particular chat Turn."""
+
+    chat_id: str = Field(kw_only=False)
+    turn_id: str = ""
+
+
 class TurnCancelled(AssistantEvent):
     """The user stopped a turn while it was running. Emitted after AG2 cancels the
     run, so it lands after whatever the turn had already produced (tool calls and
