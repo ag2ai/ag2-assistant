@@ -16,6 +16,8 @@ export const ChatSeen = z.object({
   status: ChatStatus.nullable(),
   status_version: z.string(),
   status_updated: z.number(),
+  turn_started_at: z.number(),
+  waiting_until: z.number().nullable(),
   unread: z.boolean(),
 })
 export type ChatSeen = z.infer<typeof ChatSeen>

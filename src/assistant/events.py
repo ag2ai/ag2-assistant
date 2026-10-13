@@ -174,6 +174,7 @@ class InquiryRaised(AssistantEvent):
     detail: str = ""  # secondary context, e.g. the exact code/command to be run
     options: list[str] = Field(default_factory=list)
     kind: str = "question"  # "question" | "permission"
+    expires_at: float | None = None
 
 
 class InquiryAnswered(AssistantEvent):

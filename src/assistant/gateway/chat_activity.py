@@ -26,16 +26,18 @@ class ChatActivity:
     turn_id: str = ""
     seen_turn: str = ""
     updated: float = 0.0
-    pending: set[str] = field(default_factory=set)
+    turn_started_at: float = 0.0
+    pending: dict[str, float | None] = field(default_factory=dict)
 
     def observe(self, event: BaseEvent) -> None:
         if isinstance(event, TurnStarted):
             self.state, self.turn_id = "running", event.turn_id
+            self.turn_started_at = event.created_at
             self.pending.clear()
         elif isinstance(event, InquiryRaised):
-            self.pending.add(event.inquiry_id)
+            self.pending[event.inquiry_id] = event.expires_at
         elif isinstance(event, InquiryAnswered):
-            self.pending.discard(event.inquiry_id)
+            self.pending.pop(event.inquiry_id, None)
         elif isinstance(event, TurnCompleted):
             self.state, self.turn_id = "completed", event.turn_id
             self.pending.clear()
@@ -65,5 +67,10 @@ class ChatActivity:
             "status": status,
             "status_version": self.turn_id,
             "status_updated": self.updated,
+            "turn_started_at": self.turn_started_at,
+            "waiting_until": min(
+                (deadline for deadline in self.pending.values() if deadline is not None),
+                default=None,
+            ),
             "unread": unread,
         }

@@ -58,6 +58,7 @@ class Inquiry:
     answer: str | None = None
     created_at: str = field(default_factory=now_iso)
     answered_at: str | None = None
+    expires_at: float | None = None
 
     @property
     def is_terminal(self) -> bool:
@@ -122,6 +123,7 @@ class InquiryStore:
         resource: str | None = None,
         channel: str | None = None,
         chat: str | None = None,
+        expires_at: float | None = None,
     ) -> Inquiry:
         inq = Inquiry(
             id=new_id("inq"),
@@ -133,6 +135,7 @@ class InquiryStore:
             resource=resource,
             channel=channel,
             chat=chat,
+            expires_at=expires_at,
         )
         await self._save(inq)
         await self._notify(inq, "raised")
@@ -273,6 +276,7 @@ class DurableAsker(PendingGuard):
 
     async def _ask(self, question: Question, timeout: float | None = None) -> str:
         to = timeout or self._timeout
+        expires_at = time.time() + to
         # Surface on the explicit chat, else the task's stream (so a task's
         # inquiries render inline on its page exactly as before).
         chat = self._chat or (f"task:{self.task_id}" if self.task_id else None)
@@ -284,14 +288,17 @@ class DurableAsker(PendingGuard):
             detail=getattr(question, "detail", None),
             channel=self.channel,
             chat=chat,
+            expires_at=expires_at,
         )
 
         async def via_transport() -> None:
-            ans = await self._inner.ask(question, timeout=to)
+            ans = await self._inner.ask(question, timeout=max(0.0, expires_at - time.time()))
             await self._store.answer(inq.id, ans)  # reflect the live answer
 
         inner_t = asyncio.ensure_future(via_transport())
-        wait_t = asyncio.ensure_future(self._store.wait(inq.id, timeout=to))
+        wait_t = asyncio.ensure_future(
+            self._store.wait(inq.id, timeout=max(0.0, expires_at - time.time()))
+        )
         try:
             await asyncio.wait({inner_t, wait_t}, return_when=asyncio.FIRST_COMPLETED)
             resolved = await self._store.get(inq.id)

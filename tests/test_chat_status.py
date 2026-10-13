@@ -2,12 +2,15 @@
 
 import asyncio
 import json
+import time
 
 import pytest
 
 from assistant.config import Config
 from assistant.events import InquiryAnswered, InquiryRaised, TurnStarted
 from assistant.gateway.core import Gateway
+from assistant.gateway.tasks_service import TaskService
+from assistant.hitl import DurableAsker, InquiryStore, NullAsker, Question
 from tests.support.apps import api
 from tests.support.fakes import FakeAgent, fake_title_factory
 
@@ -103,20 +106,64 @@ async def test_hitl_remains_visible_until_all_questions_are_resolved(paths):
     turn = asyncio.create_task(gw.send_message("Ask", chat_id="chat"))
     try:
         await asyncio.wait_for(agent.entered.wait(), 2)
-        await gw.emit_event("chat", InquiryRaised("first", question="Continue?"))
-        await gw.emit_event("chat", InquiryRaised("second", question="Which option?"))
+        started = (await row(gw))["turn_started_at"]
+        await gw.emit_event("chat", InquiryRaised("first", question="Continue?", expires_at=100))
+        await gw.emit_event(
+            "chat", InquiryRaised("second", question="Which option?", expires_at=200)
+        )
         waiting = await row(gw)
         assert waiting["status"] == "waiting" and not waiting["unread"]
+        assert waiting["waiting_until"] == 100
         assert (await gw.mark_chat_seen("chat", waiting["status_version"]))["status"] == "waiting"
         await gw.emit_event("chat", InquiryAnswered("first", answer="Yes"))
         assert (await row(gw))["status"] == "waiting"
-        await gw.emit_event("chat", InquiryAnswered("second", answer="A"))
+        assert (await row(gw))["waiting_until"] == 200
+        await gw.emit_event("chat", InquiryAnswered("second", status="expired"))
         assert (await row(gw))["status"] == "running"
+        assert (await row(gw))["waiting_until"] is None
+        assert (await row(gw))["turn_started_at"] == started
         agent.release.set()
         await turn
         assert (await row(gw))["status"] == "completed"
     finally:
         agent.release.set()
+        await asyncio.gather(turn, return_exceptions=True)
+        await gw.close()
+
+
+async def test_real_hitl_timeout_releases_waiting_through_the_event_stream(paths, tmp_path):
+    agent = HeldAgent()
+    gw = await gateway(paths, agent)
+    store = InquiryStore(path=tmp_path / "inquiries.db")
+    service = TaskService(config=Config.for_paths(paths), inquiry_store=store)
+    service.set_emitter(gw.emit_event)
+    asker = DurableAsker(NullAsker(), store, chat="chat", timeout=1)
+    turn = asyncio.create_task(gw.send_message("Ask", chat_id="chat"))
+    question = None
+    try:
+        await asyncio.wait_for(agent.entered.wait(), 2)
+        started = (await row(gw))["turn_started_at"]
+        question = asyncio.create_task(asker.ask(Question(text="Continue?")))
+        for _ in range(200):
+            waiting = await row(gw)
+            if waiting["status"] == "waiting":
+                break
+            await asyncio.sleep(0.01)
+        assert waiting["status"] == "waiting"
+        assert time.time() < waiting["waiting_until"] <= time.time() + 1
+        assert await asyncio.wait_for(question, 3) == ""
+        resumed = await row(gw)
+        assert resumed["status"] == "running" and resumed["waiting_until"] is None
+        assert resumed["turn_started_at"] == started
+        assert await store.list_pending() == []
+        agent.release.set()
+        await turn
+        assert (await row(gw))["status"] == "completed"
+    finally:
+        agent.release.set()
+        if question is not None:
+            question.cancel()
+            await asyncio.gather(question, return_exceptions=True)
         await asyncio.gather(turn, return_exceptions=True)
         await gw.close()
 

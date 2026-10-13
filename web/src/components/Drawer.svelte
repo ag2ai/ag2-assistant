@@ -6,7 +6,7 @@
   import { api } from '../transport/api/index.ts'
   import { switchProfile, chatHistory } from '../controller.ts'
   import Icon from './Icon.svelte'
-  import ChatStatusIcon from './ChatStatusIcon.svelte'
+  import ChatStatusLabel from './ChatStatusLabel.svelte'
   import { mergeChatRows, mergeChatStatus } from '../lib/chatActivity.ts'
   import RailResizer from './RailResizer.svelte'
   import { drawerWidth } from '../store.ts'
@@ -98,7 +98,16 @@
   let statusById = $state<Record<string, StatusRow | undefined>>({}) // pid -> row from GET /api/status
   let viewVisible = $state(document.visibilityState === 'visible' && document.hasFocus())
   const readVersions = new Map<string, string>()
+  let now = $state(Date.now() / 1000)
+  const liveStatuses = $derived($chats.some((chat) => chat.status === 'running' || chat.status === 'waiting'))
   const updateVisibility = () => { viewVisible = document.visibilityState === 'visible' && document.hasFocus() }
+
+  $effect(() => {
+    if (!liveStatuses) return
+    now = Date.now() / 1000
+    const clock = setInterval(() => { now = Date.now() / 1000 }, 1000)
+    return () => clearInterval(clock)
+  })
 
   async function markChatSeen(chat: ChatRow) {
     const epoch = get(profileEpoch)
@@ -499,8 +508,11 @@
           <button class="linkbtn" onclick={(e) => { e.stopPropagation(); confirmChat = '' }}>no</button>
         </span>
       {:else if renameChat !== s.chat_id}
-        {#if s.updated}<span class="rowtime">{fmtAgoShort(s.updated)}</span>{/if}
-        <ChatStatusIcon status={s.status} />
+        {#if s.status}
+          <ChatStatusLabel chat={s} {now} />
+        {:else if s.updated}
+          <span class="rowtime">{fmtAgoShort(s.updated)}</span>
+        {/if}
         <button class="rowkebab" title="Chat actions" aria-haspopup="menu" aria-expanded={menuChat === s.chat_id}
           onclick={(e) => toggleMenu(e, s)}><Icon name="ellipsis-vertical" size={14} /></button>
         {#if menuChat === s.chat_id}

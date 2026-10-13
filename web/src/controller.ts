@@ -16,7 +16,7 @@ import type { A2UISurfaceState, AttachmentPayload, ThreadItem, WireEvent } from 
 import { getActiveProfileId, setActiveProfileId } from './lib/profile.ts'
 import { setAccent } from './design/palette.ts'
 import { go, closeAside, route } from './router.ts'
-import { chatEventStatus, mergeChatStatus } from './lib/chatActivity.ts'
+import { chatEventStatus, mergeChatStatus, pendingChatDeadlines } from './lib/chatActivity.ts'
 
 // The two item kinds a voice session streams into (see _voiceTranscript).
 type VoiceRole = 'user' | 'agent'
@@ -109,9 +109,9 @@ export function openThread(kind: ThreadKind, id: string): void {
       thread.update((t) => {
         foldEvent(t.items, ev)
         if (kind === 'chat') {
-          const pending = t.items.some((item) => item.kind === 'inquiry' && !item.resolved)
           chats.update((rows) => rows.map((row) => {
             if (row.chat_id !== chat) return row
+            const pending = pendingChatDeadlines(t.items, row.turn_started_at)
             const snapshot = chatEventStatus(row, ev, pending)
             return snapshot ? mergeChatStatus(row, snapshot) : row
           }))
@@ -181,7 +181,7 @@ export function send(text: string, attachments: AttachmentPayload[] = []): boole
   if (t.kind === 'chat' && text.trim()) {
     chats.update((list) =>
       list.some((s) => s.chat_id === t.chat)
-        ? list.map((row) => row.chat_id === t.chat ? { ...row, status: 'running', unread: false } : row)
+        ? list.map((row) => row.chat_id === t.chat ? { ...row, status: 'running', turn_started_at: Date.now() / 1000, waiting_until: null, unread: false } : row)
         : [
             {
               chat_id: t.chat,
@@ -193,6 +193,8 @@ export function send(text: string, attachments: AttachmentPayload[] = []): boole
               status: 'running',
               status_version: '',
               status_updated: 0,
+              turn_started_at: Date.now() / 1000,
+              waiting_until: null,
               unread: false,
             },
             ...list,

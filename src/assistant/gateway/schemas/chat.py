@@ -37,6 +37,8 @@ class ChatRowOut(BaseModel):
     status: ChatStatus | None
     status_version: str
     status_updated: float
+    turn_started_at: float
+    waiting_until: float | None
     unread: bool
     # "acp" for now; the platform an externally-driven chat arrived on.
     origin_platform: str | None = None
@@ -59,6 +61,8 @@ class ChatSeenResponse(BaseModel):
     status: ChatStatus | None
     status_version: str
     status_updated: float
+    turn_started_at: float
+    waiting_until: float | None
     unread: bool
 
 
