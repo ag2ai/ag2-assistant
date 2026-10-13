@@ -9,6 +9,19 @@ export const TranscriptMessage = z.object({
 })
 export type TranscriptMessage = z.infer<typeof TranscriptMessage>
 
+export const ChatStatus = z.enum(['running', 'completed', 'error', 'waiting'])
+export type ChatStatus = z.infer<typeof ChatStatus>
+
+export const ChatSeen = z.object({
+  status: ChatStatus.nullable(),
+  status_version: z.string(),
+  status_updated: z.number(),
+  turn_started_at: z.number(),
+  waiting_until: z.number().nullable(),
+  unread: z.boolean(),
+})
+export type ChatSeen = z.infer<typeof ChatSeen>
+
 // The ACP-origin join: present together on a chat an ACP Peer owns,
 // absent on an owner-started one (gateway ships them via response_model_exclude_unset,
 // never null — see AGENTS.md "Front-end types"). origin_name is the listener
@@ -21,6 +34,7 @@ export const ChatRow = z.object({
   starred: z.boolean(),
   preview: z.string(),
   turns: z.number(),
+  ...ChatSeen.shape,
   origin_platform: z.string().optional(),
   origin_name: z.string().optional(),
   origin_live: z.boolean().optional(),

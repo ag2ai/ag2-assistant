@@ -174,6 +174,7 @@ class InquiryRaised(AssistantEvent):
     detail: str = ""  # secondary context, e.g. the exact code/command to be run
     options: list[str] = Field(default_factory=list)
     kind: str = "question"  # "question" | "permission"
+    expires_at: float | None = None
 
 
 class InquiryAnswered(AssistantEvent):
@@ -222,6 +223,27 @@ class FeedbackCleared(AssistantEvent):
 
     target_id: str = Field(kw_only=False)
     target_kind: str = "message"  # "message" | "image" | "deliverable"
+
+
+class TurnStarted(AssistantEvent):
+    """A chat accepted a new Turn, including model and tool preparation."""
+
+    chat_id: str = Field(kw_only=False)
+    turn_id: str = ""
+
+
+class TurnCompleted(AssistantEvent):
+    """A chat Turn completed successfully."""
+
+    chat_id: str = Field(kw_only=False)
+    turn_id: str = ""
+
+
+class ChatSeen(AssistantEvent):
+    """The user read the outcome of a particular chat Turn."""
+
+    chat_id: str = Field(kw_only=False)
+    turn_id: str = ""
 
 
 class TurnCancelled(AssistantEvent):
