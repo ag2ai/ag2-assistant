@@ -18,16 +18,19 @@ from time import monotonic
 
 import httpx
 import pytest
-from ag2 import Agent
+from ag2 import Agent, tool
 from ag2.config import ModelConfig
-from ag2.events import ModelMessage, ModelResponse
+from ag2.events import ModelMessage, ModelResponse, ToolCallEvent
+from ag2.testing import TestConfig
 from openai import APIError, AsyncOpenAI, AsyncStream, BadRequestError, InternalServerError
 
 from assistant.middleware import (
+    CitationMarkerMiddleware,
     LLMCallTimeout,
     LLMRetryMiddleware,
     LLMTimeoutMiddleware,
     _is_transient,
+    strip_citation_markers,
 )
 
 
@@ -397,3 +400,31 @@ async def test_cancel_during_backoff_stops_before_the_next_provider_call():
         with pytest.raises(asyncio.CancelledError):
             await task
     assert attempts == 1
+
+
+# --- Citation markers: provider markup stripped from replies and tool arguments ---
+
+
+def test_strip_citation_markers_removes_marker_and_leading_space():
+    text = "Friday, not Monday. citeturn5view4turn1view0\nNext"
+    assert strip_citation_markers(text) == "Friday, not Monday.\nNext"
+
+
+async def test_citation_markers_never_reach_tools_or_the_reply():
+    """A tool receives clean arguments and the final reply is clean."""
+    received: list[list[str]] = []
+
+    @tool
+    def brief(sections: list[str]) -> str:
+        """Draw a brief."""
+        received.append(sections)
+        return "drawn"
+
+    marked = json.dumps({"sections": ["Up 1%. citeturn1view0"]})
+    config = TestConfig(ToolCallEvent(name="brief", arguments=marked), "Done citeturn5view4.")
+    agent = Agent(
+        "cite-agent", config=config, tools=[brief], middleware=[CitationMarkerMiddleware()]
+    )
+    reply = await agent.ask("brief me")
+    assert received == [["Up 1%."]]
+    assert reply.body == "Done."

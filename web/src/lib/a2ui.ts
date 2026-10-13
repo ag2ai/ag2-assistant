@@ -1,3 +1,4 @@
+import { marked } from 'marked'
 import { nextItemId } from './ids.ts'
 import { fmtAgo, fmtClock, fmtDateTime } from './time.ts'
 import type { TimeValue } from './time.ts'
@@ -180,6 +181,24 @@ export function a2uiText(component: A2UIComponent, data: A2UIData = {}, scope = 
   if (format) return format(raw as TimeValue)
   const value = named(raw, component.map)
   return value == null || value === '' ? '' : String(value)
+}
+
+// Text variants that read as prose, so inline Markdown in them is drawn.
+const PROSE_VARIANTS = ['', 'body', 'caption', 'quote']
+
+/** Whether a Text component of this `variant` draws its inline Markdown. */
+export function a2uiProse(variant: unknown): boolean {
+  return PROSE_VARIANTS.includes(str(variant))
+}
+
+/** Inline Markdown (bold, italic, code, links) as unsanitized HTML; block syntax stays text. */
+export function inlineMarkdownHtml(text: string): string {
+  return marked.parseInline(text, { async: false })
+}
+
+/** `text` with paired bold and code marks removed, for labels drawn as plain text. */
+export function stripInlineMarks(text: string): string {
+  return text.replace(/(\*\*|__)(?=\S)(.+?)(?<=\S)\1/g, '$2').replace(/`([^`\n]+)`/g, '$1')
 }
 
 /** One Icon's glyph name: its bound value, put through the Card's own map — so a
