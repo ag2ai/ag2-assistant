@@ -2,7 +2,7 @@
 // chat shows while that happens. Run: node --test src/lib
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { a2uiComposingSurfaceId, a2uiIconName, a2uiLink, a2uiPresent, a2uiProse, a2uiText, a2uiTone, a2uiValue, actionContext, applyA2UIMessage, axisScopes, bindingPath, childSlots, diffLines, inlineMarkdownHtml, markedColumn, metricParts, sparkPath, splitA2UIText, stripInlineMarks, templateStart, withA2UIValue } from './a2ui.ts'
+import { a2uiComposingSurfaceId, a2uiIconName, a2uiLink, a2uiPresent, a2uiProse, a2uiText, a2uiTone, a2uiValue, actionContext, applyA2UIMessage, axisScopes, bindingPath, childSlots, diffLines, markedColumn, metricParts, sparkPath, splitA2UIText, stripInlineMarks, templateStart, withA2UIValue } from './a2ui.ts'
 import type { ThreadItem } from '../schemas/events.ts'
 
 const PROSE = "Here's the current tech picture on OzBargain."
@@ -615,9 +615,7 @@ test('nothing to draw is no diff at all', () => {
   assert.deepEqual(diffLines(42), [])
 })
 
-test('prose Text draws inline Markdown, block syntax stays text', () => {
-  assert.equal(inlineMarkdownHtml('**S&P 500:** up `1%`'), '<strong>S&amp;P 500:</strong> up <code>1%</code>')
-  assert.equal(inlineMarkdownHtml('# Not a heading'), '# Not a heading')
+test('only prose Text variants draw Markdown', () => {
   assert.ok(a2uiProse(undefined) && a2uiProse('body') && a2uiProse('quote'))
   assert.ok(!a2uiProse('h4') && !a2uiProse('pill') && !a2uiProse('code'))
 })
