@@ -1,47 +1,47 @@
-"""AG2 middleware — provider-agnostic guards wrapped around the agent loop.
-
-Two guards, composed so the retry wraps the timeout (each retry gets a fresh
-timeout window):
-
-**Per-LLM-call timeout** (`LLMTimeoutMiddleware`). Provider SDKs (Gemini in
-particular, on a streaming request) can hang a call indefinitely — no error, no
-timeout — leaving the turn awaiting a reply that never comes and a task stuck
-"running" forever. AG2's trigger-driven observers can't fire on the *absence* of
-events, so this wraps each LLM call in ``asyncio.timeout`` and raises when the
-wall clock runs out, turning a silent hang into a clean turn failure.
-
-Why middleware and not a provider timeout: ``GeminiConfig`` exposes only an
-``http_client`` (an ``httpx.AsyncClient``), i.e. transport-level read/connect
-timeouts — which don't cleanly cover a *streaming* call that stalls between
-chunks, and are Gemini-specific anyway. The ``on_llm_call`` hook wraps the whole
-call (streaming included) and is provider-agnostic, so it's the primary guard.
-
-**In-place retry** (`LLMRetryMiddleware`). AG2 ships a ``RetryMiddleware`` whose
-``retry_on`` tuple is the extension hook, but it has *no backoff* (it loops the
-call immediately) and can only match on exception *type* — so it can't tell a
-retryable 429/503 from a fatal 400. We mirror its style (a ``MiddlewareFactory``
-building a per-turn instance, looping ``call_next``) but add: exponential backoff
-(injectable so tests don't sleep) and a transient-only predicate — retry a
-``LLMCallTimeout`` unconditionally and a Gemini provider error only when its HTTP
-status is transient (429 / 500 / 502 / 503 / 504), never a fatal 4xx like a bad
-request. Wired OUTSIDE the timeout in ``agent.py`` so each attempt gets a fresh
-timeout window.
-"""
+"""Bound each LLM call, retry transient failures, and clean provider markup from replies."""
 
 import asyncio
+import copy
+import json
+import logging
 import random
-from collections.abc import Awaitable, Callable, Sequence
+import re
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
 from ag2.annotations import Context
-from ag2.events import BaseEvent, ModelResponse
+from ag2.events import BaseEvent, ModelRequest, ModelResponse, TextInput
 from ag2.middleware.base import BaseMiddleware, LLMCall, MiddlewareFactory
 
-# HTTP statuses worth another try: rate limit + the transient 5xx family. A fatal
-# 4xx (400 bad request, 401/403 auth, 404) is NOT here — retrying it just burns
-# the same error. Mirrors what a provider SDK's own retry policy treats as
-# transient; kept as data so it's obvious and testable.
+from assistant.compaction import ContextBudgetError
+
+logger = logging.getLogger(__name__)
+
 _TRANSIENT_HTTP_STATUS = frozenset({429, 500, 502, 503, 504})
+_TRANSIENT_PROVIDER_CODES = frozenset(
+    {
+        "server_error",
+        "internal_error",
+        "internal_server_error",
+        "overloaded_error",
+        "server_overloaded",
+        "rate_limit_error",
+        "rate_limit_exceeded",
+        "service_unavailable",
+    }
+)
+# Match transport base classes without importing optional provider SDKs.
+_TRANSIENT_NETWORK_TYPES = frozenset(
+    {
+        ("openai", "APIConnectionError"),
+        ("anthropic", "APIConnectionError"),
+        *(
+            (module, name)
+            for module in ("httpx", "httpx2")
+            for name in ("TimeoutException", "NetworkError", "RemoteProtocolError")
+        ),
+    }
+)
 
 
 class LLMCallTimeout(Exception):
@@ -85,39 +85,54 @@ class _LLMTimeoutMiddleware(BaseMiddleware):
             raise LLMCallTimeout(f"LLM call timed out after {self._seconds:g}s") from exc
 
 
-def _is_transient(exc: BaseException) -> bool:
-    """True if `exc` is a transient LLM-call failure worth retrying.
+def _is_transient_provider_error(exc: BaseException) -> bool:
+    """Recognize structured error codes in a provider's streaming error payload."""
+    codes = [getattr(exc, "code", None), getattr(exc, "type", None)]
+    body = getattr(exc, "body", None)
+    if isinstance(body, Mapping):
+        error = body.get("error", body)
+        if isinstance(error, Mapping):
+            codes.extend((error.get("code"), error.get("type")))
+    return any(isinstance(code, str) and code in _TRANSIENT_PROVIDER_CODES for code in codes)
 
-    Always retryable: our own ``LLMCallTimeout`` (a wedged call — the incident's
-    failure mode, and a fresh attempt often succeeds). Provider errors are matched
-    by HTTP status: a Gemini ``google.genai.errors.APIError`` carries a ``.code``
-    (429/5xx → transient; a fatal 4xx → not). Duck-typed on the ``code`` attribute
-    so we don't hard-import the Gemini SDK (other providers surface a comparable
-    ``status_code``); anything without a recognisable transient status is treated
-    as fatal and propagates immediately.
-    """
-    if isinstance(exc, LLMCallTimeout):
-        return True
-    status = getattr(exc, "code", None)
-    if status is None:
-        status = getattr(exc, "status_code", None)
-    if status is None:
-        return False
-    try:
-        return int(status) in _TRANSIENT_HTTP_STATUS
-    except (TypeError, ValueError):
-        return False
+
+def _is_transient(exc: BaseException) -> bool:
+    """Recognize transient HTTP and network failures, including explicit wrapped causes."""
+    seen: set[int] = set()
+    while id(exc) not in seen:
+        seen.add(id(exc))
+        if isinstance(exc, ContextBudgetError):
+            return False
+        for status in (
+            getattr(exc, "status_code", None),
+            getattr(exc, "code", None),
+            getattr(getattr(exc, "response", None), "status_code", None),
+        ):
+            if status is None:
+                continue
+            try:
+                status = int(status)
+            except (TypeError, ValueError):
+                continue
+            if 400 <= status <= 599:
+                return status in _TRANSIENT_HTTP_STATUS
+        if _is_transient_provider_error(exc):
+            return True
+        if isinstance(exc, (LLMCallTimeout, ConnectionError, TimeoutError)):
+            return True
+        if any(
+            (base.__module__.split(".", 1)[0], base.__name__) in _TRANSIENT_NETWORK_TYPES
+            for base in type(exc).__mro__
+        ):
+            return True
+        if exc.__cause__ is None:
+            break
+        exc = exc.__cause__
+    return False
 
 
 class LLMRetryMiddleware(MiddlewareFactory):
-    """Retry a failed LLM call a few times, with backoff, before propagating.
-
-    ``retries`` is the number of *re-tries* (so total attempts = ``retries + 1``).
-    Only transient failures (see ``_is_transient``) are retried; a fatal error
-    propagates on the first occurrence. Backoff is exponential from ``base_delay``
-    (capped at ``max_delay``) with a little jitter. ``sleep`` is injectable so
-    tests exercise the retry path without real waits.
-    """
+    """Retry transient failures up to ``retries`` times with capped exponential waits."""
 
     def __init__(
         self,
@@ -127,12 +142,14 @@ class LLMRetryMiddleware(MiddlewareFactory):
         max_delay: float = 30.0,
         predicate: Callable[[BaseException], bool] = _is_transient,
         sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
+        jitter: Callable[[], float] = random.random,
     ) -> None:
         self._retries = max(0, retries)
         self._base_delay = base_delay
         self._max_delay = max_delay
         self._predicate = predicate
         self._sleep = sleep
+        self._jitter = jitter
 
     def __call__(self, event: "BaseEvent", context: "Context") -> "BaseMiddleware":
         return _LLMRetryMiddleware(
@@ -143,6 +160,7 @@ class LLMRetryMiddleware(MiddlewareFactory):
             max_delay=self._max_delay,
             predicate=self._predicate,
             sleep=self._sleep,
+            jitter=self._jitter,
         )
 
 
@@ -157,6 +175,7 @@ class _LLMRetryMiddleware(BaseMiddleware):
         max_delay: float,
         predicate: Callable[[BaseException], bool],
         sleep: Callable[[float], Awaitable[Any]],
+        jitter: Callable[[], float],
     ) -> None:
         super().__init__(event, context)
         self._retries = retries
@@ -164,6 +183,7 @@ class _LLMRetryMiddleware(BaseMiddleware):
         self._max_delay = max_delay
         self._predicate = predicate
         self._sleep = sleep
+        self._jitter = jitter
 
     async def on_llm_call(
         self,
@@ -176,14 +196,86 @@ class _LLMRetryMiddleware(BaseMiddleware):
             try:
                 return await call_next(events, context)
             except Exception as exc:
-                # Out of retries, or a non-transient error → let it propagate so
-                # the timeout/executor failure path handles it as before.
                 if attempt >= self._retries or not self._predicate(exc):
                     raise
-                await self._sleep(self._backoff(attempt))
+                delay = self._backoff(attempt)
+                logger.warning(
+                    "LLM call failed (%s); retry %d/%d in %.2fs",
+                    type(exc).__name__,
+                    attempt + 1,
+                    self._retries,
+                    delay,
+                )
+                await self._sleep(delay)
                 attempt += 1
 
     def _backoff(self, attempt: int) -> float:
-        """Exponential backoff (base * 2**attempt), capped, with ±25% jitter."""
+        """Double the wait per retry, add up to 25% jitter, and cap the final delay."""
         delay = min(self._base_delay * (2**attempt), self._max_delay)
-        return delay * (1 + random.uniform(-0.25, 0.25))
+        return min(delay * (1 + self._jitter() * 0.25), self._max_delay)
+
+
+class ACPInstructionsMiddleware(MiddlewareFactory):
+    """Include resolved assistant instructions in ACP's text-only prompt transport."""
+
+    def __call__(self, event: BaseEvent, context: Context) -> BaseMiddleware:
+        return _ACPInstructionsMiddleware(event, context)
+
+
+class _ACPInstructionsMiddleware(BaseMiddleware):
+    async def on_llm_call(
+        self, call_next: LLMCall, events: Sequence[BaseEvent], context: Context
+    ) -> ModelResponse:
+        outgoing = list(events)
+        for index in range(len(outgoing) - 1, -1, -1):
+            if isinstance(request := outgoing[index], ModelRequest):
+                held = copy.copy(request)
+                instructions = "Current assistant instructions:\n" + "\n\n".join(context.prompt)
+                held.parts = [TextInput(content=instructions), *request.parts]
+                outgoing[index] = held
+                break
+        return await call_next(outgoing, context)
+
+
+# OpenAI search citations such as "\ue200cite\ue202turn5view4\ue201", with the space before them.
+_CITATION_MARKER = re.compile("[ \t]*\ue200[^\ue200\ue201]*\ue201|[\ue200-\ue202]")
+
+
+def strip_citation_markers(text: str) -> str:
+    """`text` without provider citation markers."""
+    return _CITATION_MARKER.sub("", text)
+
+
+def _strip_strings(value: Any) -> Any:
+    if isinstance(value, str):
+        return strip_citation_markers(value)
+    if isinstance(value, list):
+        return [_strip_strings(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _strip_strings(item) for key, item in value.items()}
+    return value
+
+
+class CitationMarkerMiddleware(MiddlewareFactory):
+    """Remove provider citation markers from reply text and tool-call arguments."""
+
+    def __call__(self, event: BaseEvent, context: Context) -> BaseMiddleware:
+        return _CitationMarkerMiddleware(event, context)
+
+
+class _CitationMarkerMiddleware(BaseMiddleware):
+    async def on_llm_call(
+        self, call_next: LLMCall, events: Sequence[BaseEvent], context: Context
+    ) -> ModelResponse:
+        response = await call_next(events, context)
+        if response.message is not None:
+            response.message.content = strip_citation_markers(response.message.content)
+        for call in response.tool_calls.calls:
+            try:
+                arguments = json.loads(call.arguments or "{}")
+            except ValueError:
+                continue
+            if (cleaned := _strip_strings(arguments)) != arguments:
+                call.arguments = json.dumps(cleaned, ensure_ascii=False)
+                call.serialized_arguments = cleaned
+        return response

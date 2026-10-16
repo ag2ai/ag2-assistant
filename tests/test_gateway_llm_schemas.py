@@ -19,8 +19,10 @@ from fastapi.testclient import TestClient
 
 from assistant import llm_configs
 from assistant.config import update_global_section
-from assistant.secrets import SecretStore
-from tests.support.apps import make_manager, make_paths, make_profile_app, write_codex_session
+from assistant.gateway.app import create_app
+from assistant.profiles import ProfileRegistry
+from tests.support.apps import api, make_manager, make_paths, make_profile_app, write_codex_session
+from tests.support.fakes import ScriptedModels
 
 # A saved secret is what makes a config's `secret`/`key_source` fields interesting;
 # every LLM body below is checked against this exact field list.
@@ -516,7 +518,7 @@ def test_a_catalog_that_cannot_be_probed_says_why(paths):
     app, _pid = make_profile_app(paths)
     with TestClient(app) as c:
         body = c.get("/api/llm-configs/models?type=openai_subscription").json()
-    assert body == {"models": [], "current": "", "reason": "not_probeable"}
+    assert body == {"models": [], "current": "", "reason": "unauthorized"}
 
 
 # ---- live-configs ----
@@ -648,26 +650,15 @@ def test_codex_logout_answers_the_bare_acknowledgement(client):
 # ---- the reload every install-wide write owes the running profiles ----
 
 
-def test_saving_a_key_reloads_every_runtime_so_the_next_turn_sees_it(paths):
-    """The routes moved into three modules but kept one shared `reload_all`; this
-    is the behaviour that would silently rot if a module grew its own copy."""
-    manager = make_manager(paths)
-    reloaded: list[str] = []
-    original = manager.reload
-
-    async def record(pid):
-        reloaded.append(pid)
-        return await original(pid)
-
-    manager.reload = record
-    from assistant.gateway.app import create_app
-    from assistant.profiles import ProfileRegistry
-
+def test_saving_a_key_reaches_the_next_real_model_request(paths):
+    """A key saved through HTTP reaches the Profile's next Turn."""
+    models = ScriptedModels()
+    manager = make_manager(paths, model_factory=models)
     meta = ProfileRegistry(paths).create_profile("Test", "#109e91")
-    paths.profile_dir(meta.id).mkdir(parents=True, exist_ok=True)
-    with TestClient(create_app(manager, llm_probe=_probe_ok)) as c:
-        assert c.post("/api/secrets/key", json={"provider": "openai", "value": "sk-9"}).json() == {
-            "ok": True
-        }
-    assert reloaded == [meta.id]
-    assert SecretStore(paths).status({}).get("openai", {}).get("set") is True
+    with TestClient(create_app(manager, llm_probe=_probe_ok)) as client:
+        assert client.post(
+            "/api/secrets/key", json={"provider": "openai", "value": "sk-9"}
+        ).json() == {"ok": True}
+        response = client.post(api(meta.id, "/message"), json={"text": "key freshness"})
+        assert response.status_code == 200, response.text
+        assert models.requests[-1][0].secret_env["OPENAI_API_KEY"] == "sk-9"

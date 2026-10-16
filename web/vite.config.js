@@ -10,6 +10,7 @@ export default defineConfig({
     outDir: '../src/assistant/gateway/static/app',
     emptyOutDir: true,
     rollupOptions: {
+      input: { app: 'index.html', preview: 'preview.html' },
       // three.js (WebGPU build, ~1MB) is loaded from CDN at runtime via the
       // index.html importmap — don't bundle it, so the committed SPA stays small
       // and under the repo's large-file guard. Dev still resolves it locally.

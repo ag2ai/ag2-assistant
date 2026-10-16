@@ -11,6 +11,7 @@ exist only on the gateway, while "what can you do?" is asked on every surface.
 
 from ag2 import Context, tool
 
+from assistant.live_configs import LiveConfigStore, voice_available
 from assistant.permissions import PermissionManager
 
 
@@ -125,8 +126,11 @@ def build_self_tools(config, settings) -> list:
         lines.append(f"Model: {config.llm.model or 'unset'} (provider: {config.llm.provider})")
 
         try:
-            provider = settings.voice_provider()
-            lines.append(f"Voice: {settings.get_voice(provider)} ({provider})")
+            active = LiveConfigStore(config.paths).active_config(settings.get_live_override())
+            provider = active["provider"] if active else settings.voice_provider()
+            voice = active["voice"] if active else settings.get_voice(provider)
+            status = "" if voice_available(config, settings) else " — unavailable (no API key)"
+            lines.append(f"Voice: {voice} ({provider}){status}")
         except Exception:
             pass
         try:
@@ -137,9 +141,9 @@ def build_self_tools(config, settings) -> list:
 
         lines.append(f"Shell/code sandbox: {config.tools.sandbox}")
         lines.append(
-            "The model is install-wide — switching persona will not change it. Voice, "
-            "focus, MCP servers, skills, workspace, memory and folder access are "
-            "per-persona."
+            "Text and voice model configurations are install-wide; profiles can select "
+            "their own active configuration. Profiles sharing a Live model share its voice. "
+            "Focus, MCP servers, skills, workspace, memory and folder access are per-persona."
         )
         return "\n".join(lines)
 

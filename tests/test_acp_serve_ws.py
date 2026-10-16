@@ -170,7 +170,7 @@ async def test_ws_door_installs_owner_side_approvals(paths):
     async with _running_server(paths, agent_factory=fake_agent_factory(agent=build)):
         assert served, "server never built the agent"
         # each entry is DescribedMiddleware(.middleware=Middleware(.cls=<class>))
-        classes = [getattr(getattr(m, "middleware", m), "cls", None) for m in served[0].middleware]
+        classes = [getattr(getattr(m, "middleware", m), "cls", None) for m in served[-1].middleware]
         assert _OwnerApprovalMiddleware in classes
 
 

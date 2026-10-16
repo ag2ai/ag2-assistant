@@ -1,5 +1,6 @@
 // Chats: the drawer rows and the display transcript a reopened chat restores.
 import { z } from 'zod'
+import { WireEvent } from './events.ts'
 
 // gateway/core.py writes {role, text} pairs; role is 'user' or 'agent'.
 export const TranscriptMessage = z.object({
@@ -7,6 +8,19 @@ export const TranscriptMessage = z.object({
   text: z.string(),
 })
 export type TranscriptMessage = z.infer<typeof TranscriptMessage>
+
+export const ChatStatus = z.enum(['running', 'completed', 'error', 'waiting'])
+export type ChatStatus = z.infer<typeof ChatStatus>
+
+export const ChatSeen = z.object({
+  status: ChatStatus.nullable(),
+  status_version: z.string(),
+  status_updated: z.number(),
+  turn_started_at: z.number(),
+  waiting_until: z.number().nullable(),
+  unread: z.boolean(),
+})
+export type ChatSeen = z.infer<typeof ChatSeen>
 
 // The ACP-origin join: present together on a chat an ACP Peer owns,
 // absent on an owner-started one (gateway ships them via response_model_exclude_unset,
@@ -20,6 +34,7 @@ export const ChatRow = z.object({
   starred: z.boolean(),
   preview: z.string(),
   turns: z.number(),
+  ...ChatSeen.shape,
   origin_platform: z.string().optional(),
   origin_name: z.string().optional(),
   origin_live: z.boolean().optional(),
@@ -47,3 +62,10 @@ export type Transcript = z.infer<typeof Transcript>
 // POST /message — the only route with a declared response_model (MessageResponse).
 export const MessageReply = z.object({ reply: z.string(), chat_id: z.string() })
 export type MessageReply = z.infer<typeof MessageReply>
+
+export const ChatEvents = z.object({
+  events: z.array(WireEvent),
+  before: z.string().nullable(),
+  start: z.string().nullable(),
+})
+export type ChatEvents = z.infer<typeof ChatEvents>

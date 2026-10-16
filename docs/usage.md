@@ -89,11 +89,54 @@ permission/HITL prompts rendered inline as cards. The **History** button lists
 past conversations and lets you resume any of them. Use it as-is or as a reference
 for building your own front-end against the API below.
 
+**Long messages.** User messages taller than twelve displayed lines start with a
+compact preview; **Show full message** expands the complete text, and **Collapse
+message** restores the preview. Assistant code blocks and Markdown sections with
+headings have their own Expand/Collapse buttons. Long code blocks stay open while
+streaming and fold after generation finishes; manual choices survive streaming
+updates. Folding only changes the display, keeping the original message intact.
+
 **Resumable conversations.** Each chat's full event history is persisted to
 `~/.ag2assistant/chats.db` after every turn (via AG2's event log) and reloaded into a
 fresh stream on demand — so conversations survive a gateway restart with complete
 context, not just a text transcript. This applies to **every** surface (web and
 all chat channels), keyed by chat id.
+
+**Custom Cards.** Ask for a custom visual answer or template, then refine it in Chat.
+The `card-author` Skill creates independent drafts with version history; experiments
+stay in that Chat across restarts. Only the current version of each draft offers
+**Save definition**. Choose its name and filename to save a reusable definition into the Profile's
+`cards/` directory in Files. A name or filename collision requires **Replace** or
+**Save as copy**; current instance values stay in Chat, separate from the saved worked
+example. You can also explicitly ask the assistant to save or restore an earlier
+version. Saved definitions become available on the next Turn, including in other
+existing Chats. `card-author` and `rich-views` have independent switches in Settings;
+turning authoring off preserves historical previews and their Save buttons.
+
+**Saved Card instances.** Every completed rendered Card offers **Save instance**,
+including older draft versions. Save as lets you choose a filename and existing
+Directory in this Profile's Files space. Each confirmed Save creates a new
+`.card-instance.yaml` file; an occupied destination requires a different name.
+Saving an instance and saving its reusable definition are independent choices.
+
+In Chat and Screens, Cards with a data source can refresh when displayed or through
+**Refresh**. Custom Python sources require **Review source → Approve version** in
+each Profile. Once approved, the review button disappears for that version, including
+after a refresh error or reopening the page. Errors retain the last good values and
+show the execution failure; **Refresh** remains available to retry. Changing the code
+or its supporting files requires approval of the new version.
+
+Open the file from Files for a passive Card preview: buttons and inputs are inactive.
+Use **Edit** to change its UTF-8 YAML source, then **Save** and **Preview** to see the
+saved values. Concurrent edits keep the existing **Reload** / **Overwrite** flow.
+Malformed or unsupported files show a preview error with source editing and download
+still available. Copies survive deletion of their Chat or Card definition, and use
+ordinary Files rename, move, download and upload controls.
+
+The Profile API exposes `POST /api/p/{pid}/chats/{chat_id}/card-instances/save`
+with `surface_id`, captured `message`, relative `path` and stable `request_id`, and
+`GET /api/p/{pid}/card-instances?path=…` for validated instance previews. Retry the same
+Save payload after a lost response; start a new Save to create another copy.
 
 Endpoints:
 
@@ -200,6 +243,11 @@ ag2-assistant status
 AG2 Assistant connects to your favorite messaging platforms. Your agent responds to direct messages and can be mentioned in group chats.
 
 ### Attachments
+
+Unsent chat drafts retain their text, attached files, workspace file references and
+input position when you navigate between sections or chats. Each profile and thread
+has its own draft, kept in the current browser tab until the page is closed or reloaded.
+Sending a message clears only that thread's draft.
 
 Drop a file into any chat (Telegram, Discord, or Slack) and AG2 Assistant reads it:
 images and PDFs are understood visually, audio/video go to the model natively
@@ -335,6 +383,8 @@ llm:
   model: gemini-3.6-flash
   api_key_env: GEMINI_API_KEY
   aggregate_model: gemini-2.5-flash
+  call_timeout_s: 180
+  call_retries: 2
 agent:
   name: ag2-assistant
   system_prompt: You are AG2 Assistant, a helpful personal AI assistant.
@@ -351,6 +401,13 @@ cheaper model than your main one — handy on long chats. On Gemini this
 defaults to `gemini-2.5-flash-lite`; set it explicitly to override, or set it to
 your main model to disable the saving.
 
+`llm.call_retries` retries a failed model call after connection errors, network
+timeouts, interrupted response streams, HTTP 429 and transient HTTP 500/502/503/504
+errors. The default is two retries with exponential backoff; `0` disables them.
+Each attempt gets a fresh `llm.call_timeout_s` window. Previously completed local
+tool calls remain in the conversation. Provider SDKs can also perform their own
+internal retries. Authentication, invalid requests and cancellation are not retried.
+
 ### Environment variable overrides
 
 Every key above also has an env override (these win over `config.yaml`):
@@ -361,6 +418,8 @@ Every key above also has an env override (these win over `config.yaml`):
 | `AG2ASSISTANT_MODEL` | `llm.model` |
 | `AG2ASSISTANT_API_KEY_ENV` | `llm.api_key_env` |
 | `AG2ASSISTANT_AGGREGATE_MODEL` | `llm.aggregate_model` |
+| `AG2ASSISTANT_LLM_TIMEOUT` | `llm.call_timeout_s` |
+| `AG2ASSISTANT_LLM_RETRIES` | `llm.call_retries` |
 | `AG2ASSISTANT_LOCATION` | `agent.location` |
 | `AG2ASSISTANT_REPLY_TIMEOUT` | `gateway.reply_timeout_s` |
 | `AG2ASSISTANT_SANDBOX` | `tools.sandbox` (`local` / `docker`) |
@@ -517,6 +576,39 @@ If `--sandbox docker` is requested but Docker isn't running, AG2 Assistant falls
 the local backend (with approval prompts) and warns. `read_file` always stays
 permission-gated regardless of backend, since it reads your **host** files.
 
+## Local files — reading, updating and writing
+
+The text tools follow Pi's line-based reads and block replacements, with smaller
+read caps and an additional warning before overwriting a file.
+
+`read_file(path)` returns complete lines, capped at **500 lines or 10 KiB
+(10,240 UTF-8 bytes)**, whichever comes first. `offset` is the first line to read,
+starting at `1`; `limit` requests a number of lines and cannot bypass either cap.
+For example, `read_file(path="notes.md", offset=501, limit=100)` reads up to 100
+lines starting at line 501. Relative paths resolve inside the assistant's workspace.
+
+The response footer reports the file's size, returned lines/bytes/characters,
+remaining lines, and the next call needed to continue. The assistant can follow
+that offset to read the information it needs. The footer never modifies the source.
+The tool counts the file in bounded blocks. A single line larger than 10 KiB
+produces a diagnostic directing the assistant to read a bounded portion with the
+shell. PDFs and images remain visual inputs and do not accept pagination arguments.
+
+`update_file(path, edits=[{"oldText": "old block", "newText": "new block"}])`
+matches all blocks against the original file. Every match must be unique, and
+matches must not overlap. A failed match, ambiguous match, overlap or no-op leaves
+the file untouched. Matching normalizes line endings and tolerates trailing
+whitespace, Unicode quotes, dashes, spaces and compatibility characters. Untouched
+lines retain their text; the file's BOM and original LF/CRLF style are preserved.
+Successful updates return a numbered diff, with a unified patch and first changed
+line in result metadata.
+
+`write_file(path, content)` creates parent folders and writes UTF-8 text. If the
+file exists, it returns a warning **without writing**. A deliberate second call
+with `overwrite=true` replaces the whole file; use `update_file` for block edits.
+Each read, update and write checks folder permission, including continuation calls
+and explicitly requested overwrites.
+
 ## Google (Gmail / Calendar / Drive)
 
 AG2 Assistant can read and search your Gmail, manage your Calendar events, and read your Drive.
@@ -656,3 +748,5 @@ the single-shot `ag2-assistant agent` CLI command doesn't carry task tools.)
 5. The response is sent back through the same channel
 
 Your agent runs locally on your machine. Your messages and data stay on your device. API keys are used only to call the LLM provider.
+
+Saved Cards can be arranged outside conversations in [Screens](screens.md).

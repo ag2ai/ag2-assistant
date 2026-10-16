@@ -140,7 +140,7 @@ layout:
   - {id: foot_block, component: Column, gap: sm, when: {path: /summary}, children: [rule_foot, foot]}
   - {id: rule_foot, component: Divider}
   - {id: foot, component: Row, justify: between, gap: md, children: [foot_source, foot_agent]}
-  - {id: foot_source, component: Text, text: From the coding agent — the working-tree diff, not a plan, variant: caption, tone: muted}
+  - {id: foot_source, component: Text, text: "From the coding agent — the working-tree diff, not a plan", variant: caption, tone: muted}
   - {id: foot_agent, component: Text, text: {path: /agent}, variant: caption, tone: muted}
 
 example:

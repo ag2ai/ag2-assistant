@@ -1,17 +1,4 @@
-"""Named LLM configurations and their spoken counterpart, the live (voice)
-configurations. Both are install-wide lists with a single active selection.
-
-An LLM change reloads every runtime (an agent is built from the config it booted
-with); a live change does not, because the voice session reads the store fresh at
-connect.
-
-The four probe callables are ``create_app``'s parameters, not stores, so they
-arrive as keyword collaborators rather than through ``GatewayDeps``: tests swap
-them per app to keep a "Test" button from making a real provider call.
-
-Pairs with gateway/schemas/llm.py (the response models) and
-web/src/schemas/llm.ts (their zod twins).
-"""
+"""Shared Text and Live model definitions, selection and provider probes."""
 
 import asyncio
 import time
@@ -25,9 +12,10 @@ from pydantic import BaseModel, Field
 
 from assistant import live_configs, llm_configs, provider_catalog, voice_providers
 from assistant.builtin_tools import OPTION_KINDS, builtin_ids_for, builtin_tools_for
+from assistant.codex_auth import CodexAuthError
 from assistant.coding.model_catalog import CatalogModel, as_view
 from assistant.config import Config
-from assistant.gateway.routes.common import reload_all
+from assistant.gateway.routes.common import refresh_all
 from assistant.gateway.routes.deps import GatewayDeps
 from assistant.gateway.schemas import (
     LiveConfigListResponse,
@@ -234,45 +222,46 @@ def build_router(
                 {"ok": False, "error": "this route accepts no key material"}, status_code=400
             )
         ctype = params.get("type", "")
-        if ctype in provider_catalog.NEVER_PROBEABLE:
-            # Answered rather than probed: no key exists to probe with.
-            return JSONResponse(as_view([], "", provider_catalog.NOT_PROBEABLE))
         if ctype not in provider_catalog.GATEWAY_PROBEABLE:
             return JSONResponse(
                 {"ok": False, "error": f"no provider catalog for: {ctype}"}, status_code=404
             )
-        env = secret_env()
-        base_url = params.get("base_url", "")
-        api_key = d.secret_store.secret_value(params.get("secret_id", ""))
-        if not api_key and not base_url:
-            # The install-wide key the request itself would fall back to — but never
-            # to a custom endpoint, which _config_kwargs also refuses to hand it to.
-            api_key = env.get(KEY_ENV.get(llm_configs.PROVIDER_OF.get(ctype, ""), ""), "")
-        target = provider_catalog.CatalogTarget(
-            type=ctype,
-            base_url=base_url,
-            # Same host the turn would use: the entry's, else the install's.
-            host=params.get("host", "") or env.get(OLLAMA_BASE_ENV, ""),
-            api_key=api_key,
-        )
         reason = ""
         models: list[str] = []
         try:
+            if ctype == "openai_subscription":
+                creds = await asyncio.to_thread(d.codex.ensure_fresh)
+                target = provider_catalog.CatalogTarget(type=ctype, creds=creds)
+            else:
+                env = secret_env()
+                base_url = params.get("base_url", "")
+                api_key = d.secret_store.secret_value(params.get("secret_id", ""))
+                if not api_key and not base_url:
+                    # Resolve the shared key only for the provider's default endpoint.
+                    api_key = env.get(KEY_ENV.get(llm_configs.PROVIDER_OF.get(ctype, ""), ""), "")
+                target = provider_catalog.CatalogTarget(
+                    type=ctype,
+                    base_url=base_url,
+                    host=params.get("host", "") or env.get(OLLAMA_BASE_ENV, ""),
+                    api_key=api_key,
+                )
             models = await llm_catalog_probe(target)
+        except CodexAuthError:
+            reason = provider_catalog.UNAUTHORIZED
         except provider_catalog.CatalogUnavailable as exc:
             reason = exc.reason
         except Exception:
-            # A probe that blew up is an endpoint we could not read, not a 500.
             reason = provider_catalog.UNREACHABLE
         rows = [CatalogModel(id=m, name=m, description="") for m in models]
-        cache = "no-store" if _truthy(params.get("refresh", "")) else "private, max-age=30"
+        cache = (
+            "no-store"
+            if ctype == "openai_subscription" or _truthy(params.get("refresh", ""))
+            else "private, max-age=30"
+        )
         return JSONResponse(as_view(rows, "", reason), headers={"Cache-Control": cache})
 
     async def _save_llm_config(req: LlmConfigRequest, cid: str | None):
-        """Shared create/update: dry-construct the derived model_config BEFORE
-        persisting (a bad type/kwarg fails here, 400 + the constructor's message, not on
-        the agent's next turn), then save the entry, optionally activate, and reload
-        every runtime. 404 when updating an unknown id."""
+        """Validate and save a model definition, then refresh configuration consumers."""
         entry = {
             "name": req.name,
             "type": req.type,
@@ -301,7 +290,7 @@ def build_router(
         saved = d.llm_store.save_config(entry)
         if req.activate:
             d.llm_store.set_active(saved["id"])
-        await reload_all(d.manager)
+        await refresh_all(d.manager)
         active = d.llm_store.active_id()
         return {"ok": True, "config": _llm_entry_view(saved, active), "active": active}
 
@@ -394,15 +383,15 @@ def build_router(
         if d.llm_store.get_config(cid) is None:
             return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
         d.llm_store.delete_config(cid)
-        await reload_all(d.manager)
+        await refresh_all(d.manager)
         return {"ok": True}
 
     @r.post("/api/llm-configs/{cid}/use", response_model=Ok)
     async def use_llm_config(cid: str):
-        """Make ``cid`` the active configuration and reload every runtime (404 unknown)."""
+        """Make ``cid`` the active configuration and refresh runtime consumers (404 unknown)."""
         if not d.llm_store.set_active(cid):
             return JSONResponse({"ok": False, "error": f"unknown config: {cid}"}, status_code=404)
-        await reload_all(d.manager)
+        await refresh_all(d.manager)
         return {"ok": True}
 
     @r.post("/api/llm-configs/{cid}/test", response_model=PingResultResponse)

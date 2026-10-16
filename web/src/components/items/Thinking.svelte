@@ -2,4 +2,4 @@
      component as JS, and the project no longer allows JS. -->
 <script lang="ts"></script>
 
-<div class="msg agent"><div class="bubble dots"><span></span><span></span><span></span></div></div>
+<div class="msg agent" role="status" aria-label="Thinking"><div class="bubble dots"><span></span><span></span><span></span></div></div>

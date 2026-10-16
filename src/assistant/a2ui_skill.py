@@ -5,6 +5,7 @@ import json
 import uuid
 from collections.abc import Sequence
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 from ag2.a2ui import A2UIMessageEvent
@@ -13,8 +14,8 @@ from ag2.context import ConversationContext
 from ag2.tools.skills import MemoryRuntime, MemorySkill
 from ag2.tools.skills.skill_types import Resource, Script, Skill, SkillMetadata
 
-from assistant.a2ui import CATALOG_ID, CardCatalog
-from assistant.cards import Card, expand_card_messages
+from assistant.a2ui import CATALOG_ID, CardCatalog, HeldCardCatalog
+from assistant.cards import Card, expand_card_messages, generation_contract
 from assistant.config import Config
 from assistant.skills import SkillStateStore
 from assistant.state_store import ORIGIN_BUNDLED
@@ -38,6 +39,7 @@ _RESOURCE_DIR = "cards"
 
 # The A2UI protocol at large: composing views and drawing from the basic components.
 PROTOCOL_RESOURCE = "reference/protocol.md"
+SOURCE_RESOURCE = "reference/sources.md"
 
 
 def card_resource(name: str) -> str:
@@ -48,7 +50,7 @@ def card_resource(name: str) -> str:
 def skill_description(cards: dict[str, Card]) -> str:
     """The resident line: what a rich view is, and every case a Card is ready for,
     kept within the description cap."""
-    closing = " Users never ask for one: load this skill before you answer such a question."
+    closing = " Users never ask for one: use this skill's instructions, loading them if absent or changed."
     lead = f"{A2UI_SKILL_DESCRIPTION[:-1]}. Views are ready for: "
     room = SKILL_DESCRIPTION_LIMIT - len(lead) - len(closing) - len(", and more.")
     topics: list[str] = []
@@ -67,6 +69,9 @@ def skill_body(cards: dict[str, Card]) -> str:
     return f"""A rich view is a panel the AG2 Assistant web UI draws from a view's fields. When \
 the user's question matches one of the views below, the view IS the answer — do not settle \
 for prose. Users never ask for one.
+Reuse unchanged instructions and Card details whose full text is in the current context.
+Read missing or changed references before using them; a compaction summary is not their
+full text. After changing a Card definition, read its current detail before drawing it.
 
 ## Views this profile can draw
 
@@ -76,7 +81,8 @@ for prose. Users never ask for one.
 
 1. Gather the real data with your tools first. Never fill a field from memory or invent a \
 value; leave out what you do not have.
-2. Read the view's detail: read_skill_resource(name="{A2UI_SKILL}", \
+2. Use the view's detail, reading it if missing or changed: \
+read_skill_resource(name="{A2UI_SKILL}", \
 resource="{card_resource("<CardName>")}") returns the exact fields it accepts and a worked \
 example of the call that draws it.
 3. Draw it: every view is a script of the same name — run_skill_script(name="{A2UI_SKILL}", \
@@ -85,8 +91,23 @@ fields to fix.
 4. Reply with one or two sentences of orientation. The view is the answer: do not restate \
 its contents in prose, and never mention A2UI, schemas or components to the user.
 
+## Data and refresh
+
+Pass known values directly as the view's fields; a separate data file or backend source
+is optional. The rendered instance retains its data. Definition.example is illustrative,
+not the current values. Saving a definition does not update an already saved instance.
+For data that must stay current, use this skill's {SOURCE_RESOURCE}: Card definitions can
+declare a source, and saved instances can retain Python code in message.data._sources.
+This uses the existing source runtime; attaching code requires no ACP bridge or app changes.
+Choose _parameters for source-backed catalog Cards. Source execution requires Profile approval
+for custom code; a successful layout preview does not verify refresh. Use screens to save
+or reference an instance outside Chat, preserving the independence of ordinary Chat copies.
+For a custom native chart, activity heatmap or layout, use card-author and its current
+references before claiming that a component or sizing option is unavailable.
+
 To put several views on one surface, or to build one from the basic components when no view \
-above fits, read_skill_resource(name="{A2UI_SKILL}", resource="{PROTOCOL_RESOURCE}") first.
+above fits, use the protocol reference, reading it if missing or changed: \
+read_skill_resource(name="{A2UI_SKILL}", resource="{PROTOCOL_RESOURCE}").
 """
 
 
@@ -116,7 +137,8 @@ def a2ui_available(config: Config) -> bool:
 
 def card_fields_schema(card: Card) -> dict[str, Any]:
     """The arguments of the script that draws ``card``: the Card's own fields."""
-    return {"type": "object", "properties": card.fields, "required": list(card.required)}
+    properties, required = generation_contract(card)
+    return {"type": "object", "properties": properties, "required": required}
 
 
 def _card_messages(card: Card, fields: dict[str, Any]) -> list[ServerToClientMessage]:
@@ -136,11 +158,22 @@ def _card_messages(card: Card, fields: dict[str, Any]) -> list[ServerToClientMes
 def _card_detail(card: Card) -> str:
     """One Card's detail: the fields its script takes, and the call that draws it."""
     schema = json.dumps(card_fields_schema(card), indent=2, ensure_ascii=False)
-    example = json.dumps(card.example, ensure_ascii=False, separators=(",", ":"))
+    values = dict(card.example)
+    if card.source:
+        values["_parameters"] = {
+            name: schema.get("default", card.example.get(name, "<choose once>"))
+            for name, schema in card.parameters.items()
+        }
+    example = json.dumps(values, ensure_ascii=False, separators=(",", ":"))
     return (
         f"# {card.name}\n\n{card.description}\n\nPass exactly these fields; a value you do "
         f"not have is left out, never invented.\n\n```json\n{schema}\n```\n\nDraw it:\n"
         f'run_skill_script(name="{A2UI_SKILL}", script="{card.name}", args={example})\n'
+        + (
+            "Choose _parameters once for this instance's later source refresh. Refresh never starts another Turn.\n"
+            if card.source
+            else ""
+        )
     )
 
 
@@ -173,7 +206,7 @@ class _A2UISkill(MemorySkill):
     """The A2UI Skill over one profile's ``CardCatalog``: the body, one detail Resource
     and one drawing Script per Card available right now, all listed per read."""
 
-    def __init__(self, catalog: CardCatalog) -> None:
+    def __init__(self, catalog: CardCatalog | HeldCardCatalog) -> None:
         super().__init__(
             name=A2UI_SKILL,
             description=A2UI_SKILL_DESCRIPTION,
@@ -194,6 +227,7 @@ class _A2UISkill(MemorySkill):
             resources=(
                 *(Resource(name=card_resource(name)) for name in cards),
                 Resource(name=PROTOCOL_RESOURCE),
+                Resource(name=SOURCE_RESOURCE),
             ),
             scripts=tuple(Script(name=name) for name in cards),
         )
@@ -203,7 +237,7 @@ class A2UISkillRuntime(MemoryRuntime):
     """The runtime owning the A2UI Skill: a Card's detail and its drawing script come
     from the catalog, so a Card that is Disabled or Suppressed has neither."""
 
-    def __init__(self, catalog: CardCatalog) -> None:
+    def __init__(self, catalog: CardCatalog | HeldCardCatalog) -> None:
         super().__init__(_A2UISkill(catalog))
         self._catalog = catalog
 
@@ -218,6 +252,8 @@ class A2UISkillRuntime(MemoryRuntime):
             return await super().read_resource(name, resource, context)
         if resource == PROTOCOL_RESOURCE:
             return self._catalog.runtime().protocol
+        if resource == SOURCE_RESOURCE:
+            return (Path(__file__).parent / "cards" / "SOURCES.md").read_text()
         card = self._catalog.cards().get(_card_named(resource))
         if card is None:
             raise FileNotFoundError(f"resource {resource!r} not found in skill {name!r}")

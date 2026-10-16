@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onDestroy, onMount, tick } from 'svelte'
+  import { get } from 'svelte/store'
   import { thread, SETTINGS_PAGE, profiles, runInfo } from '../store.ts'
   import { openOverlay } from '../router.ts'
   import { send, stop, startVoice, stopVoice, voice } from '../controller.ts'
@@ -12,10 +13,10 @@
   import { foldersStore, loadFolders, applyFolders } from '../lib/folders.ts'
   import { errText } from '../lib/errors.ts'
   import { ApiError } from '../transport/http.ts'
+  import { composerDrafts, emptyComposerDraft } from '../lib/composerDrafts.ts'
   import { FolderConflict } from '../schemas/index.ts'
-  import type { AttachmentPayload, Folder, FsRoots, SearchHit } from '../schemas/index.ts'
+  import type { Folder, FsRoots, SearchHit } from '../schemas/index.ts'
   import type { FolderChip } from '../lib/chatFolders.ts'
-  import type { FileRef } from '../lib/fileRefs.ts'
   import Icon from './Icon.svelte'
   import ModelSwitcher from './composer/ModelSwitcher.svelte'
   import FolderPicker from './FolderPicker.svelte'
@@ -113,8 +114,7 @@
     $llmConfigs.loaded && !$llmConfigs.configs.length && !$llmConfigs.envOverride
   )
 
-  let text = $state('')
-  let pending = $state<{ name: string; payload: AttachmentPayload }[]>([])
+  const draft = $derived(composerDrafts.forThread(pid, $thread.kind, chatId))
   let dragging = $state(false)  // an OS-file drag is hovering the composer
   let ta: HTMLTextAreaElement | undefined
   let fileInput: HTMLInputElement | undefined
@@ -122,14 +122,39 @@
 
   function syncScroll() { if (hl && ta) { hl.scrollTop = ta.scrollTop; hl.scrollLeft = ta.scrollLeft } }
 
+  function rememberInput() {
+    const input = ta
+    if (!input) return
+    draft.update(value => ({ ...value,
+      selectionStart: input.selectionStart, selectionEnd: input.selectionEnd,
+      selectionDirection: input.selectionDirection,
+      scrollTop: input.scrollTop, scrollLeft: input.scrollLeft,
+    }))
+  }
+
+  $effect(() => {
+    const owner = draft
+    closeAt()
+    void tick().then(() => {
+      if (draft !== owner || !ta) return
+      const saved = get(owner)
+      if (saved.text) grow()
+      else ta.style.height = 'auto'
+      ta.setSelectionRange(saved.selectionStart, saved.selectionEnd, saved.selectionDirection)
+      ta.scrollTop = saved.scrollTop
+      ta.scrollLeft = saved.scrollLeft
+      syncScroll()
+    })
+  })
+  onDestroy(() => { clearTimeout(atTimer); atSeq++ })
+
   // ---- `@` File references (ADR 0012): an ordered picks list (source of truth),
   // a type-to-filter picker over /files/search, and a `Referenced files:` block
   // appended on send. The inline `@label` is cosmetic; deleting it drops the pick
   // (reconciled in composeMessage). Structurally parallel to `pending`. ----
-  let refs = $state<FileRef[]>([])          // ordered File-reference picks
   let atOpen = $state(false)                // picker visible
   let atQuery = $state('')                  // the text typed after the active `@`
-  let atStart = $state(-1)                  // index of the active `@` in `text`
+  let atStart = $state(-1)                  // index of the active `@` in text
   let atResults = $state<SearchHit[]>([])   // current search results
   let atIndex = $state(0)                   // highlighted result
   let atSeq = 0                             // debounce + stale-response guard
@@ -140,7 +165,7 @@
   // Cosmetic highlight backdrop: a mirror of the text sitting behind the (transparent)
   // textarea, with each surviving `@label` wrapped in a <mark>. Metrics match .cinput
   // exactly so the marks land under their labels; scroll is kept in lockstep by syncScroll.
-  const hlSegs = $derived(highlightSegments(text, refs))
+  const hlSegs = $derived(highlightSegments($draft.text, $draft.refs))
 
   // Keep the highlighted row visible as the selection moves — `nearest` only scrolls
   // when the row is actually out of view, so an in-view move never jumps the list.
@@ -157,7 +182,7 @@
   // fresh `@token`, close otherwise. Runs on input and on caret moves (keyup/click).
   function syncAt() {
     if (!ta) return
-    const trig = triggerAt(text, ta.selectionStart)
+    const trig = triggerAt($draft.text, ta.selectionStart)
     if (!trig) { if (atOpen) closeAt(); return }
     // Only re-search when the active `@token` actually changed. Arrow-key navigation
     // fires keyup with the caret pinned (keydown preventDefault'd it), so without this
@@ -169,9 +194,10 @@
   function runAtSearch(q: string) {
     clearTimeout(atTimer)
     const seq = ++atSeq
+    const chat = chatId
     atTimer = setTimeout(async () => {
       try {
-        const res = await api.searchFiles(q, chatId)
+        const res = await api.searchFiles(q, chat)
         if (seq !== atSeq) return           // a newer keystroke won
         atResults = res.results; atIndex = 0
       } catch { if (seq === atSeq) atResults = [] }
@@ -179,24 +205,25 @@
   }
   function choosePick(result: SearchHit | undefined) {
     if (!result) return
-    const caret = ta ? ta.selectionStart : text.length
+    const caret = ta ? ta.selectionStart : $draft.text.length
     const p = makePick(result)
-    const next = applyPick(text, atStart, caret, p.label)
-    text = next.text
-    refs = [...refs, p]
+    const next = applyPick($draft.text, atStart, caret, p.label)
+    $draft.text = next.text
+    $draft.refs = [...$draft.refs, p]
     closeAt()
     // Restore the caret past the inserted label once Svelte flushes the bound value.
-    queueMicrotask(() => { if (ta) { ta.focus(); ta.selectionStart = ta.selectionEnd = next.caret; grow() } })
+    queueMicrotask(() => { if (ta) { ta.focus(); ta.selectionStart = ta.selectionEnd = next.caret; grow(); rememberInput() } })
   }
 
   function submit() {
-    if (!text.trim() && !pending.length) return
+    if (!$draft.text.trim() && !$draft.pending.length) return
     // Append the reconciled `Referenced files:` block to the text the user wrote —
     // no change to send()'s (text, attachments) contract (the block rides in text).
-    const outText = composeMessage(text, refs).trim()
-    if (!outText && !pending.length) return
-    send(outText, pending.map((p) => p.payload))
-    text = ''; pending = []; refs = []; closeAt()
+    const outText = composeMessage($draft.text, $draft.refs).trim()
+    if (!outText && !$draft.pending.length) return
+    if (!send(outText, $draft.pending.map((p) => p.payload))) return
+    $draft = emptyComposerDraft()
+    closeAt()
     if (ta) ta.style.height = 'auto'
   }
   function key(e: KeyboardEvent) {
@@ -263,10 +290,11 @@
   // Shared attachment pipeline for every entry point (picker, paste, drop): encode
   // each file and add it to the pending row as a transient message Attachment.
   async function addFiles(files: Iterable<File>) {
-    for (const f of files) {
+    const owner = draft
+    for (const f of [...files]) {
       const data = await toB64(f)
       const name = nameFor(f)
-      pending = [...pending, { name, payload: { name, mime: f.type, data } }]
+      owner.update(value => ({ ...value, pending: [...value.pending, { name, payload: { name, mime: f.type, data } }] }))
     }
   }
 
@@ -303,7 +331,7 @@
     dragging = false
     addFiles(files)
   }
-  const removeFile = (i: number) => { pending = pending.filter((_, j) => j !== i) }
+  const removeFile = (i: number) => { $draft.pending = $draft.pending.filter((_, j) => j !== i) }
 </script>
 
 <div class="composer">
@@ -331,9 +359,9 @@
     {#if showFolders && (folderNote || folderErr)}
       <div class="cfmsg" class:err={!!folderErr}>{folderErr || folderNote}</div>
     {/if}
-    {#if pending.length}
+    {#if $draft.pending.length}
       <div class="pending">
-        {#each pending as p, i}
+        {#each $draft.pending as p, i}
           <span class="chip"><Icon name="paperclip" size={13} /> {p.name}<button class="x" onclick={() => removeFile(i)}>×</button></span>
         {/each}
       </div>
@@ -367,15 +395,16 @@
       <textarea
         class="cinput"
         bind:this={ta}
-        bind:value={text}
+        bind:value={$draft.text}
         rows="1"
         placeholder={placeholder()}
-        oninput={() => { grow(); syncAt(); syncScroll() }}
+        oninput={() => { grow(); rememberInput(); syncAt(); syncScroll() }}
         onkeydown={key}
-        onkeyup={syncAt}
-        onclick={syncAt}
-        onscroll={syncScroll}
-        onblur={() => closeAt()}
+        onkeyup={() => { rememberInput(); syncAt() }}
+        onclick={() => { rememberInput(); syncAt() }}
+        onselect={rememberInput}
+        onscroll={() => { rememberInput(); syncScroll() }}
+        onblur={() => { rememberInput(); closeAt() }}
         onpaste={paste}
       ></textarea>
     </div>
@@ -409,7 +438,7 @@
         {:else}
           <span class="ctip">
             <button class="csend" onclick={submit}
-                    disabled={noTextModel || (!text.trim() && !pending.length)}
+                    disabled={noTextModel || (!$draft.text.trim() && !$draft.pending.length)}
                     title={noTextModel ? undefined : 'Send'} aria-label="Send"><Icon name="arrow-up" size={18} /></button>
             {#if noTextModel}
               <span class="ctip-bubble" role="tooltip">No model configured — add one in Settings → Models to send messages.</span>

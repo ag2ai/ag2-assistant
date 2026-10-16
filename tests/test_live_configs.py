@@ -3,7 +3,6 @@ no test coverage — added with the Secret entity)."""
 
 from fastapi.testclient import TestClient
 
-from assistant.config import Config
 from assistant.live_configs import LiveConfigStore
 from assistant.secrets import SecretStore
 from tests.support.apps import make_profile_app
@@ -49,7 +48,7 @@ def test_set_secret_id_unknown_config(paths):
 
 # ---- per-profile Live Active override (ADR 0015) ------------------------------
 # Symmetric with the Text override: env pin > profile override > install-wide Active
-# > env fallback, resolved at voice.profile_live_config. A dangling override degrades
+# > env fallback, resolved by LiveConfigStore.active_config. A dangling override degrades
 # to the install-wide Active; one profile's override never affects another's.
 
 
@@ -60,18 +59,13 @@ def _settings(tmp_path, pid):
 
 
 def test_live_override_absent_inherits_install_active(paths, tmp_path):
-    from assistant import voice
-
-    cfg = Config.for_paths(paths)
     x = LiveConfigStore(paths).save_config({"name": "X", "provider": "gemini"})
     LiveConfigStore(paths).set_active(x["id"])
-    assert voice.profile_live_config(cfg, _settings(tmp_path, "work"))["id"] == x["id"]
+    settings = _settings(tmp_path, "work")
+    assert LiveConfigStore(paths).active_config(settings.get_live_override())["id"] == x["id"]
 
 
 def test_live_override_wins_and_isolated(paths, tmp_path):
-    from assistant import voice
-
-    cfg = Config.for_paths(paths)
     store = LiveConfigStore(paths)
     x = store.save_config({"name": "X", "provider": "gemini"})
     y = store.save_config({"name": "Y", "provider": "openai"})
@@ -79,23 +73,20 @@ def test_live_override_wins_and_isolated(paths, tmp_path):
     work = _settings(tmp_path, "work")
     home = _settings(tmp_path, "home")
     work.set_live_override(y["id"])
-    assert voice.profile_live_config(cfg, work)["id"] == y["id"]  # override wins
-    assert voice.profile_live_config(cfg, home)["id"] == x["id"]  # home inherits
+    assert store.active_config(work.get_live_override())["id"] == y["id"]
+    assert store.active_config(home.get_live_override())["id"] == x["id"]
     assert store.active_id() == x["id"]  # install-wide Active never moved
     # Clearing restores inheritance.
     work.set_live_override("")
-    assert voice.profile_live_config(cfg, work)["id"] == x["id"]
+    assert store.active_config(work.get_live_override())["id"] == x["id"]
 
 
 def test_live_dangling_override_degrades_silently(paths, tmp_path):
-    from assistant import voice
-
-    cfg = Config.for_paths(paths)
     x = LiveConfigStore(paths).save_config({"name": "X", "provider": "gemini"})
     LiveConfigStore(paths).set_active(x["id"])
     s = _settings(tmp_path, "work")
     s.set_live_override("lv_deleted_ghost")
-    assert voice.profile_live_config(cfg, s)["id"] == x["id"]  # no error; falls back
+    assert LiveConfigStore(paths).active_config(s.get_live_override())["id"] == x["id"]
 
 
 # ---- POST /api/live-configs/{cid}/test: which key reaches the provider ---------

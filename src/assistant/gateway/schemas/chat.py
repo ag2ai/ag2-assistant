@@ -5,9 +5,11 @@ Mirrors web/src/schemas/chat.ts. Field lists come from that file, which was
 validated against real responses.
 """
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from assistant.gateway.chat_activity import ChatStatus
 
 
 class TranscriptMessageOut(BaseModel):
@@ -32,6 +34,12 @@ class ChatRowOut(BaseModel):
     starred: bool
     preview: str
     turns: int
+    status: ChatStatus | None
+    status_version: str
+    status_updated: float
+    turn_started_at: float
+    waiting_until: float | None
+    unread: bool
     # "acp" for now; the platform an externally-driven chat arrived on.
     origin_platform: str | None = None
     # The listener Connection's display name — the truth, never the client's own
@@ -45,6 +53,17 @@ class ChatListResponse(BaseModel):
     """GET /api/p/{pid}/chats — newest first."""
 
     chats: list[ChatRowOut]
+
+
+class ChatSeenResponse(BaseModel):
+    """The sidebar activity after acknowledging a particular Turn."""
+
+    status: ChatStatus | None
+    status_version: str
+    status_updated: float
+    turn_started_at: float
+    waiting_until: float | None
+    unread: bool
 
 
 class TranscriptResponse(BaseModel):
@@ -69,3 +88,16 @@ class MessageResponse(BaseModel):
 
     reply: str
     chat_id: str
+
+
+class ChatEventOut(BaseModel):
+    type: str
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+class ChatEventsResponse(BaseModel):
+    """A chronological page of complete turns from the typed event stream."""
+
+    events: list[ChatEventOut]
+    before: str | None
+    start: str | None

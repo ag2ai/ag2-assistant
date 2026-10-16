@@ -28,11 +28,12 @@ from pathlib import Path
 
 from ag2 import KnowledgeConfig
 from ag2.aggregate import AggregateTrigger, WorkingMemoryAggregate
-from ag2.compact import CompactTrigger, SummarizeCompact
+from ag2.compact import CompactTrigger
 from ag2.config import ModelConfig
-from ag2.knowledge import MemoryKnowledgeStore, SqliteKnowledgeStore
+from ag2.knowledge import KnowledgeStore, MemoryKnowledgeStore, SqliteKnowledgeStore
 from ag2.policies import ConversationPolicy, WorkingMemoryPolicy
 
+from assistant.compaction import CheckpointCompact, CompactionLimits
 from assistant.config import load_config
 
 # Path inside the knowledge store where the rolling profile lives.
@@ -229,28 +230,11 @@ def build_knowledge_config(
     every_n_turns: int = 4,
     on_end: bool = False,
     compact: bool = False,
-    compact_max_tokens: int = 20_000,
+    compact_max_tokens: int = 50_000,
+    compaction_limits: CompactionLimits | None = None,
+    compaction_store: KnowledgeStore | None = None,
 ) -> KnowledgeConfig:
-    """Build a KnowledgeConfig that passively learns and persists the user profile.
-
-    Args:
-        platform: The channel this session is on (cli, telegram, discord, ...).
-        store_path: Where to persist the SQLite profile DB (ignored if `store` given).
-        aggregate_config: LLM config used for the (cheaper) aggregation call.
-        store: An existing KnowledgeStore to reuse (e.g. a shared, locked store
-            when several agents must write the same profile concurrently).
-        every_n_turns: Distil the profile every N turns. Batches the (LLM-backed)
-            aggregation so long chats don't pay it on every message. 0 disables.
-        on_end: Also distil when a conversation ends. Use for single-shot runs
-            (CLI) so their one turn is still captured; leave off for long chats
-            to avoid an aggregation call per turn.
-        compact: Bound a long conversation's context by summarising the oldest
-            events (an LLM call on the cheap model) when the stream grows large.
-        compact_max_tokens: Stream size (approx. tokens) that triggers compaction.
-
-    Returns:
-        A KnowledgeConfig wiring a SQLite store + working-memory aggregation.
-    """
+    """Learn profile memory with the aggregation model and compact with the Turn's model."""
     if store is None:
         if store_path is None:
             raise ValueError("build_knowledge_config needs a store_path when no store is given")
@@ -262,8 +246,11 @@ def build_knowledge_config(
     compact_kwargs: dict = {}
     if compact:
         compact_kwargs = {
-            "compact": SummarizeCompact(target=60, config=aggregate_config),
-            "compact_trigger": CompactTrigger(max_tokens=compact_max_tokens),
+            "compact": CheckpointCompact(
+                compaction_limits or CompactionLimits(max_tokens=compact_max_tokens),
+                compaction_store,
+            ),
+            "compact_trigger": CompactTrigger(),
         }
 
     return KnowledgeConfig(
@@ -281,23 +268,19 @@ def build_knowledge_config(
 
 
 def build_compaction_config(
-    aggregate_config: ModelConfig | None = None,
-    max_tokens: int = 20_000,
+    max_tokens: int = 50_000,
+    *,
+    store: KnowledgeStore | None = None,
+    limits: CompactionLimits | None = None,
 ) -> KnowledgeConfig:
-    """Compaction-only harness wiring for agents that run without profile memory
-    (task subagents). Bounds a long run's context by summarising the oldest
-    events (an LLM call on the cheap model) once the stream crosses `max_tokens`.
-    Backed by an ephemeral in-memory store — nothing persists, no knowledge tool,
-    no event log; the KnowledgeConfig exists purely to carry the compactor."""
-    if aggregate_config is None:
-        aggregate_config = _default_aggregate_config()
+    """Bound history with the Turn's model without persisting profile memory."""
 
     return KnowledgeConfig(
-        store=MemoryKnowledgeStore(),
+        store=store if store is not None else MemoryKnowledgeStore(),
         expose_tool=False,
         write_event_log=False,
-        compact=SummarizeCompact(target=60, config=aggregate_config),
-        compact_trigger=CompactTrigger(max_tokens=max_tokens),
+        compact=CheckpointCompact(limits or CompactionLimits(max_tokens=max_tokens), store),
+        compact_trigger=CompactTrigger(),
     )
 
 

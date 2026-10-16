@@ -215,11 +215,14 @@ it holds `GatewayDeps`, the lifespan, the WebSockets, static/SPA and the
 
 ### Issue tracker
 
-Issues and specs live as markdown files under `.scratch/<feature-slug>/` in this repo. See `docs/agents/issue-tracker.md`.
+GitHub Issues are the source of truth for tasks and specs. Local files under
+`.scratch/<feature-slug>/` buffer only work currently in progress and are deleted
+after the work is merged and its issue is closed. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
-The five canonical roles, each label string equal to its name, recorded on the `Status:` line of each issue file. See `docs/agents/triage-labels.md`.
+The five canonical roles are GitHub issue labels, each label string equal to its
+name. See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 

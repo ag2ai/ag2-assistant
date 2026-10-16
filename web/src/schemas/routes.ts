@@ -6,7 +6,14 @@
 // so a new route cannot be added without a decision about its schema.
 import type { z } from 'zod'
 import { AcpListener, AcpListenerCreated, AcpListenerList, AcpListenerTokenRotated } from './acp.ts'
-import { ChatList, MessageReply, Transcript } from './chat.ts'
+import { ChatEvents, ChatList, ChatSeen, MessageReply, Transcript } from './chat.ts'
+import { CardSave } from './card.ts'
+import { CardSourceResponse } from './card_source.ts'
+import { CardInstance, CardInstanceSave } from './card_instance.ts'
+import { Screen, ScreenList, ScreenRow } from './screen.ts'
+import {
+  CardList, CardMutated, ProfileCardList, ProfileCardMutated,
+} from './card.ts'
 import {
   Connection,
   ConnectionExposure,
@@ -47,6 +54,8 @@ import {
   ProfileHealth,
   ProfileSettings,
   ReplyTimeoutSaved,
+  CompactionSaved,
+  PreviewBrowserSaved,
   VoiceCatalog,
   VoiceSelected,
 } from './settings.ts'
@@ -87,6 +96,9 @@ import {
 } from './system.ts'
 
 export const ROUTES: Record<string, z.ZodTypeAny> = {
+  'GET /api/p/{pid}/screens': ScreenList,
+  'GET /api/p/{pid}/screens/view': Screen,
+  'PATCH /api/p/{pid}/screens/title': ScreenRow,
   'GET /api/health': Health,
   'GET /api/usage': UsageRollup,
   'GET /api/status': StatusList,
@@ -104,12 +116,15 @@ export const ROUTES: Record<string, z.ZodTypeAny> = {
   'POST /api/onboarded': Ok,
   'GET /api/p/{pid}/chats': ChatList,
   'GET /api/p/{pid}/chats/{chat_id}': Transcript,
+  'POST /api/p/{pid}/chats/{chat_id}/seen': ChatSeen,
+  'GET /api/p/{pid}/chats/{chat_id}/events': ChatEvents,
   'PATCH /api/p/{pid}/chats/{chat_id}': Ok,
   'DELETE /api/p/{pid}/chats/{chat_id}': Ok,
   // Owner's kill switch on a live ACP chat: drops the client, keeps
   // the Chat. 404/409 (not an ACP chat / not live) never reach the zod gate.
   'POST /api/p/{pid}/chats/{chat_id}/acp/close': Ok,
   'POST /api/p/{pid}/message': MessageReply,
+  'POST /api/p/{pid}/chats/{chat_id}/cards/save': CardSave,
   'GET /api/p/{pid}/tasks': TaskList,
   'POST /api/p/{pid}/tasks': NewTaskEnvelope,
   'GET /api/p/{pid}/tasks/{task_id}': TaskEnvelope,
@@ -210,6 +225,18 @@ export const ROUTES: Record<string, z.ZodTypeAny> = {
   // resolve `suppressed` and `available`, so the install-wide surface never
   // pretends to.
   'GET /api/skills': SkillList,
+  'GET /api/cards': CardList,
+  'POST /api/cards/state': CardMutated,
+  'DELETE /api/cards': CardMutated,
+  'POST /api/p/{pid}/card-sources/refresh': CardSourceResponse,
+  'POST /api/p/{pid}/card-sources/approval': CardSourceResponse,
+  'GET /api/p/{pid}/card-instances': CardInstance,
+  'POST /api/p/{pid}/chats/{chat_id}/card-instances/save': CardInstanceSave,
+  'GET /api/p/{pid}/cards': ProfileCardList,
+  'POST /api/p/{pid}/cards/state': ProfileCardMutated,
+  'POST /api/p/{pid}/cards/suppress': ProfileCardMutated,
+  'DELETE /api/p/{pid}/cards/suppress': ProfileCardMutated,
+  'DELETE /api/p/{pid}/cards': ProfileCardMutated,
   'POST /api/skills/{name}/state': SkillMutated,
   'DELETE /api/skills/{name}': SkillMutated,
   // Search and discover touch no state, so both scopes answer the same shape;
@@ -249,6 +276,8 @@ export const ROUTES: Record<string, z.ZodTypeAny> = {
   'POST /api/p/{pid}/settings/llm-override': LlmOverrideSaved,
   'POST /api/p/{pid}/settings/live-override': LiveOverrideSaved,
   'POST /api/p/{pid}/settings/reply-timeout': ReplyTimeoutSaved,
+  'POST /api/p/{pid}/settings/compaction': CompactionSaved,
+  'POST /api/p/{pid}/settings/preview-browser': PreviewBrowserSaved,
   'POST /api/p/{pid}/settings/voice_provider': Ok,
   'GET /api/p/{pid}/voice/voices': VoiceCatalog,
   'POST /api/p/{pid}/voice/select': VoiceSelected,

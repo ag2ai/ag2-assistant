@@ -13,6 +13,7 @@
   import ProfileModelSwitchers from './ProfileModelSwitchers.svelte'
   import FoldersSection from './FoldersSection.svelte'
   import ProfileSkillsSection from './ProfileSkillsSection.svelte'
+  import ProfileCardsSection from './ProfileCardsSection.svelte'
   import ProfileMemorySection from './ProfileMemorySection.svelte'
 
   type Props = { onBack: () => void }
@@ -28,6 +29,7 @@
     { id: 'model', label: 'Model', comp: ProfileModelSwitchers },
     { id: 'folders', label: 'Folders', comp: FoldersSection },
     { id: 'skills', label: 'Skills', comp: ProfileSkillsSection },
+    { id: 'cards', label: 'Cards', comp: ProfileCardsSection },
     { id: 'memory', label: 'Memory', comp: ProfileMemorySection },
   ]
   let tab = $state('general')

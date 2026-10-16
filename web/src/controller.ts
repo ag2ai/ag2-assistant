@@ -2,7 +2,7 @@
 // folds events into items, runs turns, and (for tasks) polls the durable panel.
 
 import { get, writable, type Writable } from 'svelte/store'
-import { thread, runInfo, chats, tasks, inquiries, inspectorEvents, viewer, profiles, profileEpoch, chatModel } from './store.ts'
+import { thread, runInfo, chats, screenRows, tasks, inquiries, inspectorEvents, viewer, profiles, profileEpoch, chatModel, refreshFiles } from './store.ts'
 import type { ThreadKind } from './store.ts'
 import { NO_CHAT_MODEL, openedChat, sentFirstMessage } from './lib/chatModel.ts'
 import { StreamClient } from './transport/stream.ts'
@@ -10,10 +10,13 @@ import { VoiceController } from './transport/voice.ts'
 import { api } from './transport/api/index.ts'
 import { foldEvent, isBusy, queueMessage } from './project.ts'
 import { nextItemId } from './lib/ids.ts'
+import { projectHistory } from './lib/chatHistory.ts'
+import { errText } from './lib/errors.ts'
 import type { A2UISurfaceState, AttachmentPayload, ThreadItem, WireEvent } from './schemas/events.ts'
 import { getActiveProfileId, setActiveProfileId } from './lib/profile.ts'
 import { setAccent } from './design/palette.ts'
 import { go, closeAside, route } from './router.ts'
+import { chatEventStatus, mergeChatStatus, pendingChatDeadlines } from './lib/chatActivity.ts'
 
 // The two item kinds a voice session streams into (see _voiceTranscript).
 type VoiceRole = 'user' | 'agent'
@@ -22,15 +25,36 @@ type VoiceBubble = Extract<ThreadItem, { kind: VoiceRole }>
 let client: StreamClient | null = null
 let panelTimer: ReturnType<typeof setInterval> | null = null
 
-// Replay de-dup: the server replays the FULL history on every (re)connect, then
-// sends a `ready` marker. The socket auto-reconnects on any drop (restart, sleep,
-// network blip), so without care a reconnect re-folds the whole history onto the
-// existing items → a duplicated timeline. We fold each connect's replay into a
-// throwaway buffer and atomically swap it into `items` on `ready`; live events
-// (after `ready`) fold straight into `items`. On reconnect the visible items stay
-// put until the rebuilt-identical buffer swaps in — no flash, no duplicates.
+// A connection replays the loaded range; older pages prepend to the same event fold.
 let _replaying = false
-let _replayBuf: ThreadItem[] = []
+let _replayEvents: WireEvent[] = []
+let _historyEvents: WireEvent[] = []
+let _session = 0
+let _connection = 0
+export const chatHistory = writable<{
+  chat: string | null; loading: boolean; loadingOlder: boolean; error: string;
+  before: string | null; start: string | null
+}>({ chat: null, loading: false, loadingOlder: false, error: '', before: null, start: null })
+
+export async function loadOlderMessages(): Promise<boolean> {
+  const state = get(chatHistory)
+  if (!state.chat || !state.before || state.loading || state.loadingOlder || _voiceActive) return false
+  const session = _session, connection = _connection
+  chatHistory.update(s => ({ ...s, loadingOlder: true, error: '' }))
+  try {
+    const page = await api.chatEvents(state.chat, state.before)
+    if (session !== _session || connection !== _connection) return false
+    _historyEvents = [...page.events, ..._historyEvents]
+    thread.update(t => ({ ...t, items: projectHistory(_historyEvents, t.items) }))
+    chatHistory.update(s => ({ ...s, before: page.before, start: page.start ?? s.start, loadingOlder: false }))
+    return true
+  } catch (error) {
+    if (session === _session && connection === _connection) {
+      chatHistory.update(s => ({ ...s, loadingOlder: false, error: errText(error) }))
+    }
+    return false
+  }
+}
 
 // ---- voice ----
 export type VoiceStatus = { active: boolean; status: string }
@@ -56,8 +80,11 @@ function _inspect(ev: WireEvent): void {
 export function openThread(kind: ThreadKind, id: string): void {
   closeThread()
   _suppressStream = false       // a fresh thread always folds its stream
-  _replaying = true; _replayBuf = []   // first connect's replay buffers until `ready`
+  _replaying = true   // first connect's replay buffers until `ready`
+  const session = _session
   const chat = kind === 'run' ? 'task-run:' + id : id
+  _historyEvents = []; _replayEvents = []
+  chatHistory.set({ chat, loading: true, loadingOlder: false, error: '', before: null, start: null })
   thread.set({ id, kind, chat, items: [], busy: false })
   inspectorEvents.set([])       // fresh inspector buffer per thread
   // Reset synchronously, so an unsent model choice can never leak from the chat we
@@ -65,21 +92,44 @@ export function openThread(kind: ThreadKind, id: string): void {
   chatModel.set(openedChat(chat))
 
   client = new StreamClient(chat, {
-    // Each (re)connect re-replays the full history: buffer it afresh so a reconnect
-    // rebuilds rather than double-folds onto the live items.
-    onOpen: () => { _replaying = true; _replayBuf = [] },
+    // Each connection rebuilds the loaded range without duplicating live items.
+    onOpen: () => {
+      if (session !== _session) return
+      _connection++
+      _replaying = true; _replayEvents = []
+      chatHistory.update(s => ({ ...s, loading: true, loadingOlder: false, error: '' }))
+    },
     onEvent: (ev) => {
+      if (session !== _session) return
       _inspect(ev)
       if (_suppressStream) return
-      if (_replaying) { foldEvent(_replayBuf, ev); return }   // replay → buffer, don't render half-built
-      thread.update((t) => { foldEvent(t.items, ev); return { ...t, items: t.items, busy: isBusy(t.items) } })
+      if (!_replaying && ev.type.endsWith('.CardInstanceSaved') && typeof ev.data.path === 'string') refreshFiles(ev.data.path)
+      if (_replaying) { _replayEvents.push(ev); return }
+      _historyEvents.push(ev)
+      thread.update((t) => {
+        foldEvent(t.items, ev)
+        if (kind === 'chat') {
+          chats.update((rows) => rows.map((row) => {
+            if (row.chat_id !== chat) return row
+            const pending = pendingChatDeadlines(t.items, row.turn_started_at)
+            const snapshot = chatEventStatus(row, ev, pending)
+            return snapshot ? mergeChatStatus(row, snapshot) : row
+          }))
+        }
+        return { ...t, items: t.items, busy: isBusy(t.items) }
+      })
     },
     // Replay complete → atomically adopt the freshly-rebuilt buffer as the timeline.
-    onReady: () => {
-      if (!_replaying) return
+    onReady: (frame) => {
+      if (session !== _session || !_replaying) return
       _replaying = false
-      const items = _replayBuf; _replayBuf = []
-      thread.update((t) => ({ ...t, items, busy: isBusy(items) }))
+      _historyEvents = _replayEvents; _replayEvents = []
+      thread.update(t => {
+        const items = projectHistory(_historyEvents, t.items)
+        return { ...t, items, busy: frame.busy ?? isBusy(items) }
+      })
+      chatHistory.set({ chat, loading: false, loadingOlder: false, error: '',
+        before: frame.history?.before ?? null, start: frame.history?.start ?? null })
     },
     onTurnEnd: () => thread.update((t) => ({ ...t, busy: false })),
     // Fed into the turn already running: show it straight away (marked queued) so the
@@ -92,6 +142,10 @@ export function openThread(kind: ThreadKind, id: string): void {
       t.items.push({ id: nextItemId(), kind: 'note', icon: 'x', text: m.message || 'error', alert: true })
       return { ...t, busy: false }
     }),
+  }, () => {
+    const start = get(chatHistory).start
+    return '/stream?chat=' + encodeURIComponent(chat) + '&history_limit=10' +
+      (start ? '&history_from=' + encodeURIComponent(start) : '')
   }).connect()
 
   if (kind === 'run') {
@@ -107,8 +161,8 @@ export function openThread(kind: ThreadKind, id: string): void {
   }
 }
 
-export function send(text: string, attachments: AttachmentPayload[] = []): void {
-  if (!client || (!text.trim() && !attachments.length)) return
+export function send(text: string, attachments: AttachmentPayload[] = []): boolean {
+  if (!client || (!text.trim() && !attachments.length)) return false
   thread.update((t) => ({ ...t, busy: true }))
   const t = get(thread)
   // A model chosen before this chat existed rides the message that creates it; empty
@@ -127,7 +181,7 @@ export function send(text: string, attachments: AttachmentPayload[] = []): void 
   if (t.kind === 'chat' && text.trim()) {
     chats.update((list) =>
       list.some((s) => s.chat_id === t.chat)
-        ? list
+        ? list.map((row) => row.chat_id === t.chat ? { ...row, status: 'running', turn_started_at: Date.now() / 1000, waiting_until: null, unread: false } : row)
         : [
             {
               chat_id: t.chat,
@@ -136,11 +190,18 @@ export function send(text: string, attachments: AttachmentPayload[] = []): void 
               turns: 0,
               title: '',
               starred: false,
+              status: 'running',
+              status_version: '',
+              status_updated: 0,
+              turn_started_at: Date.now() / 1000,
+              waiting_until: null,
+              unread: false,
             },
             ...list,
           ]
     )
   }
+  return true
 }
 
 // Stop the running turn. Stays busy until the server confirms — the turn ends when
@@ -179,6 +240,8 @@ export function clearFeedback({ targetKind, targetId }: Pick<FeedbackTarget, 'ta
 }
 
 export function closeThread(): void {
+  _session++
+  chatHistory.set({ chat: null, loading: false, loadingOlder: false, error: '', before: null, start: null })
   if (voiceCtl) { voiceCtl.stop(); voiceCtl = null }  // _voiceEnded's reload is guarded out on nav
   _voiceActive = false; _vitem = null; _vrole = null
   if (client) { client.close(); client = null }
@@ -193,6 +256,7 @@ function resetProfileState(): void {
   thread.set({ id: null, kind: 'chat', chat: '', items: [], busy: false })
   chatModel.set(NO_CHAT_MODEL)
   chats.set([])
+  screenRows.set([])
   tasks.set([])
   runInfo.set(null)
   inquiries.set([])

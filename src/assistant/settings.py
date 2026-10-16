@@ -93,6 +93,31 @@ class Settings:
         self._write(data)
         return clean
 
+    def set_preview_browser(self, executable: str) -> str:
+        """Persist the explicitly selected Chromium executable for visual previews."""
+        executable = executable.strip()
+        if executable and not Path(executable).is_absolute():
+            raise ValueError("Use an absolute path to a Chromium executable.")
+        data = self._read()
+        existing = data.get("tools")
+        tools = existing if isinstance(existing, dict) else {}
+        tools["preview_browser"] = executable
+        data["tools"] = tools
+        self._write(data)
+        return executable
+
+    def set_compact_max_tokens(self, tokens: int) -> int:
+        """Persist this profile's history compaction threshold in tokens."""
+        if isinstance(tokens, bool) or not isinstance(tokens, int) or tokens <= 0:
+            raise ValueError("History compaction threshold must be a positive whole number.")
+        data = self._read()
+        existing = data.get("memory")
+        memory = existing if isinstance(existing, dict) else {}
+        memory["compact_max_tokens"] = tokens
+        data["memory"] = memory
+        self._write(data)
+        return tokens
+
     # --- gateway ---
 
     def set_reply_timeout(self, seconds: float) -> float:

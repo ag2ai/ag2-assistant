@@ -2,6 +2,7 @@ import { derived, writable, type Readable, type Writable } from 'svelte/store'
 import { DEFAULT_RAIL_WIDTH, DEFAULT_DRAWER_WIDTH } from './lib/railWidth.ts'
 import { NO_CHAT_MODEL, type ChatModelState } from './lib/chatModel.ts'
 import type { A2UIKnown } from './lib/a2ui.ts'
+import type { ScreenRow } from './schemas/screen.ts'
 import type {
   ChatRow,
   HitlQuestion,
@@ -66,6 +67,7 @@ export const chatModel: Writable<ChatModelState> = writable(NO_CHAT_MODEL)
 
 // Drawer: unified history of chats + tasks, plus the user-writable Files tree.
 export const chats: Writable<ChatRow[]> = writable([])
+export const screenRows: Writable<ScreenRow[]> = writable([])
 export const tasks: Writable<Task[]> = writable([])
 // False until the active profile's first chats/tasks poll lands. The drawer shows a
 // loader instead of its empty state; a Card link waits rather than reading `[]` as gone.
@@ -135,6 +137,10 @@ export const reveal: Writable<Reveal> = writable({ path: null, kind: 'file', epo
 // switch to the Files Tab. FilesTree reacts — pull a fresh listing, persistently expand
 // the file's ancestor Directories, and scroll its row into view. Leaves the preview
 // (aside) Active file and the upload-target selection untouched. A blank path is a no-op.
+export function refreshFiles(path: string): void {
+  reveal.update((r) => ({ path, kind: 'file', epoch: r.epoch + 1 }))
+}
+
 export function revealFile(path: string | null | undefined): void {
   if (!path) return
   reveal.update((r) => ({ path, kind: 'file', epoch: r.epoch + 1 }))
@@ -156,7 +162,7 @@ export function openThreadRow(row: MentionRow | null | undefined): void {
 // also opens the directory itself so its contents are visible. A folder has no preview
 // rail (it isn't a file), so a mentioned folder browses here instead (ADR 0012).
 export function revealFolder(path: string | null | undefined): void {
-  if (!path) return
+  if (path == null) return
   reveal.update((r) => ({ path, kind: 'directory', epoch: r.epoch + 1 }))
   go('/files')
 }

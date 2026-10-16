@@ -1,6 +1,9 @@
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { api as P } from './profile.ts'
+import { foreignBlock } from './foreignBlock.ts'
+
+marked.use({ extensions: [foreignBlock] })
 
 // A bare relative path the agent emitted (e.g. images/foo.jpg, uploads/bar.png) —
 // not absolute/scheme/anchor — refers to a WORKSPACE file. The browser would resolve
@@ -13,6 +16,11 @@ const isFilesRaw = (pathname: string) => /^\/api\/p\/[^/]+\/files\/raw$/.test(pa
 // Rewrite workspace-relative images/links to the files API, and open external links
 // in a new tab. Runs after sanitization so attributes we add aren't re-filtered.
 DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  if (node.nodeName.toLowerCase() === 'svg') {
+    // Chrome sizes an `auto` width/height attribute as 100% of the parent, not from the viewBox.
+    for (const a of ['width', 'height']) if (node.getAttribute(a)?.trim().toLowerCase() === 'auto') node.removeAttribute(a)
+    return
+  }
   if (node.tagName === 'IMG' && node.hasAttribute('src')) {
     const src = node.getAttribute('src')
     if (isWorkspaceRel(src)) {

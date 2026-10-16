@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ag2-assistant"
-version = "0.5.4"  # single source of truth (mirrors ag2's own pyproject); assistant.version reads it back from installed metadata
+version = "0.6.0"  # single source of truth (mirrors ag2's own pyproject); assistant.version reads it back from installed metadata
 description = "AG2 Assistant — a personal AI assistant powered by AG2's framework"
 readme = "README.md"
 license = "Apache-2.0"
@@ -14,7 +14,7 @@ dependencies = [
     # Dev installs, CI and the Docker image all resolve this through uv.lock, so they
     # run the same AG2 the published wheel asks for. ddgs powers the native
     # DuckDuckSearchTool, openai the OpenAI voice provider.
-    "ag2[gemini,ddgs,openai,acp]>=1.0.6",
+    "ag2[gemini,ddgs,openai,acp]>=1.1.2",
     "typer>=0.15.0",
     "python-dotenv>=1.0.0",
     "pydantic>=2.0.0",
@@ -29,10 +29,12 @@ dependencies = [
     # gateway facade
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.34.0",
+    "websockets>=15",
     # channels
     "python-telegram-bot>=21.0",
     "discord.py>=2.4",
     "slack-bolt>=1.18",
+    "jsonschema>=4.26.0",
 ]
 
 [project.optional-dependencies]
@@ -44,11 +46,12 @@ dev = [
     "mypy>=2.3,<2.4",
     "types-PyYAML>=6.0",
     "pre-commit>=4.0.0",
+    "types-jsonschema>=4.26.0.20260518",
 ]
 # Provider client libraries not in the base install.
 # Opt-in: `pip install "ag2-assistant[ollama]"`.
-anthropic = ["ag2[anthropic]>=1.0.6"]
-ollama = ["ag2[ollama]>=1.0.6"]
+anthropic = ["ag2[anthropic]>=1.1.2"]
+ollama = ["ag2[ollama]>=1.1.2"]
 # Google integration (Gmail / Calendar / Drive). Opt-in: `pip install ag2-assistant[google]`.
 google = [
     "google-api-python-client>=2.0",
@@ -60,10 +63,6 @@ google = [
 
 [project.scripts]
 ag2-assistant = "assistant.cli:app"
-
-[tool.uv.sources]
-# Track ag2's main branch instead of a released version.
-ag2 = { git = "https://github.com/ag2ai/ag2.git", branch = "main" }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -119,11 +118,12 @@ ignore-words-list = "ans,hsi,thur,unparseable,pre-empt,pre-selects,protext,padd,
 where = ["src"]
 
 [tool.setuptools.package-data]
-"assistant" = ["skills/*/SKILL.md", "cards/bundled/*.card.yaml"]
+"assistant" = ["skills/*/SKILL.md", "cards/bundled/*.card.yaml", "cards/*.md"]
 "assistant.gateway" = [
     "static/*.html",
     "static/*.svg",
     "static/app/index.html",
+    "static/app/preview.html",
     "static/app/assets/*",
     "static/app/assets/*.css",
     "static/app/assets/*.js",

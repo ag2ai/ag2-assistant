@@ -47,12 +47,15 @@ export class StreamClient {
   private ws: WebSocket | null
   private _closed: boolean
   private _queue: ClientFrame[]
+  private readonly endpoint: string | (() => string)
 
   constructor(
     chatId: string,
     { onEvent, onReady, onOpen, onTurnEnd, onQueued, onError }: StreamHandlers = {},
+    endpoint?: string | (() => string),
   ) {
     this.chatId = chatId
+    this.endpoint = endpoint || '/stream?chat=' + encodeURIComponent(chatId)
     this.onEvent = onEvent || (() => {})
     this.onReady = onReady || (() => {})
     // The server fed this message to the turn already running. It won't come back as an
@@ -60,7 +63,7 @@ export class StreamClient {
     // show it as queued in the meantime.
     this.onQueued = onQueued || (() => {})
     // Fires on every (re)connect, BEFORE the server's replay events arrive. The
-    // server replays the full history on each connect, so the caller uses this to
+    // server replays the requested range on each connect; the caller uses this to
     // start a fresh replay buffer and avoid double-folding on reconnect.
     this.onOpen = onOpen || (() => {})
     this.onTurnEnd = onTurnEnd || (() => {})
@@ -71,8 +74,10 @@ export class StreamClient {
   }
 
   connect(): this {
+    if (this._closed) return this
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-    const url = `${proto}://${location.host}${P('/stream?chat=' + encodeURIComponent(this.chatId))}`
+    const endpoint = typeof this.endpoint === 'function' ? this.endpoint() : this.endpoint
+    const url = `${proto}://${location.host}${P(endpoint)}`
     this.ws = new WebSocket(url)
     this.ws.onopen = () => { this.onOpen(); const q = this._queue; this._queue = []; q.forEach((o) => this._raw(o)) }
     this.ws.onmessage = (e: MessageEvent) => {

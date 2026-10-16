@@ -182,6 +182,19 @@ export function a2uiText(component: A2UIComponent, data: A2UIData = {}, scope = 
   return value == null || value === '' ? '' : String(value)
 }
 
+// Text variants that read as prose, so Markdown in them is drawn.
+const PROSE_VARIANTS = ['', 'body', 'caption', 'quote']
+
+/** Whether a Text component of this `variant` draws its Markdown. */
+export function a2uiProse(variant: unknown): boolean {
+  return PROSE_VARIANTS.includes(str(variant))
+}
+
+/** `text` with paired bold and code marks removed, for labels drawn as plain text. */
+export function stripInlineMarks(text: string): string {
+  return text.replace(/(\*\*|__)(?=\S)(.+?)(?<=\S)\1/g, '$2').replace(/`([^`\n]+)`/g, '$1')
+}
+
 /** One Icon's glyph name: its bound value, put through the Card's own map — so a
  *  row's status field can pick the mark that stands for it. */
 export function a2uiIconName(component: A2UIComponent, data: A2UIData = {}, scope = ''): string {
@@ -276,9 +289,9 @@ export function sparkPath(values: unknown, w: number, h: number, pad = 3): A2UIS
 
 export type A2UIMetric = { value: string; unit: string; delta: string; arrow: string }
 
-// Numbers a Metric prints: grouped, two decimals, so a column of them lines up.
+// Metric numbers are grouped with up to two decimals, without trailing zeros.
 const decimal = (n: number) =>
-  n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  n.toLocaleString('en-US', { maximumFractionDigits: 2 })
 
 const signed = (n: number) => `${n > 0 ? '+' : ''}${decimal(n)}`
 
@@ -474,7 +487,12 @@ function ensureSurface(
   catalogId: string | undefined,
   version: string,
 ): A2UIItem {
-  let item = items.find((i): i is A2UIItem => i.kind === 'a2ui' && i.surfaceId === surfaceId)
+  const index = items.findIndex((i) => i.kind === 'a2ui' && i.surfaceId === surfaceId)
+  let item = index < 0 ? undefined : items[index] as A2UIItem
+  if (item) {
+    item = { ...item, messages: [...(item.messages || [])] }
+    items[index] = item
+  }
   if (!item) {
     item = {
       id: nextItemId(),

@@ -127,6 +127,16 @@
   --danger:  var(--red-500);
   --info:    var(--blue-500);
 
+  /* Ordered categorical series, independent of the workspace accent. */
+  --chart-series-1: var(--info);
+  --chart-series-2: var(--ag2-indigo);
+  --chart-series-3: var(--success);
+  --chart-series-4: var(--warning);
+  --chart-series-5: var(--danger);
+  --chart-series-6: var(--ag2-cyan);
+  --chart-series-7: var(--brand-coral);
+  --chart-series-8: var(--text-muted);
+
   /* Focus */
   --focus-ring: 0 0 0 3px var(--accent-ring);
 

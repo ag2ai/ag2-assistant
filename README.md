@@ -80,6 +80,7 @@ The primary interface is the Svelte web UI served at `/` (→ `/app`). It includ
 - **It asks when it's unsure** — mid-task the agent can put a question to you (with tappable options) and resume with your answer, in the web UI or on a connected channel.
 - **Image generation** — generated images are saved to the shared workspace and shown as clickable inline thumbnails.
 - **Files** — browse, preview, download and delete everything the assistant has saved.
+- **Cards** — edit `.card.yaml` definitions in Files and manage Bundled, Global and Profile Cards in Settings. Disable a shared Card app-wide or suppress it for one profile; changes apply to the next turn. Settings reports files that did not load and why.
 - **Memory** — the assistant passively learns your preferences; 👍/👎 feedback (with a reason) feeds a memory-aware learner that dedupes and prunes conflicting notes.
 - **Folders** — register folders outside the workspace and grant a profile (or a single chat) **read** or **read + write** access, so the assistant can work with your code/notes. Access is granted, never blanket — a first-touch prompt can mint a grant on the fly.
 - **Permissions** — you decide what commands it can run: approve shell commands once or always.

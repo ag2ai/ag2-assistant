@@ -84,6 +84,10 @@ class _PersistentSession:
         self._session_factory = session_factory
         self._idle_close_s = idle_close_s
 
+    def __deepcopy__(self, memo):
+        """Constructor tool copies retain this owned connection."""
+        return self
+
     def _touch(self) -> None:
         self._last_used = time.monotonic()
 

@@ -6,6 +6,8 @@ names which of the four reasons stopped it.
 
 import httpx
 
+from assistant.codex_auth import BACKEND_BASE, CLIENT_VERSION, Creds, default_headers
+
 # Why a catalog could not be read: a rejected credential, an endpoint that could not
 # be reached, one that answered but lists nothing, and a type no probe applies to.
 UNAUTHORIZED = "unauthorized"
@@ -13,9 +15,15 @@ UNREACHABLE = "unreachable"
 NO_LIST_ENDPOINT = "no_list_endpoint"
 NOT_PROBEABLE = "not_probeable"
 
-# The types the gateway probes, and the one it answers without probing.
-GATEWAY_PROBEABLE = ("ollama", "gemini", "openai", "openai_responses", "anthropic")
-NEVER_PROBEABLE = ("openai_subscription",)
+# The types the gateway probes with server-side credentials.
+GATEWAY_PROBEABLE = (
+    "ollama",
+    "gemini",
+    "openai",
+    "openai_responses",
+    "anthropic",
+    "openai_subscription",
+)
 
 DEFAULT_OLLAMA_HOST = "http://localhost:11434"
 DEFAULT_BASE_URL = {
@@ -40,13 +48,21 @@ class CatalogUnavailable(Exception):
 class CatalogTarget:
     """A resolved place to ask for a model list, with the key already looked up."""
 
-    __slots__ = ("type", "base_url", "host", "api_key")
+    __slots__ = ("type", "base_url", "host", "api_key", "creds")
 
-    def __init__(self, type: str, base_url: str = "", host: str = "", api_key: str = "") -> None:
+    def __init__(
+        self,
+        type: str,
+        base_url: str = "",
+        host: str = "",
+        api_key: str = "",
+        creds: Creds | None = None,
+    ) -> None:
         self.type = type
         self.base_url = base_url
         self.host = host
         self.api_key = api_key
+        self.creds = creds
 
     def __repr__(self) -> str:  # the key is deliberately not in it
         return f"CatalogTarget(type={self.type!r}, base_url={self.base_url!r}, host={self.host!r})"
@@ -87,10 +103,28 @@ def _data_ids(payload: dict) -> list[str]:
     return [str(e.get("id") or "") for e in data if isinstance(e, dict)]
 
 
+def _subscription_models(payload: dict) -> list[str]:
+    """Visible model slugs in the ChatGPT account catalog."""
+    models = payload.get("models")
+    if not isinstance(models, list):
+        raise CatalogUnavailable(NO_LIST_ENDPOINT)
+    return [
+        str(entry.get("slug") or "")
+        for entry in models
+        if isinstance(entry, dict) and entry.get("visibility", "list") == "list"
+    ]
+
+
 def _request(target: CatalogTarget) -> tuple[str, dict[str, str]]:
     """Where to ask ``target`` for its models, and with what headers. A custom
     endpoint is asked at its own address, not at its vendor's."""
     ctype = target.type
+    if ctype == "openai_subscription":
+        if not target.creds or not target.creds.access_token:
+            raise CatalogUnavailable(NOT_PROBEABLE)
+        headers = default_headers(target.creds)
+        headers["Authorization"] = f"Bearer {target.creds.access_token}"
+        return f"{BACKEND_BASE}/models?client_version={CLIENT_VERSION}", headers
     if ctype == "ollama":
         return (target.host or DEFAULT_OLLAMA_HOST).rstrip("/") + "/api/tags", {}
     base = (target.base_url or DEFAULT_BASE_URL[ctype]).rstrip("/")
@@ -131,7 +165,11 @@ async def probe_provider_models(
     if target.type not in GATEWAY_PROBEABLE:
         raise CatalogUnavailable(NOT_PROBEABLE)
     # Nothing to ask with, and nothing was asked — never a failure to reach anything.
-    if target.type != "ollama" and not target.api_key and not target.base_url:
+    if (
+        target.type not in ("ollama", "openai_subscription")
+        and not target.api_key
+        and not target.base_url
+    ):
         raise CatalogUnavailable(NOT_PROBEABLE)
     url, headers = _request(target)
     owned = client is None
@@ -154,6 +192,8 @@ async def probe_provider_models(
         raise CatalogUnavailable(NO_LIST_ENDPOINT)
     if target.type == "ollama":
         names = _ollama_tags(payload)
+    elif target.type == "openai_subscription":
+        names = _subscription_models(payload)
     elif target.type == "gemini":
         names = _gemini_models(payload)
     else:

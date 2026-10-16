@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { tick } from 'svelte'
+  import { chatHistory, loadOlderMessages } from '../controller.ts'
   import { thread, runInfo, profile, profiles, chats, chatModel } from '../store.ts'
   import { headerModelId } from '../lib/chatModel.ts'
   import { llmConfigs } from '../lib/llm.ts'
@@ -12,6 +14,7 @@
   import Icon from './Icon.svelte'
   import AppBar from './AppBar.svelte'
   import { dayRows } from '../lib/time.ts'
+  import { isCompacting } from '../project.ts'
 
   let scroller: HTMLDivElement | undefined
   const tail = $derived($thread.items[$thread.items.length - 1])
@@ -43,15 +46,38 @@
   // above the first item of a new calendar day (null otherwise). Items carry `at`
   // (the source event's created_at, Unix seconds — see project.ts). See dayRows.
   const rows = $derived(dayRows($thread.items))
-  const showThinking = $derived($thread.busy && !(tail && tail.kind === 'agent' && tail.streaming))
+  const showThinking = $derived($thread.busy && !isCompacting($thread.items) && !(tail && tail.kind === 'agent' && tail.streaming))
 
   // Autoscroll follows the stream only while the reader is at the bottom. Scrolling
   // up unpins (so you can read back mid-turn); scrolling back down re-pins. Without
   // this, every streamed chunk yanks the view back down and reading is impossible.
   const NEAR_BOTTOM = 80 // px of slack — "at the bottom" for a reader, not to the pixel
   let pinned = $state(true)
+  let restoring = false
+  async function loadOlder() {
+    const el = scroller
+    if (!el || restoring || !$chatHistory.before || $chatHistory.loading || $chatHistory.loadingOlder) return
+    const chat = $thread.chat
+    const anchor = [...el.querySelectorAll<HTMLElement>('[data-thread-item]')]
+      .find(node => node.offsetHeight > 0 && node.getBoundingClientRect().bottom >= el.getBoundingClientRect().top)
+    const top = anchor?.getBoundingClientRect().top
+    const height = el.scrollHeight
+    const position = el.scrollTop
+    restoring = true
+    pinned = false
+    try {
+      const loaded = await loadOlderMessages()
+      await tick()
+      if (loaded && $thread.chat === chat) {
+        if (anchor?.isConnected && top !== undefined) el.scrollTop += anchor.getBoundingClientRect().top - top
+        else el.scrollTop = position + el.scrollHeight - height
+      }
+    } finally { restoring = false }
+  }
   function onScroll() {
-    if (scroller) pinned = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < NEAR_BOTTOM
+    if (!scroller || restoring) return
+    pinned = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < NEAR_BOTTOM
+    if (!pinned && scroller.scrollTop < 160 && !$chatHistory.error) void loadOlder()
   }
   // Glide to the latest and re-pin (so the stream follows again). A hand-rolled eased
   // tween (not native `behavior:'smooth'`, which is browser-paced and whips over long
@@ -117,7 +143,7 @@
   $effect(() => {
     $thread.items
     showThinking
-    if (!pinned) return
+    if (!pinned || restoring) return
     requestAnimationFrame(() => { if (scroller && pinned) scroller.scrollTop = scroller.scrollHeight })
   })
 </script>
@@ -141,12 +167,23 @@
 <div class="thread" bind:this={scroller} onscroll={onScroll}>
   <div class="inner">
     {#if $thread.kind === 'run'}<RunBanner />{/if}
-    {#if !$thread.items.length && $thread.kind === 'chat'}
+    {#if $chatHistory.loading && !$thread.items.length}
+      <div class="history-status" role="status">Loading conversation…</div>
+    {:else if $chatHistory.before}
+      <div class="history-status">
+        {#if $chatHistory.loadingOlder}<span role="status">Loading earlier messages…</span>
+        {:else if $chatHistory.error}
+          <span role="alert">{$chatHistory.error}</span>
+          <button class="history-load" onclick={loadOlder}>Retry</button>
+        {:else}<button class="history-load" onclick={loadOlder}>Load earlier messages</button>{/if}
+      </div>
+    {/if}
+    {#if !$thread.items.length && $thread.kind === 'chat' && !$chatHistory.loading}
       <div class="empty"><h1>How can I help{$profile.name ? `, ${$profile.name}` : ''}?</h1>Ask me anything — I can search, run code, manage tasks, and more.</div>
     {/if}
     {#each rows as { item, sep } (item.id)}
       {#if sep}<div class="daysep"><span>{sep}</span></div>{/if}
-      <Item {item} />
+      <div data-thread-item={item.id}><Item {item} /></div>
     {/each}
     {#if showThinking}<Thinking />{/if}
   </div>
@@ -173,6 +210,9 @@
 {/if}
 
 <style>
+  .history-status { display: flex; justify-content: center; align-items: center; gap: 12px; min-height: 42px; margin-bottom: 16px; color: var(--text-muted); font-size: 13px; }
+  .history-load { border: 1px solid var(--line); border-radius: 999px; padding: 7px 14px; background: var(--surface); color: var(--text-muted); font: inherit; cursor: pointer; }
+  .history-load:hover { color: var(--text); border-color: var(--text-muted); }
   .acpbadge { display: inline-flex; align-items: center; gap: 5px; }
   .acpbadge.live::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
   .acplive { display: flex; flex-direction: column; align-items: center; gap: 8px; margin: 0 16px 16px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius, 12px); background: var(--surface); text-align: center; }

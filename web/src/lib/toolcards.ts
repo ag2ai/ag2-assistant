@@ -1,19 +1,14 @@
-// Tool → card registry. Maps a tool name to a function that turns the tool call's
-// structured arguments into a card descriptor (or null). A card is just another
-// projection of the ToolCallEvent — the args are already on the wire, so there's
-// no prose parsing anywhere. Add a new card by adding an entry to REGISTRY.
+// Project structured tool arguments into provenance and artifact metadata.
 
-// One card per tool call the thread renders alongside the chips.
+// Metadata shown in the run list for a tool call.
 export type ToolCard =
   | { kind: 'file'; path: string; name: string }
+  | { kind: 'folder'; path: string }
+  | { kind: 'chat'; chatId: string }
   | { kind: 'search'; query: string }
   | { kind: 'skill'; name: string; script?: string; ran?: boolean }
   | { kind: 'image'; prompt: string; edit: boolean }
-
-// The same card once it sits in a thread item: `id` keys the rendered list.
-// Distributed over the union so each variant keeps its own shape.
-type WithId<T> = T extends unknown ? T & { id: number } : never
-export type KeyedToolCard = WithId<ToolCard>
+  | { kind: 'execution'; text: string; language?: string }
 
 // A tool call's arguments — JSON on the wire, already decoded on some events.
 type ToolArgs = Record<string, unknown>
@@ -31,20 +26,31 @@ const parse = (args: unknown): ToolArgs => {
 
 const baseName = (p: string): string => (p || '').split('/').pop() || p
 
-// Tools whose calls produce a file the user can open/download. The reported path
-// is relative to the tool's sandbox root (workspace_dir for chat → matches the
-// Files API; a per-task folder for subagents → the card's view falls back to the
-// Files browser when the direct fetch 404s).
-const FILE_WRITE = ['write_file', 'append_file', 'edit_file']
+// Tools naming a file the user can preview or download.
+const FILE = ['read_file', 'write_file', 'append_file', 'edit_file', 'update_file']
 // Tools whose calls are a web/data search — surface what was searched.
 const SEARCH = ['duckduckgo_search', 'gmail_search', 'drive_search']
 
 const REGISTRY: Record<string, (a: ToolArgs) => ToolCard | null> = {}
-for (const name of FILE_WRITE)
+for (const name of FILE)
   REGISTRY[name] = (a) =>
     typeof a.path === 'string' && a.path ? { kind: 'file', path: a.path, name: baseName(a.path) } : null
 for (const name of SEARCH)
   REGISTRY[name] = (a) => (typeof a.query === 'string' && a.query ? { kind: 'search', query: a.query } : null)
+
+REGISTRY.list_folder = (a) =>
+  typeof a.path === 'string' && a.path ? { kind: 'folder', path: a.path } : null
+REGISTRY.read_chat = (a) =>
+  typeof a.chat_id === 'string' && a.chat_id ? { kind: 'chat', chatId: a.chat_id } : null
+
+for (const name of ['run_shell_command', 'run_shell_local', 'run_shell_sandboxed'])
+  REGISTRY[name] = (a) =>
+    typeof a.command === 'string' && a.command ? { kind: 'execution', text: a.command } : null
+for (const name of ['run_code', 'run_code_local', 'run_code_sandboxed'])
+  REGISTRY[name] = (a) =>
+    typeof a.code === 'string' && a.code
+      ? { kind: 'execution', text: a.code, language: typeof a.language === 'string' ? a.language : undefined }
+      : null
 
 // Skill provenance: the agent consulting a skill (load_skill) or running one of its
 // scripts (run_skill_script) — surface which skill, from the call's `name` arg.
@@ -65,4 +71,21 @@ REGISTRY.generate_image = (a) =>
 export function cardFor(name: string, args: unknown): ToolCard | null {
   const fn = REGISTRY[name]
   return fn ? fn(parse(args)) || null : null
+}
+
+export function toolDetail(name: string, args: unknown): string {
+  const values = parse(args)
+  const card = cardFor(name, values)
+  if (card?.kind === 'skill') {
+    const script = card.ran ? card.script : values.resource
+    const path = parse(values.args).path
+    return [card.name, script, path].filter(value => typeof value === 'string' && value).join(' · ')
+  }
+  if (card?.kind === 'file' || card?.kind === 'folder') return card.path
+  if (card?.kind === 'chat') return card.chatId
+  if (card?.kind === 'search') return card.query
+  if (card?.kind === 'image') return card.prompt
+  if (card?.kind === 'execution') return [card.language, card.text].filter(Boolean).join('\n')
+  return [values.name, values.resource, values.path, values.command, values.query, values.url]
+    .filter(value => typeof value === 'string' && value).join(' · ')
 }

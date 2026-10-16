@@ -2,8 +2,8 @@
 // projection: the GUI is a view of the event stream. History (replay) and live
 // use the same reducer, so they produce identical items.
 
-import { cardFor } from './lib/toolcards.ts'
-import type { ToolCard } from './lib/toolcards.ts'
+import { projectSourceEvent } from './lib/cardSources.ts'
+import { cardFor, toolDetail } from './lib/toolcards.ts'
 import { fmtDateTime } from './lib/time.ts'
 import { applyA2UIMessage, asComponent, asComponents } from './lib/a2ui.ts'
 import { nextItemId as nid } from './lib/ids.ts'
@@ -25,22 +25,32 @@ function joinText(parts: TextParts): string {
     .trim()
 }
 
-export function addTool(items: ThreadItem[], name: string, card: ToolCard | null = null): void {
+export function addTool(items: ThreadItem[], name: string, args: unknown = undefined, at?: number): void {
   if (!name) return
   const pretty = prettyToolName(name)
-  const prev = items[items.length - 1]
+  // Aggregate tool rounds across empty continuing responses and observer alerts.
+  let index = items.length - 1
+  while (index >= 0) {
+    const item = items[index]
+    if (item.kind === 'note' && item.observerAlert) { index--; continue }
+    if (item.kind !== 'agent' || !item.continues || item.streaming || item.text || item.empty) break
+    index--
+  }
+  const prev = items[index]
   let last: ItemOf<'tools'>
-  if (prev && prev.kind === 'tools') last = prev
+  if (prev && prev.kind === 'tools') {
+    last = { ...prev, names: prev.names.map(entry => ({ ...entry })), runs: [...prev.runs] }
+    items[index] = last
+  }
   else {
-    last = { id: nid(), kind: 'tools', names: [], cards: [] }
+    last = { id: nid(), kind: 'tools', names: [], runs: [] }
     items.push(last)
   }
-  const e = last.names[last.names.length - 1]
-  if (e && e.name === pretty) e.n++
+  const e = last.names.find(entry => entry.name === pretty)
+  if (e) e.n++
   else last.names.push({ name: pretty, n: 1 })
-  // A tool can contribute a card (file written, search run, …) — a projection of
-  // the call's structured args, rendered alongside the chips. See lib/toolcards.js.
-  if (card) last.cards.push({ ...card, id: nid() })
+  const card = cardFor(name, args)
+  last.runs.push({ id: nid(), name: pretty, detail: toolDetail(name, args) || pretty, at, card: card ?? undefined })
 }
 
 function prettyToolName(name: string): string {
@@ -57,20 +67,31 @@ function clearA2UIActionStatus(items: ThreadItem[]): void {
   }
 }
 
-// Whether a turn is still in progress, derived from the items rather than a
-// transient flag — so it's correct after reopening a chat mid-turn (where the
-// turn_end frame went to the old, closed socket). Busy if the most recent
-// decisive item is a user message (awaiting a reply) and not yet a finalized
-// agent response. A streaming agent bubble is skipped (the thinking dots are
-// already hidden once text is streaming).
+// Derive turn activity from the latest request, tool batch or final response.
+// Replies with tool calls keep the turn busy, including when replayed.
 export function isBusy(items: ThreadItem[]): boolean {
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i]
     if (it.kind === 'note' && it.ends) return false   // a stopped turn ends here — never "thinking" on replay
-    if (it.kind === 'agent' && !it.streaming) return false
+    if (it.kind === 'note' && it.compactionAgent !== undefined && it.pending) return true
+    if (it.kind === 'agent' && !it.streaming) return !!it.continues
+    if (it.kind === 'tools') return true
     if (it.kind === 'user') return true
   }
   return false
+}
+
+export function isCompacting(items: ThreadItem[]): boolean {
+  return items.some((it) => it.kind === 'note' && it.compactionAgent !== undefined && it.pending)
+}
+
+function stopCompaction(items: ThreadItem[]): void {
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i]
+    if (it.kind === 'note' && it.compactionAgent !== undefined && it.pending) {
+      items[i] = { ...it, pending: false, icon: 'x', text: 'History compaction stopped' }
+    }
+  }
 }
 
 // Root task lifecycle notes. `icon` is a Lucide name (see Icon.svelte) rendered
@@ -221,6 +242,7 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
       const d = EventData.ModelRequest.parse(data)
       const text = joinText(d.parts)
       if (!text) break
+      if (type === 'ModelRequest') stopCompaction(items)
       // Button fallbacks are private instructions passed to the agent. Their
       // corresponding A2UIActionSubmitted event is the user-facing status.
       if (text.startsWith('[[A2UI_ACTION]]')) break
@@ -246,15 +268,23 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
       // An A2UI button dispatches an ordinary agent turn. Its status note belongs
       // only to that turn, not to the durable conversation history.
       if (msg || !calls.length) clearA2UIActionStatus(items)
-      const streaming = [...items]
+      const streaming = currentTurn(items)
         .reverse()
         .find((it): it is ItemOf<'agent'> => it.kind === 'agent' && !!it.streaming)
       if (msg) {
         if (streaming) {
           streaming.text = msg
           streaming.streaming = false
+          streaming.continues = calls.length > 0
         } else {
-          items.push({ id: nid(), kind: 'agent', text: msg })
+          items.push({ id: nid(), kind: 'agent', text: msg, continues: calls.length > 0 })
+        }
+      } else if (calls.length) {
+        if (streaming) {
+          streaming.streaming = false
+          streaming.continues = true
+        } else {
+          items.push({ id: nid(), kind: 'agent', text: '', continues: true })
         }
       } else if (!calls.length) {
         // A final response with no text ends the turn: a finalized agent item clears
@@ -264,6 +294,7 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
         if (streaming) {
           streaming.text = text
           streaming.streaming = false
+          streaming.continues = false
           streaming.empty = !drew
         } else {
           items.push({ id: nid(), kind: 'agent', text, empty: !drew })
@@ -275,7 +306,40 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
     // duplicates it (same ids), so we ignore the singular to avoid double chips.
     case 'ToolCallsEvent': {
       const d = EventData.ToolCallsEvent.parse(data)
-      for (const c of d.calls ?? []) addTool(items, c.name, cardFor(c.name, c.arguments))
+      const at = EventMeta.parse(data).created_at
+      for (const c of d.calls ?? []) addTool(items, c.name, c.arguments, at)
+      break
+    }
+    case 'CompactionStarted': {
+      const d = EventData.CompactionStarted.parse(data)
+      items.push({ id: nid(), kind: 'note', icon: 'rotate-cw', text: 'Compacting history…',
+        pending: true, compactionAgent: d.agent })
+      break
+    }
+    case 'CompactionCompleted':
+    case 'CompactionFailed': {
+      const failed = type === 'CompactionFailed' ? EventData.CompactionFailed.parse(data) : null
+      const d = failed ?? EventData.CompactionCompleted.parse(data)
+      let index = items.length - 1
+      while (index >= 0) {
+        const it = items[index]
+        if (it.kind === 'note' && it.compactionAgent === d.agent && it.pending) break
+        index--
+      }
+      if (!failed && 'llm_calls' in d && d.strategy === 'CheckpointCompact' && d.llm_calls === 0) {
+        if (index >= 0) items.splice(index, 1)
+        break
+      }
+      let failureText = failed?.error || failed?.error_type
+      if (failed?.error_type === 'TimeoutError' && failed.error === 'Compaction cancelled') {
+        failureText = 'Compaction timed out'
+      }
+      const status = failed
+        ? { icon: 'x', text: `History compaction failed: ${failureText}`, alert: true }
+        : { icon: 'check', text: 'History compacted', alert: false }
+      const previous = items[index]
+      if (previous?.kind === 'note') items[index] = { ...previous, ...status, pending: false }
+      else items.push({ id: nid(), kind: 'note', compactionAgent: d.agent, ...status })
       break
     }
     case 'TaskCreated': {
@@ -315,7 +379,7 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
       const d = EventData.ObserverAlert.parse(data)
       const prev = items[items.length - 1]
       const prevText = prev && 'text' in prev ? prev.text : undefined
-      if (prevText !== d.message) items.push({ id: nid(), kind: 'note', icon: 'zap', text: d.message, alert: true })
+      if (prevText !== d.message) items.push({ id: nid(), kind: 'note', icon: 'zap', text: d.message, alert: true, observerAlert: true })
       break
     }
     case 'DeliverableProduced': {
@@ -331,9 +395,16 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
       items.push({ id: nid(), kind: 'genimage', path: d.path, prompt: d.prompt })
       break
     }
+    case 'CardInstanceReference':
+    case 'EphemeralCard':
     case 'A2UISurface': {
       const d = EventData.A2UISurface.parse(data)
-      let item = items.find((i): i is ItemOf<'a2ui'> => i.kind === 'a2ui' && i.surfaceId === d.surface_id)
+      const index = items.findIndex((i) => i.kind === 'a2ui' && i.surfaceId === d.surface_id)
+      let item = index < 0 ? undefined : items[index] as ItemOf<'a2ui'>
+      if (item) {
+        item = { ...item }
+        items[index] = item
+      }
       if (!item) {
         item = { id: nid(), kind: 'a2ui', surfaceId: d.surface_id, component: {}, data: {} }
         items.push(item)
@@ -352,13 +423,45 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
         item.components = tree
       }
       item.data = d.data ?? {}
+      if (type === 'CardInstanceReference') {
+        const reference = EventData.CardInstanceReference.parse(data)
+        item.filePath = reference.file_path
+        item.fileSurfaceId = reference.file_surface_id
+      }
+      if (type === 'EphemeralCard') {
+        const draft = EventData.EphemeralCard.parse(data)
+        item.draft = { id: draft.draft_id, version: draft.draft_version, name: draft.definition.name }
+      }
       silenceNoReply(items)
+      break
+    }
+    case 'CardDefinitionSaved': {
+      const d = EventData.CardDefinitionSaved.parse(data)
+      items.push({ id: nid(), kind: 'note', icon: 'check', text: `Saved card definition ${d.name} to ${d.path}` })
+      break
+    }
+    case 'CardInstanceSaved': {
+      const d = EventData.CardInstanceSaved.parse(data)
+      if (!items.some(item => item.kind === 'note' && item.saveRequestId === d.request_id)) {
+        items.push({ id: nid(), kind: 'note', icon: 'check', text: `Saved card instance to ${d.path}`,
+          savedPath: d.path, saveRequestId: d.request_id })
+      }
+      break
+    }
+    case 'CardSourceUpdated': {
+      for (let index = 0; index < items.length; index++) {
+        const item = items[index]
+        if (item.kind !== 'a2ui') continue
+        const updated = { ...item }
+        if (projectSourceEvent(updated, { type: 'assistant.events.CardSourceUpdated', data })) items[index] = updated
+      }
       break
     }
     case 'A2UISurfaceDataUpdated': {
       const d = EventData.A2UISurfaceDataUpdated.parse(data)
-      const item = items.find((i): i is ItemOf<'a2ui'> => i.kind === 'a2ui' && i.surfaceId === d.surface_id)
-      if (item) item.data = d.data ?? {}
+      const index = items.findIndex((i) => i.kind === 'a2ui' && i.surfaceId === d.surface_id)
+      const item = items[index]
+      if (item?.kind === 'a2ui') items[index] = { ...item, data: d.data ?? {} }
       break
     }
     case 'A2UIActionSubmitted': {
@@ -387,6 +490,7 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
       items.push({
         id: nid(), kind: 'inquiry', inquiryId: d.inquiry_id, question: d.question,
         detail: d.detail ?? '', options: d.options ?? [], qkind: d.kind, resolved: false,
+        expiresAt: d.expires_at,
       })
       break
     }
@@ -403,6 +507,7 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
       // text); finalize a mid-stream bubble so it reads as what was said before the
       // stop, and mark the turn ended (`ends` → isBusy stops here on replay too).
       const d = EventData.TurnCancelled.parse(data)
+      stopCompaction(items)
       const prev = items[items.length - 1]
       if (prev && prev.kind === 'agent' && prev.streaming) prev.streaming = false
       items.push({ id: nid(), kind: 'note', icon: 'x', text: d.reason || 'Stopped', ends: true })
@@ -413,6 +518,7 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
       // a stop — keep the work, finalize the bubble, end the turn — but flagged as an
       // alert so the thread says why it stopped instead of just ending mid-air.
       const d = EventData.TurnFailed.parse(data)
+      stopCompaction(items)
       const prev = items[items.length - 1]
       if (prev && prev.kind === 'agent' && prev.streaming) prev.streaming = false
       items.push({
