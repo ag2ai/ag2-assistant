@@ -16,6 +16,7 @@ import type { A2UISurfaceState, AttachmentPayload, ThreadItem, WireEvent } from 
 import { getActiveProfileId, setActiveProfileId } from './lib/profile.ts'
 import { setAccent } from './design/palette.ts'
 import { go, closeAside, route } from './router.ts'
+import { chatEventStatus, mergeChatStatus, pendingChatDeadlines } from './lib/chatActivity.ts'
 
 // The two item kinds a voice session streams into (see _voiceTranscript).
 type VoiceRole = 'user' | 'agent'
@@ -105,7 +106,18 @@ export function openThread(kind: ThreadKind, id: string): void {
       if (!_replaying && ev.type.endsWith('.CardInstanceSaved') && typeof ev.data.path === 'string') refreshFiles(ev.data.path)
       if (_replaying) { _replayEvents.push(ev); return }
       _historyEvents.push(ev)
-      thread.update((t) => { foldEvent(t.items, ev); return { ...t, items: t.items, busy: isBusy(t.items) } })
+      thread.update((t) => {
+        foldEvent(t.items, ev)
+        if (kind === 'chat') {
+          chats.update((rows) => rows.map((row) => {
+            if (row.chat_id !== chat) return row
+            const pending = pendingChatDeadlines(t.items, row.turn_started_at)
+            const snapshot = chatEventStatus(row, ev, pending)
+            return snapshot ? mergeChatStatus(row, snapshot) : row
+          }))
+        }
+        return { ...t, items: t.items, busy: isBusy(t.items) }
+      })
     },
     // Replay complete → atomically adopt the freshly-rebuilt buffer as the timeline.
     onReady: (frame) => {
@@ -149,8 +161,8 @@ export function openThread(kind: ThreadKind, id: string): void {
   }
 }
 
-export function send(text: string, attachments: AttachmentPayload[] = []): void {
-  if (!client || (!text.trim() && !attachments.length)) return
+export function send(text: string, attachments: AttachmentPayload[] = []): boolean {
+  if (!client || (!text.trim() && !attachments.length)) return false
   thread.update((t) => ({ ...t, busy: true }))
   const t = get(thread)
   // A model chosen before this chat existed rides the message that creates it; empty
@@ -169,7 +181,7 @@ export function send(text: string, attachments: AttachmentPayload[] = []): void 
   if (t.kind === 'chat' && text.trim()) {
     chats.update((list) =>
       list.some((s) => s.chat_id === t.chat)
-        ? list
+        ? list.map((row) => row.chat_id === t.chat ? { ...row, status: 'running', turn_started_at: Date.now() / 1000, waiting_until: null, unread: false } : row)
         : [
             {
               chat_id: t.chat,
@@ -178,11 +190,18 @@ export function send(text: string, attachments: AttachmentPayload[] = []): void 
               turns: 0,
               title: '',
               starred: false,
+              status: 'running',
+              status_version: '',
+              status_updated: 0,
+              turn_started_at: Date.now() / 1000,
+              waiting_until: null,
+              unread: false,
             },
             ...list,
           ]
     )
   }
+  return true
 }
 
 // Stop the running turn. Stays busy until the server confirms — the turn ends when

@@ -6,8 +6,9 @@
   import WeatherBanner from './WeatherBanner.svelte'
   import CalendarHeatmap from './CalendarHeatmap.svelte'
   import Chart from './Chart.svelte'
-  import { a2uiIconName, a2uiPresent, a2uiText, a2uiTone, a2uiValue, actionContext, axisScopes, bindingPath, childSlots, diffLines, markedColumn, metricParts, rows, sparkPath, str, templateStart } from '../../lib/a2ui.ts'
+  import { a2uiIconName, a2uiPresent, a2uiProse, a2uiText, a2uiTone, a2uiValue, actionContext, axisScopes, bindingPath, childSlots, diffLines, markedColumn, metricParts, rows, sparkPath, str, stripInlineMarks, templateStart } from '../../lib/a2ui.ts'
   import type { A2UIAction, A2UIComponent, A2UIData, A2UIOption } from '../../lib/a2ui.ts'
+  import { renderMarkdown } from '../../lib/markdown.ts'
   import { tableColumn, tableRowVariant } from '../../lib/table.ts'
 
   type Props = {
@@ -220,7 +221,7 @@
   <!-- Text that resolves to nothing draws nothing, so an optional field a Card
        binds leaves no blank line behind. -->
   {#if textValue}
-    <div class="a2ui-text a2ui-tone-{tone} {textVariant ? `a2ui-t-${textVariant}` : ''}" class:a2ui-main={!textVariant && component.variant && component.variant !== 'body'} class:a2ui-strong={component.emphasis === 'strong'} style:flex-grow={grow} title={textValue}>{textValue}</div>
+    <div class="a2ui-text a2ui-tone-{tone} {textVariant ? `a2ui-t-${textVariant}` : ''}" class:a2ui-main={!textVariant && component.variant && component.variant !== 'body'} class:a2ui-strong={component.emphasis === 'strong'} class:md={a2uiProse(component.variant)} style:flex-grow={grow} title={stripInlineMarks(textValue)}>{#if a2uiProse(component.variant)}{@html renderMarkdown(textValue)}{:else}{stripInlineMarks(textValue)}{/if}</div>
   {/if}
 {:else if type === 'metric'}
   {#if metric.value || metric.delta}

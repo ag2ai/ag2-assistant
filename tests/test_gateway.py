@@ -626,7 +626,10 @@ def test_stream_roundtrip(profile_app):
     with client.websocket_connect(api(pid, "/stream?chat=w1")) as ws:
         assert ws.receive_json()["type"] == "ready"
         ws.send_json({"text": "ping"})
-        assert ws.receive_json()["type"] == "turn_end"
+        events = []
+        while (frame := ws.receive_json()).get("type") != "turn_end":
+            events.append(frame["event"]["type"].rsplit(".", 1)[-1])
+        assert "TurnStarted" in events and "TurnCompleted" in events
 
 
 def test_stream_unknown_profile_ws_closed(profile_app):

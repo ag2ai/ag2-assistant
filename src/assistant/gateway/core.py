@@ -70,8 +70,9 @@ from assistant.card_sources.service import CardSources
 from assistant.codex_auth import CodexAuth, CodexAuthError
 from assistant.coding.detect import parse_bridge
 from assistant.config import Config, load_config
-from assistant.events import TurnCancelled, TurnFailed
+from assistant.events import ChatSeen, TurnCancelled, TurnCompleted, TurnFailed, TurnStarted
 from assistant.folders import FolderStore
+from assistant.gateway.chat_activity import ChatActivity
 from assistant.gateway.history import ChatEventLog
 from assistant.gateway.repair import repair_stream_history, wait_reply
 from assistant.gateway.tasks_service import TaskService
@@ -97,7 +98,7 @@ from assistant.resources import (
 from assistant.secrets import KEY_ENV, OLLAMA_BASE_ENV, SecretStore
 from assistant.self_tools import build_self_tools
 from assistant.settings import profile_settings
-from assistant.storage import SerialStore
+from assistant.storage import SerialStore, new_id
 from assistant.system_tools import build_system_tools
 from assistant.tools import build_agent_tools, docker_environment
 from assistant.tools.mcp import build_mcp_tools
@@ -246,6 +247,8 @@ class Gateway:
         self._mirror: Callable | None = None
         # chat_id -> live Stream; plus the log text each one was last read from or written as
         self._streams: dict[str, MemoryStream] = {}
+        self._chat_activity: dict[str, ChatActivity] = {}
+        self._stream_locks: dict[str, asyncio.Lock] = {}
         self._synced: dict[str, str | None] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._log_locks: dict[str, asyncio.Lock] = {}
@@ -643,6 +646,11 @@ class Gateway:
                 # Persistence is best-effort; the live event still went out.
 
     async def _get_stream(self, chat_id: str):
+        """Hydrate one stream and its activity projection without concurrent replacements."""
+        async with self._stream_locks.setdefault(chat_id, asyncio.Lock()):
+            return await self._hydrate_stream(chat_id)
+
+    async def _hydrate_stream(self, chat_id: str):
         """Return the chat's live Stream, re-read from disk whenever no turn is running
         here and its log differs from what this process last read or wrote."""
         # AG2 declares ``StreamId = uuid.UUID`` and only interpolates it into a log path;
@@ -656,6 +664,12 @@ class Gateway:
                 condition=CompactionStarted | CompactionCompleted | CompactionFailed,
             )
             self._streams[chat_id] = stream
+            self._chat_activity[chat_id] = ChatActivity()
+
+            async def observe(event):
+                self._chat_activity[chat_id].observe(event)
+
+            stream.subscribe(observe)
         if self._writer is not None and chat_id not in self._active:
             raw = None
             try:
@@ -663,11 +677,34 @@ class Gateway:
                 if chat_id not in self._synced or self._synced[chat_id] != raw:
                     events = await self._writer.load_current(chat_id)  # type: ignore[arg-type]
                     await stream.history.replace(events)
+                    activity = ChatActivity()
+                    for event in await self._writer.replay(
+                        chat_id,  # type: ignore[arg-type]
+                        events,
+                        self._chat_archive(),
+                    ):
+                        activity.observe(event)
+                    self._chat_activity[chat_id] = activity
             except Exception as exc:
                 log_suppressed("chat stream hydrate", exc, chat_id=chat_id)
                 # A corrupt log keeps whatever the stream already holds.
             self._synced[chat_id] = raw
         return stream
+
+    async def chat_status(self, chat_id: str) -> dict:
+        """The stream's current activity and unread outcome for a sidebar row."""
+        await self.stream_for(chat_id)
+        return self._chat_activity[chat_id].snapshot(running=self.is_running(chat_id))
+
+    async def mark_chat_seen(self, chat_id: str, turn_id: str) -> dict | None:
+        """Acknowledge only the requested Turn's completed or failed outcome."""
+        async with self.event_transaction() as emit:
+            if not await self._read_chat_doc(chat_id, "chat seen read"):
+                return None
+            status = await self.chat_status(chat_id)
+            if status["unread"] and status["status_version"] == turn_id:
+                await emit(chat_id, ChatSeen(chat_id, turn_id=turn_id))
+            return await self.chat_status(chat_id)
 
     async def _read_log(self, chat_id: str) -> str | None:
         """The chat's raw event log as stored, or None when it has none."""
@@ -949,6 +986,8 @@ class Gateway:
                 usage_handle = self._watch_usage(stream)
                 hitl_pending = getattr(asker, "has_pending", None)
                 try:
+                    turn_id = new_id("turn")
+                    await self.emit_event(chat_id, TurnStarted(chat_id, turn_id=turn_id))
                     async with self._preparation_lock:
                         effective, agent, extra, a2ui_runtime = await self._prepare_turn(
                             lease, chat_id, llm_config_id, chat_model, asker, task_id, surface
@@ -1021,6 +1060,7 @@ class Gateway:
                 else:
                     if a2ui_handle is not None:
                         await self._emit_a2ui_surfaces(stream, a2ui_handle)
+                    await self.emit_event(chat_id, TurnCompleted(chat_id, turn_id=turn_id))
                     await self._persist_turn(chat_id, stream, text, reply.body)
                     await self._mirror_turn(chat_id, text, reply.body, origin, attachment_names)
                     return reply.body
@@ -1369,6 +1409,7 @@ class Gateway:
                 continue
             msgs = doc.get("messages", [])
             first_user = next((m["text"] for m in msgs if m["role"] == "user"), "")
+            activity = await self.chat_status(doc.get("chat_id", ""))
             out.append(
                 {
                     "chat_id": doc.get("chat_id", ""),
@@ -1381,6 +1422,7 @@ class Gateway:
                     "preview": first_user[:80],
                     # Completed exchanges only; a lone in-flight user message is 0 turns.
                     "turns": len(msgs) // 2,
+                    **activity,
                 }
             )
         out.sort(key=lambda s: s["updated"], reverse=True)
@@ -1534,7 +1576,9 @@ class Gateway:
                     await self._writer.delete(chat_id, self._chat_archive()) or removed  # type: ignore[arg-type]
                 )
             self._streams.pop(chat_id, None)
+            self._chat_activity.pop(chat_id, None)
             self._synced.pop(chat_id, None)
+            self._stream_locks.pop(chat_id, None)
         self._locks.pop(chat_id, None)
         return removed
 
@@ -1691,6 +1735,8 @@ class Gateway:
                 await self._acp_generation.aclose()
                 self._acp_generation = None
         self._streams.clear()
+        self._chat_activity.clear()
+        self._stream_locks.clear()
         self._locks.clear()
         self._synced.clear()
         self._agent = None

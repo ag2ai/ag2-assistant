@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { tick } from 'svelte'
   import { parseMessage, highlightSegments } from '../../lib/fileRefs.ts'
+  import { MESSAGE_PREVIEW_LINES, preserveMessagePosition } from '../../lib/messageBlocks.ts'
   import type { ParsedRef } from '../../lib/fileRefs.ts'
   import { openAsideFile } from '../../router.ts'
   import { revealFolder } from '../../store.ts'
@@ -7,12 +9,37 @@
 
   type Props = { item: Extract<ThreadItem, { kind: 'user' }> }
   let { item }: Props = $props()
+  let content: HTMLDivElement | undefined = $state()
+  let control: HTMLButtonElement | undefined = $state()
+  let long = $state(false)
+  let expanded = $state(false)
 
   // Split off the `Referenced files:` block (ADR 0012) so the bubble reads naturally
   // with just the sentence, then highlight the surviving `@labels` — the same cosmetic
   // mention treatment the composer shows. Hovering a mention reveals its resolved path.
   const parsed = $derived(parseMessage(item.text || ''))
   const segs = $derived(highlightSegments(parsed.body, parsed.refs))
+  $effect(() => {
+    parsed.body
+    if (!content) return
+    const el = content
+    const measure = () => {
+      const lineHeight = parseFloat(getComputedStyle(el).lineHeight)
+      long = el.scrollHeight > lineHeight * MESSAGE_PREVIEW_LINES + 1
+    }
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    measure()
+    return () => observer.disconnect()
+  })
+  async function toggle() {
+    const anchor = expanded ? control : content
+    if (!anchor) return
+    await preserveMessagePosition(anchor, async () => {
+      expanded = !expanded
+      await tick()
+    })
+  }
   // Keep each label's resolved refs (path + kind), so clicking a chip can open a file
   // in the preview rail but browse a directory in the Files tree — a folder has no
   // preview (ADR 0012). Same-named refs share a label; the first drives the click.
@@ -29,7 +56,14 @@
 </script>
 
 <div class="msg user" class:queued={item.queued}>
-  <div class="bubble" class:voice={item.voice}>{#each segs as s}{#if s.mark}{@const refs = refsFor.get(s.text) || []}<button type="button" class="fileref" title={refs.map((r) => r.path).join('\n')} onclick={() => openRef(refs[0])}>{s.text}</button>{:else}{s.text}{/if}{/each}</div>
+  <div class="bubble" class:voice={item.voice}>
+    <div class="user-message-text" class:collapsed={long && !expanded} id={`user-message-${item.id}`} style={`--message-preview-lines: ${MESSAGE_PREVIEW_LINES}`} bind:this={content}>{#each segs as s}{#if s.mark}{@const refs = refsFor.get(s.text) || []}<button type="button" class="fileref" title={refs.map((r) => r.path).join('\n')} onfocus={() => { expanded = true }} onclick={() => openRef(refs[0])}>{s.text}</button>{:else}{s.text}{/if}{/each}</div>
+    {#if long}
+      <div class="user-message-disclosure">
+        <button type="button" class="message-disclosure-button" aria-expanded={expanded} aria-controls={`user-message-${item.id}`} bind:this={control} onclick={toggle}>{expanded ? 'Collapse message' : 'Show full message'}</button>
+      </div>
+    {/if}
+  </div>
   {#if item.queued}
     <!-- Fed into the running turn. AG2 hands it to the agent when the turn drains its
          inbox — its next step, which can be a whole tool round away — so say so instead
@@ -39,6 +73,12 @@
 </div>
 
 <style>
+  .user-message-text { white-space: pre-wrap; }
+  .user-message-text.collapsed {
+    max-height: calc(var(--message-preview-lines) * 1lh); overflow: hidden;
+    mask-image: linear-gradient(#000 calc(100% - 1.5lh), transparent);
+  }
+  .user-message-disclosure { margin-top: 10px; white-space: normal; }
   /* File-reference mention — matches the composer's accent pill so a sent `@label`
      reads the same in the transcript as it did while typing. It's a button: clicking a
      file opens it in the preview rail; clicking a directory browses it in the Files tree

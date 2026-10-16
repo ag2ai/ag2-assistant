@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 from ag2 import Agent, tool
 from ag2.annotations import Context
-from ag2.compact import CompactionSummary, TailWindowCompact
+from ag2.compact import CompactionSummary, snap
 from ag2.config import ModelConfig
 from ag2.context import ConversationContext
 from ag2.events import (
@@ -173,6 +173,15 @@ def request_tokens(
     )
     conversation = [event for event in events if is_conversational(event)]
     return (len(fixed) + 3) // 4 + sum(estimated_tokens(event, 4) + 8 for event in conversation)
+
+
+def _replayable_cut(events: Sequence[BaseEvent], target: int) -> int:
+    """Find a nonempty replayable tail around the requested conversational event count."""
+    for requested in range(max(0, len(events) - max(1, target)), 0, -1):
+        cut = snap(events, requested)
+        if cut < len(events):
+            return cut
+    return 0
 
 
 def summary_parts(event: BaseEvent) -> list[BinaryInput | UrlInput | FileIdInput]:
@@ -596,8 +605,7 @@ class CheckpointCompact:
                 break
             count += 1
             tokens += size
-        retained = await TailWindowCompact(max(1, count)).compact(original, context, None)
-        cut = len(original) - len(retained)
+        cut = _replayable_cut(original, count)
         if not cut:
             raise ContextBudgetError("No completed replayable prefix fits the input budget")
         prefix = original[:cut]
@@ -617,8 +625,7 @@ class CheckpointCompact:
                 <= self.limits.max_tokens
             ):
                 break
-            minimal_tail = await TailWindowCompact(1).compact(original, context, None)
-            next_cut = len(original) - len(minimal_tail)
+            next_cut = _replayable_cut(original, 1)
             if next_cut <= cut:
                 raise ContextBudgetError(
                     "The checkpoint cannot fit without losing protected context"

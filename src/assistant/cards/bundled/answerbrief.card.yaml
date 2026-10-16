@@ -11,15 +11,17 @@ fields:
     type: array
     items:
       type: string
-    description: One short label per part of the answer, e.g. 'Startup time'.
+    description: One paragraph per part of the answer, including its explanation.
 required: [topic, sections]
 
 layout:
   - {id: root, component: Column, children: [topic, sections]}
   - {id: topic, component: Text, text: {path: /topic}, variant: h4}
-  - {id: sections, component: Row, gap: sm, when: {path: /sections}, children: {componentId: section, path: /sections}}
-  - {id: section, component: Text, text: {path: .}, variant: pill, tone: muted}
+  - {id: sections, component: Column, gap: sm, when: {path: /sections}, children: {componentId: section, path: /sections}}
+  - {id: section, component: Text, text: {path: .}, variant: body}
 
 example:
   topic: Rust vs Go for a small CLI
-  sections: [Startup time, Binary size, Ecosystem, Learning curve]
+  sections:
+    - Both languages start quickly enough for a small command-line tool.
+    - Go offers a simpler build setup; Rust gives more control over the binary size.
