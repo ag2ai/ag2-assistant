@@ -182,6 +182,19 @@ export function a2uiText(component: A2UIComponent, data: A2UIData = {}, scope = 
   return value == null || value === '' ? '' : String(value)
 }
 
+// Text variants that read as prose, so Markdown in them is drawn.
+const PROSE_VARIANTS = ['', 'body', 'caption', 'quote']
+
+/** Whether a Text component of this `variant` draws its Markdown. */
+export function a2uiProse(variant: unknown): boolean {
+  return PROSE_VARIANTS.includes(str(variant))
+}
+
+/** `text` with paired bold and code marks removed, for labels drawn as plain text. */
+export function stripInlineMarks(text: string): string {
+  return text.replace(/(\*\*|__)(?=\S)(.+?)(?<=\S)\1/g, '$2').replace(/`([^`\n]+)`/g, '$1')
+}
+
 /** One Icon's glyph name: its bound value, put through the Card's own map — so a
  *  row's status field can pick the mark that stands for it. */
 export function a2uiIconName(component: A2UIComponent, data: A2UIData = {}, scope = ''): string {

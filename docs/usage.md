@@ -89,6 +89,13 @@ permission/HITL prompts rendered inline as cards. The **History** button lists
 past conversations and lets you resume any of them. Use it as-is or as a reference
 for building your own front-end against the API below.
 
+**Long messages.** User messages taller than twelve displayed lines start with a
+compact preview; **Show full message** expands the complete text, and **Collapse
+message** restores the preview. Assistant code blocks and Markdown sections with
+headings have their own Expand/Collapse buttons. Long code blocks stay open while
+streaming and fold after generation finishes; manual choices survive streaming
+updates. Folding only changes the display, keeping the original message intact.
+
 **Resumable conversations.** Each chat's full event history is persisted to
 `~/.ag2assistant/chats.db` after every turn (via AG2's event log) and reloaded into a
 fresh stream on demand — so conversations survive a gateway restart with complete
@@ -111,6 +118,13 @@ including older draft versions. Save as lets you choose a filename and existing
 Directory in this Profile's Files space. Each confirmed Save creates a new
 `.card-instance.yaml` file; an occupied destination requires a different name.
 Saving an instance and saving its reusable definition are independent choices.
+
+In Chat and Screens, Cards with a data source can refresh when displayed or through
+**Refresh**. Custom Python sources require **Review source → Approve version** in
+each Profile. Once approved, the review button disappears for that version, including
+after a refresh error or reopening the page. Errors retain the last good values and
+show the execution failure; **Refresh** remains available to retry. Changing the code
+or its supporting files requires approval of the new version.
 
 Open the file from Files for a passive Card preview: buttons and inputs are inactive.
 Use **Edit** to change its UTF-8 YAML source, then **Save** and **Preview** to see the
@@ -229,6 +243,11 @@ ag2-assistant status
 AG2 Assistant connects to your favorite messaging platforms. Your agent responds to direct messages and can be mentioned in group chats.
 
 ### Attachments
+
+Unsent chat drafts retain their text, attached files, workspace file references and
+input position when you navigate between sections or chats. Each profile and thread
+has its own draft, kept in the current browser tab until the page is closed or reloaded.
+Sending a message clears only that thread's draft.
 
 Drop a file into any chat (Telegram, Discord, or Slack) and AG2 Assistant reads it:
 images and PDFs are understood visually, audio/video go to the model natively

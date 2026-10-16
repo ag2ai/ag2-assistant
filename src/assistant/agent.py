@@ -46,7 +46,12 @@ from assistant.memory import (
     read_profile_sync,
     remember_note,
 )
-from assistant.middleware import ACPInstructionsMiddleware, LLMRetryMiddleware, LLMTimeoutMiddleware
+from assistant.middleware import (
+    ACPInstructionsMiddleware,
+    CitationMarkerMiddleware,
+    LLMRetryMiddleware,
+    LLMTimeoutMiddleware,
+)
 from assistant.observability import agent_logging_middleware, log_suppressed
 from assistant.observers import build_observers
 from assistant.permissions import PermissionManager, PermissionStore
@@ -204,6 +209,7 @@ def _build_middleware(config: Config) -> list:
     """The per-agent LLM middleware stack for this provider."""
     middleware = [
         agent_logging_middleware(),  # per-turn LLM/tool logs → ag2assistant.log
+        CitationMarkerMiddleware(),
         # Retry a failed call before it kills the attempt/task. Listed BEFORE
         # the timeout so it wraps it (AG2 nests later middleware closer to the
         # call): each retry re-enters the timeout, getting a fresh window. A

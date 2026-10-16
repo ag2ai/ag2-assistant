@@ -590,8 +590,7 @@ def test_a_brief_with_no_sections_draws_the_same_card_as_a_full_one():
     full = expand_card_messages(_brief_emit(), bundled_cards())
 
     assert empty[1]["updateComponents"]["components"] == full[1]["updateComponents"]["components"]
-    # The section pills are conditional on the data, so an empty brief is a topic
-    # with nothing standing under it.
+    # Empty briefs show only the topic.
     sections = next(
         component
         for component in empty[1]["updateComponents"]["components"]

@@ -328,6 +328,10 @@ Every model-backed call in the backend. Two model tiers: **main**
 | 8 | **CLI single-shot**     | `agent.py` (`ask`)           | main  | `ag2-assistant agent "…"`             | —                            |
 | 9 | **History compaction**  | `compaction.py` (`CheckpointCompact`) | main | estimated full input exceeds the per-profile budget before a model call; uses the current Turn's resolved model configuration | versioned task checkpoint + recent replayable events |
 
+The recent compaction window expands to a safe protocol boundary when its preferred
+size would split the final tool round. The retained calls and results stay together,
+the final request stays within the configured budget, and archived source events remain replayable.
+
 A task run is not a distinct agent — it's the same universal agent (row 1),
 optionally pinned to the task's own model via a cached per-model agent
 (`Gateway._agent_for`, §5.1), given a "you're running unattended" system

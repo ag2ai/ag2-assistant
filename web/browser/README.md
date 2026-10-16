@@ -10,6 +10,7 @@ accessible tooltips and distinct unknown/analysis/activity states. Surface fixtu
 ordinary, feature and unframed cards without generic chrome, editable/read-only bindings,
 save icon placement/tooltips/keyboard focus, definition dropdown defaults/dismissal/focus
 restoration, current versus obsolete drafts, and the composing placeholder on narrow and wide chat layouts.
+Long pill labels wrap within Rows and Columns while short labels keep their content width.
 
 Start Vite with `npm --prefix web run dev -- --host 127.0.0.1 --port 5186`, then launch
 a **dedicated** Chrome with `--remote-debugging-port=9360` and a temporary
@@ -27,6 +28,12 @@ rounds, aggregated run labels, counted repeated details and hover/focus/tap list
 and compaction. Long run lists must scroll without escaping the viewport. Written files expose
 clickable filenames and an inline Download icon within their run list, without an extra timeline badge.
 Tools with no meaningful parameters retain their counted chip without an empty popover. It reads settings
-from the running gateway through Vite's API proxy; it sends no chat messages.
+from the running gateway through Vite's API proxy; it sends no chat messages. The chat column checks
+verify that messages and the input share their left and right edges at four widths.
 These fixtures are development files. Production ships the app entry and a passive
 preview entry used by the screens skill.
+
+Pass `composer <profile-id>` for draft restoration after remounts, chat/profile changes,
+file encoding during navigation, workspace references, caret/selection/scroll restoration,
+and clearing only the submitted draft. Message delivery uses a local WebSocket protocol
+peer; the fixture reads settings and file search from the gateway and starts no agent turns.

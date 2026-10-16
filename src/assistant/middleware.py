@@ -1,9 +1,11 @@
-"""Bound each LLM call and retry transient provider or transport failures with backoff."""
+"""Bound each LLM call, retry transient failures, and clean provider markup from replies."""
 
 import asyncio
 import copy
+import json
 import logging
 import random
+import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
@@ -233,3 +235,47 @@ class _ACPInstructionsMiddleware(BaseMiddleware):
                 outgoing[index] = held
                 break
         return await call_next(outgoing, context)
+
+
+# OpenAI search citations such as "\ue200cite\ue202turn5view4\ue201", with the space before them.
+_CITATION_MARKER = re.compile("[ \t]*\ue200[^\ue200\ue201]*\ue201|[\ue200-\ue202]")
+
+
+def strip_citation_markers(text: str) -> str:
+    """`text` without provider citation markers."""
+    return _CITATION_MARKER.sub("", text)
+
+
+def _strip_strings(value: Any) -> Any:
+    if isinstance(value, str):
+        return strip_citation_markers(value)
+    if isinstance(value, list):
+        return [_strip_strings(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _strip_strings(item) for key, item in value.items()}
+    return value
+
+
+class CitationMarkerMiddleware(MiddlewareFactory):
+    """Remove provider citation markers from reply text and tool-call arguments."""
+
+    def __call__(self, event: BaseEvent, context: Context) -> BaseMiddleware:
+        return _CitationMarkerMiddleware(event, context)
+
+
+class _CitationMarkerMiddleware(BaseMiddleware):
+    async def on_llm_call(
+        self, call_next: LLMCall, events: Sequence[BaseEvent], context: Context
+    ) -> ModelResponse:
+        response = await call_next(events, context)
+        if response.message is not None:
+            response.message.content = strip_citation_markers(response.message.content)
+        for call in response.tool_calls.calls:
+            try:
+                arguments = json.loads(call.arguments or "{}")
+            except ValueError:
+                continue
+            if (cleaned := _strip_strings(arguments)) != arguments:
+                call.arguments = json.dumps(cleaned, ensure_ascii=False)
+                call.serialized_arguments = cleaned
+        return response

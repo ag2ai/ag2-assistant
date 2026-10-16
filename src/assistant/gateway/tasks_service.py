@@ -689,6 +689,7 @@ class TaskService:
                         detail=getattr(inquiry, "detail", "") or "",
                         options=list(inquiry.options or []),
                         kind=inquiry.kind,
+                        expires_at=inquiry.expires_at,
                     ),
                 )
             elif kind in InquiryStatus.TERMINAL:
