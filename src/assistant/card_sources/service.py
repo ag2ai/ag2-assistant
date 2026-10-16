@@ -61,6 +61,28 @@ class CardSources:
         except FileNotFoundError:
             return {}
 
+    def requires_approval(self, source) -> bool:
+        """Derive execution consent from this Profile's version and Secret authorizations."""
+        if not source.code:
+            return False
+        consent = self._consent().get(source.code_version)
+        if consent is None:
+            return True
+        store = SecretStore(self.config().paths)
+        return any(
+            not (identity := source.secrets.get(name))
+            or identity not in consent.get("secrets", {}).get(name, [])
+            or not store.secret_value(identity)
+            for name in source.secret_names
+        )
+
+    def with_approval(self, event: CardSourceUpdated) -> CardSourceUpdated:
+        """Project current consent onto a live or retained source event."""
+        projected = copy.copy(event)
+        source = sources_from(event.data).get(event.source_id)
+        projected.approval_required = self.requires_approval(source) if source else True
+        return projected
+
     def _file_revision(self, path: str) -> str:
         target = Path(self.config().workspace_dir) / path
         stat = target.stat()
@@ -106,6 +128,7 @@ class CardSources:
         return data, revision, surface_id
 
     async def _publish(self, event, chat_id, emit) -> dict:
+        event = self.with_approval(event)
         if chat_id and any(row["chat_id"] == chat_id for row in await self.gateway.list_chats()):
             await emit(chat_id, event)
         else:
@@ -136,6 +159,7 @@ class CardSources:
             result = copy.deepcopy(cached[1])
             for event in result["events"]:
                 event["data"]["data"] = data
+                event["data"]["approval_required"] = self.requires_approval(source)
             return result
         if key not in self.pending:
             self.pending[key] = asyncio.create_task(

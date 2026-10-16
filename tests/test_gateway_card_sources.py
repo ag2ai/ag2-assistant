@@ -332,6 +332,65 @@ def test_custom_code_needs_profile_version_approval_and_explicit_stable_secret_b
 
 
 @pytest.mark.parametrize("target", ["file", "chat"])
+def test_execution_error_preserves_approval_and_replay_uses_current_consent(paths, target):
+    pid = ProfileRegistry(paths).create_profile("Sources", "#109e91").id
+    source = {
+        "code": "raise RuntimeError('GitHub HTTP 403; rate limit remaining=0')\n",
+        "fields": {"summary": {"type": "string"}},
+        "required": ["summary"],
+    }
+    env = {"PATH": str(Path(sys.executable).parent) + ":/usr/bin:/bin"}
+    manager = make_manager(paths, persist=True, env=env)
+    with TestClient(create_app(manager)) as client:
+        if target == "file":
+            request = {"path": upload(client, pid, source=source), "source_id": "root"}
+        else:
+            send(client, pid)
+            replay(client, pid)
+            message = document(source)["message"]
+            assert client.portal is not None
+            client.portal.call(
+                manager.get(pid).require_gateway().emit_event,
+                "drafts",
+                A2UISurface("source", component=message["component"], data=message["data"]),
+            )
+            request = {"chat_id": "drafts", "surface_id": "source", "source_id": "root"}
+        result = client.post(api(pid, "/card-sources/refresh"), json=request).json()
+        event = result["events"][0]["data"]
+        assert event["approval_required"] is True
+        version = event["code_version"]
+        approval = {**request, "code_version": version, "approved": True}
+        result = client.post(api(pid, "/card-sources/approval"), json=approval).json()
+        assert result["events"][0]["data"]["approval_required"] is False
+        result = client.post(api(pid, "/card-sources/refresh"), json=request).json()
+        event = result["events"][0]["data"]
+        assert result["status"] == "error"
+        assert event["approval_required"] is False
+        assert event["error"] == (
+            "Source exited with code 1: RuntimeError: GitHub HTTP 403; rate limit remaining=0"
+        )
+        assert event["data"]["summary"] == "Last good"
+
+    with TestClient(create_app(make_manager(paths, persist=True, env=env))) as client:
+        result = client.post(api(pid, "/card-sources/refresh"), json=request).json()
+        assert result["events"][0]["data"]["approval_required"] is False
+        result = client.post(
+            api(pid, "/card-sources/approval"), json={**approval, "approved": False}
+        ).json()
+        assert result["events"][0]["data"]["approval_required"] is True
+        if target == "chat":
+            failed = [
+                event["data"]
+                for event in replay(client, pid)
+                if event["type"].endswith("CardSourceUpdated")
+                and event["data"]["status"] == "error"
+            ]
+            assert failed and all(event["approval_required"] for event in failed)
+        result = client.post(api(pid, "/card-sources/refresh"), json=request).json()
+        assert result["status"] == "approval_required"
+
+
+@pytest.mark.parametrize("target", ["file", "chat"])
 def test_composite_sources_refresh_independently_even_when_requests_overlap(paths, target):
     pid = ProfileRegistry(paths).create_profile("Sources", "#109e91").id
     barrier = threading.Barrier(2)

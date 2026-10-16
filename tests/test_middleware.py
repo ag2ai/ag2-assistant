@@ -13,9 +13,15 @@ covered by test_tasks_service.py::test_failed_turn_marks_run_failed.)
 """
 
 import asyncio
+import json
+from time import monotonic
 
+import httpx
+import pytest
 from ag2 import Agent
 from ag2.config import ModelConfig
+from ag2.events import ModelMessage, ModelResponse
+from openai import APIError, AsyncOpenAI, AsyncStream, BadRequestError, InternalServerError
 
 from assistant.middleware import (
     LLMCallTimeout,
@@ -199,3 +205,195 @@ def test_is_transient_classifies_by_status():
         status_code = 503  # duck-typed via status_code instead of code
 
     assert _is_transient(_ServerError()) is True
+
+
+def _stream_error(code=None, error_type=None):
+    return APIError(
+        "Our servers are currently overloaded. Please try again later.",
+        request=httpx.Request("POST", "https://provider.test/v1/responses"),
+        body={"code": code, "type": error_type},
+    )
+
+
+@pytest.mark.parametrize(
+    ("code", "error_type"),
+    [
+        ("server_error", None),
+        ("internal_error", None),
+        ("internal_server_error", None),
+        ("server_overloaded", None),
+        (None, "overloaded_error"),
+        (None, "rate_limit_error"),
+        ("rate_limit_exceeded", None),
+        ("service_unavailable", None),
+    ],
+)
+def test_streaming_provider_errors_without_http_status_are_transient(code, error_type):
+    assert _is_transient(_stream_error(code, error_type))
+
+
+@pytest.mark.parametrize("code", [None, "invalid_api_key", "context_length_exceeded", "unknown"])
+async def test_unknown_or_fatal_streaming_errors_do_not_retry(code):
+    error = _stream_error(code)
+    delays, sleep = _no_sleep()
+
+    async def fail(events, context):
+        raise error
+
+    mw = LLMRetryMiddleware(sleep=sleep)(None, None)
+    with pytest.raises(APIError) as raised:
+        await mw.on_llm_call(fail, [], None)
+    assert raised.value is error
+    assert delays == []
+
+
+@pytest.mark.parametrize(("status", "expected"), [(400, False), (401, False), (503, True)])
+def test_http_status_takes_precedence_over_symbolic_provider_code(status, expected):
+    response = httpx.Response(
+        status, request=httpx.Request("POST", "https://provider.test/v1/responses")
+    )
+    error_type = InternalServerError if status == 503 else BadRequestError
+    error = error_type("provider error", response=response, body={"code": "server_error"})
+    assert _is_transient(error) is expected
+
+
+def test_nested_streaming_error_payload_is_transient():
+    error = APIError(
+        "stream failed",
+        request=httpx.Request("POST", "https://provider.test/v1/responses"),
+        body={"error": {"type": "overloaded_error"}},
+    )
+    assert _is_transient(error)
+
+
+@pytest.mark.parametrize("jitter", [0.0, 1.0])
+async def test_streaming_error_backoff_doubles_and_caps_before_exhaustion(jitter):
+    timeline = []
+    error = _stream_error("server_error")
+
+    async def fail(events, context):
+        timeline.append("call")
+        raise error
+
+    async def sleep(delay):
+        timeline.append(delay)
+
+    mw = LLMRetryMiddleware(5, base_delay=1, max_delay=5, sleep=sleep, jitter=lambda: jitter)(
+        None, None
+    )
+    with pytest.raises(APIError) as raised:
+        await mw.on_llm_call(fail, [], None)
+    assert raised.value is error
+    factor = 1 + jitter * 0.25
+    assert timeline == [
+        "call",
+        factor,
+        "call",
+        2 * factor,
+        "call",
+        4 * factor,
+        "call",
+        5,
+        "call",
+        5,
+        "call",
+    ]
+
+
+class _RetryConfig(ModelConfig):
+    """Model configuration with an injected scripted client."""
+
+    provider = "openai"
+    model = "test"
+
+    def __init__(self, client):
+        self.client = client
+
+    def copy(self):
+        return self
+
+    def create(self):
+        return self.client
+
+
+async def test_streaming_error_recovers_through_agent_after_real_exponential_waits():
+    times = []
+
+    async def client(messages, context, *, tools, response_schema, serializer):
+        times.append(monotonic())
+        if len(times) < 3:
+            payload = json.dumps(
+                {"error": {"code": "server_error", "message": "Our servers are overloaded."}}
+            )
+            response = httpx.Response(
+                200,
+                content=f"data: {payload}\n\n".encode(),
+                headers={"Content-Type": "text/event-stream"},
+                request=httpx.Request("POST", "https://provider.test/v1/responses"),
+            )
+            async with AsyncOpenAI(api_key="test") as sdk:
+                async for _ in AsyncStream(cast_to=object, response=response, client=sdk):
+                    pass
+        return ModelResponse(message=ModelMessage("recovered"))
+
+    agent = Agent(
+        "retry-agent",
+        config=_RetryConfig(client),
+        middleware=[
+            LLMRetryMiddleware(2, base_delay=0.01, jitter=lambda: 0.0),
+            LLMTimeoutMiddleware(0.1),
+        ],
+    )
+    response = await asyncio.wait_for(agent.ask("hi"), timeout=2)
+    assert response.body == "recovered"
+    assert len(times) == 3
+    assert times[1] - times[0] >= 0.01
+    assert times[2] - times[1] >= 0.02
+
+
+async def test_retry_gets_a_fresh_timeout_window_through_agent():
+    attempts = 0
+
+    async def client(messages, context, *, tools, response_schema, serializer):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            await asyncio.Event().wait()
+        await asyncio.sleep(0.02)
+        return ModelResponse(message=ModelMessage("recovered"))
+
+    agent = Agent(
+        "timeout-retry-agent",
+        config=_RetryConfig(client),
+        middleware=[
+            LLMRetryMiddleware(1, base_delay=0.01, jitter=lambda: 0.0),
+            LLMTimeoutMiddleware(0.1),
+        ],
+    )
+    response = await asyncio.wait_for(agent.ask("hi"), timeout=2)
+    assert response.body == "recovered"
+    assert attempts == 2
+
+
+async def test_cancel_during_backoff_stops_before_the_next_provider_call():
+    sleeping = asyncio.Event()
+    attempts = 0
+
+    async def fail(events, context):
+        nonlocal attempts
+        attempts += 1
+        raise _stream_error("server_error")
+
+    async def sleep(delay):
+        sleeping.set()
+        await asyncio.Event().wait()
+
+    mw = LLMRetryMiddleware(sleep=sleep)(None, None)
+    task = asyncio.create_task(mw.on_llm_call(fail, [], None))
+    try:
+        await asyncio.wait_for(sleeping.wait(), timeout=1)
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert attempts == 1
