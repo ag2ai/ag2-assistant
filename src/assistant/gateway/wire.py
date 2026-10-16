@@ -18,7 +18,7 @@ from ag2.events.voice import RecordedAudioEvent, SynthesizedAudioEvent
 
 from assistant.a2ui import CardCatalog, expanded_card_surface
 from assistant.coding.surface import adopted_surface
-from assistant.events import A2UISurface, CardInstanceReference
+from assistant.events import A2UISurface, CardInstanceReference, CardSourceUpdated
 from assistant.observability import log_suppressed
 
 # Events that travel as raw PCM binary on their own frame, never as {type, data}.
@@ -38,6 +38,8 @@ def to_wire(event) -> dict:
 def as_drawn(event, catalog: CardCatalog, instances=None):
     """One event as a client should be sent it: an A2UI surface carrying a Card
     instance comes back as the primitives ``catalog``'s layout for it declares."""
+    if isinstance(event, CardSourceUpdated) and instances is not None:
+        return instances.with_approval(event)
     if not isinstance(event, A2UISurface):
         return event
     if isinstance(event, CardInstanceReference):

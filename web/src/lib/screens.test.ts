@@ -31,7 +31,7 @@ test('typed file events update all references while keeping independent copies u
   const data = { summary: 'Fresh', _sources: { root: { tool: 'get_weather', fields: {} } } }
   const event = { type: 'assistant.events.CardSourceUpdated', data: {
     surface_id: 'same-copied-identity', source_id: 'root', path: 'reading.card-instance.yaml',
-    status: 'updated', error: '', data, code_version: '',
+    status: 'updated', error: '', data, code_version: '', approval_required: false,
   } }
   assert.deepEqual(Object.keys(projectScreenEvent(screen, event)), ['one', 'two'])
   assert.deepEqual(screen.message.data._cards, { one: data, two: data, copy: { summary: 'Copied' } })
