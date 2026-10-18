@@ -1,6 +1,7 @@
 """HITL inquiries as durable, task-associated primitives."""
 
 import asyncio
+import time
 
 from assistant.hitl.base import Question
 from assistant.hitl.inquiry import DurableAsker, Inquiry, InquiryStatus, InquiryStore
@@ -109,6 +110,36 @@ async def test_durable_asker_timeout_expires(tmp_path):
     inqs = await store.list_all()
     assert all(i.status == InquiryStatus.EXPIRED for i in inqs)
     assert {i.kind for i in inqs} == {"question", "permission"}
+    assert all(i.expires_at is not None for i in inqs)
+
+
+async def test_deadline_is_persisted_before_waiting_and_uses_each_questions_timeout(tmp_path):
+    store = _istore(tmp_path)
+    asker = DurableAsker(_BlockingAsker(), store, timeout=300)
+    before = time.time()
+    task = asyncio.create_task(asker.ask(Question(text="Which?"), timeout=10))
+    try:
+        for _ in range(200):
+            pending = await store.list_pending()
+            if pending:
+                break
+            await asyncio.sleep(0.01)
+        assert pending
+        inquiry = pending[0]
+        assert before + 10 <= inquiry.expires_at <= time.time() + 10
+        reopened = await _istore(tmp_path).get(inquiry.id)
+        assert reopened.expires_at == inquiry.expires_at
+        await store.answer(inquiry.id, "A")
+        assert await asyncio.wait_for(task, 2) == "A"
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+def test_legacy_inquiries_remain_readable_without_an_invented_deadline():
+    inquiry = Inquiry.from_dict({"id": "old", "text": "Continue?", "status": "pending"})
+    assert inquiry.expires_at is None
+    assert inquiry.status == InquiryStatus.PENDING
 
 
 async def test_durable_asker_rebind_tags_subtask(tmp_path):

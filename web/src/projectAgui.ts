@@ -159,6 +159,7 @@ function fold(items: ThreadItem[], ev: Fields, state: AguiState): void {
             detail: interrupt.metadata?.detail ?? '',
             options: interrupt.metadata?.options ?? [],
             kind: interrupt.reason,
+            expires_at: interrupt.metadata?.expires_at ?? undefined,
           },
         })
       }

@@ -98,6 +98,7 @@ export const EventData = {
     detail: z.string().optional(),
     options: z.array(z.string()).optional(),
     kind: z.string().optional(),
+    expires_at: z.number().nullable().optional(),
   }),
   InquiryAnswered: z.object({
     inquiry_id: z.string(),
@@ -214,5 +215,5 @@ export type ThreadItem =
   | (ItemBase & { kind: 'deliverable'; taskId?: string; deliverableId: string; description?: string; preview?: string; path?: string; feedback?: Feedback })
   | (ItemBase & { kind: 'genimage'; path: string; prompt?: string; feedback?: Feedback })
   | (ItemBase & { kind: 'attachment'; path: string; name?: string })
-  | (ItemBase & { kind: 'inquiry'; inquiryId: string; question: string; detail: string; options: string[]; qkind?: string; resolved: boolean; answer?: string; resolution?: string })
+  | (ItemBase & { kind: 'inquiry'; inquiryId: string; question: string; detail: string; options: string[]; qkind?: string; expiresAt?: number | null; resolved: boolean; answer?: string; resolution?: string })
   | (ItemBase & { kind: 'a2ui'; filePath?: string; fileSurfaceId?: string; sourceStates?: Record<string, z.infer<typeof CardSourceEvent>>; surfaceId: string; version?: string; catalogId?: string; title?: string; intent?: string; component: A2UIComponent; components?: A2UIComponent[]; data: Record<string, unknown>; messages?: unknown[]; draft?: { id: string; version: number; name: string } })

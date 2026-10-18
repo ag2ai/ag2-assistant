@@ -268,7 +268,7 @@ await check('list folder has a directory target', true)
 target.querySelector<HTMLButtonElement>('.tool-trigger')!.dispatchEvent(new PointerEvent('pointerenter', { pointerType: 'mouse' }))
 await check('list folder hover', true)
 results.push({ name: 'folder path is a navigation action', failures: target.querySelector('.tool-runs:popover-open .folder-name')?.getAttribute('aria-label') === 'Open folder /home/user/english/reports' ? [] : ['Directory cannot be opened'] })
-chats.set([{ chat_id: 'web-history', title: 'English study plan', preview: 'Weekly goals', turns: 4, updated: '2026-10-11T12:00:00Z', starred: false }])
+chats.set([{ chat_id: 'web-history', title: 'English study plan', preview: 'Weekly goals', turns: 4, updated: '2026-10-11T12:00:00Z', starred: false, status: null, status_version: '', status_updated: 0, turn_started_at: 0, waiting_until: null, unread: false }])
 reset()
 emit(request)
 append({ ...tools, data: { calls: [{ name: 'read_chat', arguments: { chat_id: 'web-history' } }, { name: 'read_chat', arguments: { chat_id: 'web-deleted' } }] } })
@@ -280,4 +280,18 @@ results.push({ name: 'read chat shows clickable title and identifier with unavai
 chatPopup.querySelector<HTMLButtonElement>('.chat-name')!.click()
 await tick()
 results.push({ name: 'read chat opens the named conversation and dismisses the run list', failures: location.pathname.endsWith('/c/web-history') && !target.querySelector('.tool-runs:popover-open') ? [] : ['Conversation navigation failed or popover remains open'] })
+reset()
+emit(request)
+emit(response('A reply aligned with the input.'))
+for (const width of [360, 620, 780, 1000]) {
+  target.style.width = `${width}px`
+  await tick()
+  await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+  const reply = target.querySelector<HTMLElement>('.msg.agent .bubble')!.getBoundingClientRect()
+  const input = target.querySelector<HTMLElement>('.inputbox')!.getBoundingClientRect()
+  const failures: string[] = []
+  if (Math.abs(reply.left - input.left) > 1 || Math.abs(reply.right - input.right) > 1) failures.push('Messages and input use different column bounds')
+  results.push({ name: `chat column/${width}`, failures })
+}
+target.style.width = ''
 Object.assign(window, { layoutResults: results })

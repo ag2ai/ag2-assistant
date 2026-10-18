@@ -56,9 +56,11 @@ class SourceSandbox(SandboxBase):
             if process.returncode is None:
                 os.killpg(process.pid, signal.SIGKILL)
                 await process.wait()
-        return ExecResult(
-            output=output.decode(errors="replace").strip(), exit_code=process.returncode or 0
-        )
+        text = output.decode(errors="replace").strip()
+        if process.returncode:
+            detail = text.splitlines()[-1] if text else "No output"
+            raise ValueError(f"Source exited with code {process.returncode}: {detail}")
+        return ExecResult(output=text, exit_code=0)
 
 
 class SourceDockerSandbox(DockerMountSandbox):

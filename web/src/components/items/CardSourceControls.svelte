@@ -17,9 +17,10 @@
   let version = $state('')
   let keys: Secret[] = $state([])
   let selected: Record<string, string> = $state({})
-  const controlsVisible = $derived(showControls || !!error || !!refreshState?.error)
+  const needsApproval = $derived(!!source.code && !!refreshState?.approval_required)
+  const controlsVisible = $derived(showControls || needsApproval || !!error || !!refreshState?.error)
   const scheduleKey = $derived(JSON.stringify([target, source]))
-  const canPoll = $derived(refreshState?.status !== 'approval_required')
+  const canPoll = $derived(!refreshState?.approval_required)
   let disposed = false
 
   async function refresh(trigger: 'manual' | 'shown' | 'interval' = 'manual') {
@@ -86,7 +87,7 @@
   {#if controlsVisible}
     <span>{source.tool === 'get_weather' ? 'Weather' : source.tool === 'get_quotes' ? 'Quotes' : 'Custom source'}</span>
     <button class="open" disabled={busy} onclick={() => refresh()}>{busy ? 'Refreshing…' : 'Refresh'}</button>
-    {#if source.code}<button class="open" disabled={busy} onclick={review}>Review source</button>{/if}
+    {#if needsApproval}<button class="open" disabled={busy} onclick={review}>Review source</button>{/if}
     {#if error || refreshState?.error}<span role="alert">{error || refreshState?.error}</span>{/if}
   {/if}
 </div>

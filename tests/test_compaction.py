@@ -161,6 +161,103 @@ async def test_large_tool_output_is_excerpted_between_rounds_and_can_be_read():
     assert "unavailable in this Chat" in str(other)
 
 
+@pytest.mark.parametrize("parallel", [1, 2])
+async def test_compaction_retains_a_complete_large_tool_round_and_continues(tmp_path, parallel):
+    @tool
+    def save_fragment(name: str, fragment: str) -> str:
+        path = tmp_path / name
+        path.write_text((path.read_text() if path.exists() else "") + fragment)
+        return f"Saved {name}"
+
+    expected = {}
+    rounds = []
+    for index, size in enumerate([1_500, 1_500, 1_500, 1_500, 3_000]):
+        calls = []
+        for slot in range(parallel):
+            name = f"fragment-{index}-{slot}.txt"
+            fragment = str(index) * size
+            expected[name] = fragment
+            calls.append(
+                ToolCallEvent(
+                    name="save_fragment",
+                    arguments=json.dumps({"name": name, "fragment": fragment}),
+                )
+            )
+        rounds.append(ModelResponse(ModelMessage(""), tool_calls=ToolCallsEvent(calls)))
+    config = CheckpointTestConfig(*rounds, "Saved every fragment")
+    budget = 2_000 * parallel
+    knowledge = build_compaction_config(max_tokens=budget)
+    stream = MemoryStream()
+    goal = "Save all five rounds, then confirm the completed files"
+    reply = await compacting_agent(config, knowledge, tools=[save_fragment]).ask(
+        goal, stream=stream
+    )
+
+    assert reply.body == "Saved every fragment"
+    assert {name: (tmp_path / name).read_text() for name in expected} == expected
+    requests = [
+        (messages, prompt, options)
+        for messages, prompt, options in config.requests
+        if options.get("response_schema") is not CHECKPOINT_SCHEMA
+    ]
+    assert any(isinstance(event, CompactionSummary) for event in requests[-1][0])
+    for messages, prompt, options in requests:
+        assert request_tokens(messages, prompt, options["tools"]) <= budget
+        announced = {
+            call.id
+            for event in messages
+            if isinstance(event, ModelResponse)
+            for call in event.tool_calls.calls
+        }
+        answered = {
+            result.parent_id
+            for event in messages
+            if isinstance(event, ToolResultsEvent)
+            for result in event.results
+        }
+        assert announced == answered
+    assert any(isinstance(event, ModelRequest) and goal in str(event) for event in requests[-1][0])
+    current = list(await stream.history.get_events())
+    replay = await ChatEventLog(knowledge.store).replay(stream.id, current)
+    assert {
+        event.serialized_arguments["name"]: event.serialized_arguments["fragment"]
+        for event in replay
+        if isinstance(event, ToolCallEvent) and event.name == "save_fragment"
+    } == expected
+
+
+async def test_a_tool_round_exceeding_the_hard_budget_keeps_its_source(tmp_path):
+    @tool
+    def save_fragment(fragment: str) -> str:
+        (tmp_path / "saved.txt").write_text(fragment)
+        return "Saved"
+
+    fragment = "x" * 16_000
+    model = CheckpointTestConfig(
+        ToolCallEvent(name="save_fragment", arguments=json.dumps({"fragment": fragment})),
+        "unreachable",
+    )
+    knowledge = build_compaction_config(max_tokens=2_000)
+    stream = MemoryStream()
+    failures = []
+    stream.where(CompactionFailed).subscribe(lambda event: failures.append(event))
+
+    with pytest.raises(ContextBudgetError):
+        await compacting_agent(model, knowledge, tools=[save_fragment]).ask(
+            "Save it", stream=stream
+        )
+
+    assert (tmp_path / "saved.txt").read_text() == fragment
+    assert failures
+    replay = await ChatEventLog(knowledge.store).replay(
+        stream.id, await stream.history.get_events()
+    )
+    assert any(
+        isinstance(event, ToolCallEvent) and event.serialized_arguments.get("fragment") == fragment
+        for event in replay
+    )
+
+
 async def test_excerpt_projection_is_reused_between_rounds_and_turns_without_notices():
     class ImmutableSources(MemoryKnowledgeStore):
         async def write(self, path, content):

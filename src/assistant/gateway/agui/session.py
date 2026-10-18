@@ -74,7 +74,12 @@ def interrupt_of(event: InquiryRaised) -> Interrupt:
         id=event.inquiry_id,
         reason=event.kind,
         message=event.question,
-        metadata={"detail": event.detail, "options": event.options, "task_id": event.task_id},
+        metadata={
+            "detail": event.detail,
+            "options": event.options,
+            "task_id": event.task_id,
+            "expires_at": event.expires_at,
+        },
     )
 
 

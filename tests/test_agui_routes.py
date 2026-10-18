@@ -152,7 +152,8 @@ async def test_a_client_leaving_mid_run_does_not_stop_the_turn(paths):
     try:
         run = runs.run(gateway, "c1", body, TurnRequest(text="work"), answer=None)
         assert (await anext(run)).type == "RUN_STARTED"
-        assert (await anext(run)).type == "TEXT_MESSAGE_START"
+        types = [(await anext(run)).type for _ in range(2)]
+        assert "TEXT_MESSAGE_START" in types
         await run.aclose()
         assert gateway.is_running("c1")
         gate.set()

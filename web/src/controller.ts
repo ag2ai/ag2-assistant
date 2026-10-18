@@ -19,6 +19,7 @@ import type { A2UISurfaceState, AttachmentPayload, ThreadItem, WireEvent } from 
 import { getActiveProfileId, setActiveProfileId } from './lib/profile.ts'
 import { setAccent } from './design/palette.ts'
 import { go, closeAside, route } from './router.ts'
+import { chatEventStatus, mergeChatStatus, pendingChatDeadlines } from './lib/chatActivity.ts'
 
 // The two item kinds a voice session streams into (see _voiceTranscript).
 type VoiceRole = 'user' | 'agent'
@@ -160,10 +161,26 @@ function apply(event: BaseEvent): void {
   if (ev.type === 'CUSTOM' && String(ev.name).endsWith('.CardInstanceSaved') && typeof ev.value?.path === 'string') refreshFiles(ev.value.path)
   _historyEvents.push(event)
   const running = runningAfter(event)
+  const wire = statusEvent(ev)
   thread.update((t) => {
     foldAgui(t.items, event, _fold)
+    if (wire && t.kind === 'chat') {
+      chats.update((rows) => rows.map((row) => {
+        if (row.chat_id !== t.chat) return row
+        const snapshot = chatEventStatus(row, wire, pendingChatDeadlines(t.items, row.turn_started_at))
+        return snapshot ? mergeChatStatus(row, snapshot) : row
+      }))
+    }
     return { ...t, items: t.items, busy: running ?? t.busy }
   })
+}
+
+// The assistant event an AG-UI event carries, as the drawer's status reads it; an interrupt is an InquiryRaised.
+function statusEvent(ev: Record<string, any>): WireEvent | null {
+  if (ev.type === 'CUSTOM') return { type: ev.name, data: ev.value ?? {} }
+  const interrupt = ev.type === 'RUN_FINISHED' ? ev.outcome?.interrupts?.[0] : undefined
+  if (!interrupt) return null
+  return { type: 'InquiryRaised', data: { created_at: (ev.timestamp ?? Date.now()) / 1000, inquiry_id: interrupt.id, expires_at: interrupt.metadata?.expires_at } }
 }
 
 // Run a turn, or answer the Inquiry that ended the last run. The subscription is closed for
@@ -201,9 +218,9 @@ function startRun(input: RunInput): void {
   })
 }
 
-export function send(text: string, attachments: AttachmentPayload[] = []): void {
+export function send(text: string, attachments: AttachmentPayload[] = []): boolean {
   const t = get(thread)
-  if (!t.chat || (!text.trim() && !attachments.length)) return
+  if (!t.chat || (!text.trim() && !attachments.length)) return false
   // A model chosen before this chat existed rides the message that creates it; empty
   // for every other turn, whose override the server already resolves (ADR 0025).
   let model = ''
@@ -221,7 +238,7 @@ export function send(text: string, attachments: AttachmentPayload[] = []): void 
   if (t.kind === 'chat' && text.trim()) {
     chats.update((list) =>
       list.some((s) => s.chat_id === t.chat)
-        ? list
+        ? list.map((row) => row.chat_id === t.chat ? { ...row, status: 'running', turn_started_at: Date.now() / 1000, waiting_until: null, unread: false } : row)
         : [
             {
               chat_id: t.chat,
@@ -230,11 +247,18 @@ export function send(text: string, attachments: AttachmentPayload[] = []): void 
               turns: 0,
               title: '',
               starred: false,
+              status: 'running',
+              status_version: '',
+              status_updated: 0,
+              turn_started_at: Date.now() / 1000,
+              waiting_until: null,
+              unread: false,
             },
             ...list,
           ]
     )
   }
+  return true
 }
 
 // Steer the running turn: show the message queued at once, since the agent only echoes it

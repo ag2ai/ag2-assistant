@@ -630,6 +630,8 @@ def test_run_roundtrip(profile_app):
     assert events[0]["type"] == "RUN_STARTED"
     assert events[-1]["type"] == "RUN_FINISHED"
     assert events[-1]["outcome"]["type"] == "success"
+    names = {e["name"].rsplit(".", 1)[-1] for e in events if e["type"] == "CUSTOM"}
+    assert {"TurnStarted", "TurnCompleted"} <= names
 
 
 def test_run_on_an_unknown_profile_is_refused(profile_app):

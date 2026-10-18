@@ -3,9 +3,13 @@ import { api as P } from '../../lib/profile.ts'
 import { del, get, patch, post } from '../http.ts'
 import type { A2UISurfaceState, AttachmentPayload } from '../../schemas/events.ts'
 import { ChatEvents, ChatList, FeedResponse, Ok, Transcript } from '../../schemas/index.ts'
+import { ChatSeen } from '../../schemas/chat.ts'
 
 export const chatsApi = {
   chats: () => get(P('/chats'), ChatList).then((d) => d.chats),
+
+  chatSeen: (id: string, status_version: string) =>
+    post(P('/chats/' + encodeURIComponent(id) + '/seen'), { status_version }, ChatSeen),
 
   // One chat: its display transcript, its Chat model override ('' = it inherits)
   // and the model it would run on right now. An unknown chat answers with an

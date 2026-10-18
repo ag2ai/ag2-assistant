@@ -27,7 +27,7 @@ from assistant.gateway.schemas import (
     Ok,
     TranscriptResponse,
 )
-from assistant.gateway.schemas.chat import ChatEventsResponse
+from assistant.gateway.schemas.chat import ChatEventsResponse, ChatSeenResponse
 from assistant.gateway.wire import as_drawn, is_binary_event
 from assistant.peers import Peer, PeerStore
 from assistant.profiles import ACP_PLATFORM
@@ -81,6 +81,10 @@ class MessageRequest(BaseModel):
     platform: str | None = None
     # No model field: a choice made before the Chat existed rides the WebSocket frame,
     # and a Channel resolves its own Pending override in the router (ADR 0025).
+
+
+class ChatSeenRequest(BaseModel):
+    status_version: str
 
 
 def build_profile_router(d: GatewayDeps, get_runtime) -> APIRouter:
@@ -159,6 +163,15 @@ def build_profile_router(d: GatewayDeps, get_runtime) -> APIRouter:
         if not await LIVE_SESSIONS.close(chat_id):
             return JSONResponse({"error": "no live session on this chat"}, status_code=409)
         return {"ok": True}
+
+    @r.post("/chats/{chat_id}/seen", response_model=ChatSeenResponse)
+    async def chat_seen(
+        chat_id: str, req: ChatSeenRequest, runtime: ProfileRuntime = Depends(get_runtime)
+    ):
+        result = await runtime.require_gateway().mark_chat_seen(chat_id, req.status_version)
+        if result is None:
+            return Response(status_code=404)
+        return result
 
     @r.delete("/chats/{chat_id}", response_model=Ok)
     async def delete_chat(chat_id: str, runtime: ProfileRuntime = Depends(get_runtime)):

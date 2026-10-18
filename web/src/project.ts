@@ -477,6 +477,7 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
       items.push({
         id: nid(), kind: 'inquiry', inquiryId: d.inquiry_id, question: d.question,
         detail: d.detail ?? '', options: d.options ?? [], qkind: d.kind, resolved: false,
+        expiresAt: d.expires_at,
       })
       break
     }
