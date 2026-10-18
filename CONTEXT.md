@@ -387,6 +387,24 @@ that execution belong to the same Turn; a Chat can contain many Turns.
 _Avoid_: dialog, chat (that is the persisted conversation), message (additional
 messages can join a running Turn)
 
+**Event log**:
+A **Chat**'s record of everything that happened in it, in the assistant's own event
+vocabulary. Replay, the rendered thread, and what the agent remembers of the Chat all
+come from it. Written by the assistant, never by a client.
+_Avoid_: history (also means the model's input), transcript (the rendered text only)
+
+**Inquiry**:
+A question the assistant puts to a person during a **Turn** or a **Task**. It stays
+pending until answered from any surface that can reach its **Chat**; the first answer
+wins, and an unanswered one expires.
+_Avoid_: prompt, approval, human-in-the-loop request
+
+**AG-UI projection**:
+The **Event log** — or the live events of a **Turn** — as an AG-UI client sees it: the
+same events re-expressed in the AG-UI protocol and never stored. Replay and live give
+the same projection. An AG-UI "thread" is a **Chat**, not a **Thread**.
+_Avoid_: wire format, stream
+
 **Capabilities**:
 The tools, Skills, and Cards offered to the assistant for one **Turn**, fixed when
 that Turn starts. An existing **Chat** receives the current Capabilities on each

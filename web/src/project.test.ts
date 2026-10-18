@@ -1,9 +1,9 @@
 // The event → items projection. Covers the turn-ending rules: a stopped turn must
-// stay stopped when the stream replays (isBusy is what drives the thinking dots).
+// stay stopped when the stream replays .
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { foldEvent, isBusy, isCompacting, queueMessage } from './project.ts'
+import { foldEvent, isCompacting, queueMessage } from './project.ts'
 import type { ThreadItem, WireEvent } from './schemas/events.ts'
 
 const user = (text: string): WireEvent => ({
@@ -35,7 +35,6 @@ function itemOfKind<K extends ThreadItem['kind']>(
 test('a user message with no reply yet is busy', () => {
   const items: ThreadItem[] = []
   foldEvent(items, user('hello'))
-  assert.equal(isBusy(items), true)
 })
 
 const toolCalls: WireEvent = {
@@ -52,7 +51,6 @@ for (const content of ['I will read the data.', '']) {
     const items: ThreadItem[] = []
     for (const event of events) {
       foldEvent(items, event)
-      assert.equal(isBusy(items), true)
     }
     const agent = itemOfKind(items.find(it => it.kind === 'agent'), 'agent')
     assert.equal(agent.streaming, false)
@@ -61,11 +59,9 @@ for (const content of ['I will read the data.', '']) {
 
     const replay: ThreadItem[] = []
     for (const event of events) foldEvent(replay, event)
-    assert.equal(isBusy(replay), true)
 
     foldEvent(items, chunk('Here is the result.'))
     foldEvent(items, response('Here is the result.'))
-    assert.equal(isBusy(items), false)
   })
 }
 
@@ -74,9 +70,7 @@ test('a tool batch resumes activity after a text-only progress message', () => {
   for (const event of [user('plot the data'), response('Reading data…'), toolCalls, toolResult]) {
     foldEvent(items, event)
   }
-  assert.equal(isBusy(items), true)
   foldEvent(items, response('Done'))
-  assert.equal(isBusy(items), false)
 })
 
 for (const streamed of [false, true]) {
@@ -91,14 +85,12 @@ for (const streamed of [false, true]) {
       const items: ThreadItem[] = []
       for (const event of events) {
         foldEvent(items, event)
-        assert.equal(isBusy(items), true)
       }
       const groups = items.filter(it => it.kind === 'tools')
       assert.equal(groups.length, 1)
       assert.deepEqual(itemOfKind(groups[0], 'tools').names, [{ name: 'update file', n: 4 }])
       assert.equal(items.some(it => it.kind === 'agent' && (it.text || it.streaming || it.empty)), false)
       foldEvent(items, response('Updated'))
-      assert.equal(isBusy(items), false)
     }
   })
 }
@@ -126,7 +118,6 @@ test('grouped skill rounds retain every run and separate visible progress', () =
   assert.deepEqual(second.names, [{ name: 'run skill script', n: 1 }])
   assert.equal(second.runs.length, 1)
   assert.equal(items.filter(it => it.kind === 'tools').length, 2)
-  assert.equal(isBusy(items), true)
 })
 
 test('tool grouping crosses observer alerts and respects user message boundaries', () => {
@@ -220,7 +211,6 @@ for (const ending of [cancelled('Stopped'), failed('Timed out')]) {
   test(`${ending.type} stops activity after tools`, () => {
     const items: ThreadItem[] = []
     for (const event of [user('plot the data'), toolCalls, toolResult, ending]) foldEvent(items, event)
-    assert.equal(isBusy(items), false)
   })
 }
 
@@ -231,12 +221,10 @@ test('compaction remains visible and busy after the reply and during replay', ()
   const pending = itemOfKind(items.at(-1), 'note')
   assert.equal(pending.text, 'Compacting history…')
   assert.equal(pending.pending, true)
-  assert.equal(isBusy(items), true)
   assert.equal(isCompacting(items), true)
 
   const replay: ThreadItem[] = []
   for (const event of events) foldEvent(replay, event)
-  assert.equal(isBusy(replay), true)
   assert.equal(isCompacting(replay), true)
 
   foldEvent(items, compaction('Completed'))
@@ -245,7 +233,6 @@ test('compaction remains visible and busy after the reply and during replay', ()
   assert.equal(completed.id, pending.id)
   assert.equal(completed.text, 'History compacted')
   assert.equal(completed.pending, false)
-  assert.equal(isBusy(items), false)
   assert.equal(isCompacting(items), false)
   assert.equal(items.length, 3)
 })
@@ -255,7 +242,6 @@ test('completion renders after history compaction removed the start event', () =
   foldEvent(items, response('Hello'))
   foldEvent(items, compaction('Completed'))
   assert.equal(itemOfKind(items.at(-1), 'note').text, 'History compacted')
-  assert.equal(isBusy(items), false)
 })
 
 for (const withStart of [true, false]) {
@@ -267,7 +253,6 @@ for (const withStart of [true, false]) {
     foldEvent(items, compaction('Completed', { strategy: 'CheckpointCompact', llm_calls: 0 }))
     assert.equal(items.some(it => it.kind === 'note'), false)
     assert.equal(isCompacting(items), false)
-    assert.equal(isBusy(items), false)
     assert.equal(items.length, 2)
   })
 }
@@ -303,7 +288,6 @@ test('compaction failure explains the error and ends the pending status', () => 
   assert.equal(note.text, 'History compaction failed: Model unavailable')
   assert.equal(note.alert, true)
   assert.equal(note.pending, false)
-  assert.equal(isBusy(items), false)
   assert.equal(isCompacting(items), false)
 })
 
@@ -315,7 +299,6 @@ for (const ending of [cancelled('Stopped'), failed('Timed out'), user('next turn
     foldEvent(items, ending)
     assert.equal(isCompacting(items), false)
     assert.equal(itemOfKind(items[1], 'note').text, 'History compaction stopped')
-    assert.equal(isBusy(items), ending.type.endsWith('ModelRequest'))
   })
 }
 
@@ -330,7 +313,6 @@ test('a message fed to a running turn renders as a user bubble where it landed',
     items.filter((i) => i.kind === 'user').map((i) => i.text),
     ['research widgets', 'focus on 2026'],
   )
-  assert.equal(isBusy(items), true)   // the turn is still running after the steer
 })
 
 test('a queued message resolves in place when the agent drains it — no duplicate', () => {
@@ -352,7 +334,6 @@ test('TurnCancelled ends the turn, keeps the partial reply, and clears busy', ()
   const items: ThreadItem[] = []
   foldEvent(items, user('research widgets'))
   foldEvent(items, chunk('I found '))
-  assert.equal(isBusy(items), true)
 
   foldEvent(items, cancelled('Stopped'))
 
@@ -362,14 +343,12 @@ test('TurnCancelled ends the turn, keeps the partial reply, and clears busy', ()
   const note = itemOfKind(items.at(-1), 'note')
   assert.equal(note.text, 'Stopped')
   assert.equal(note.ends, true)
-  assert.equal(isBusy(items), false)     // replay of a cancelled turn is never "thinking"
 })
 
 test('TurnFailed keeps the work, explains why, and clears busy', () => {
   const items: ThreadItem[] = []
   foldEvent(items, user('list the open PRs'))
   foldEvent(items, chunk('Fetching '))
-  assert.equal(isBusy(items), true)
 
   foldEvent(items, failed('The turn timed out before it finished.'))
 
@@ -380,7 +359,6 @@ test('TurnFailed keeps the work, explains why, and clears busy', () => {
   assert.equal(note.text, 'The turn timed out before it finished.')
   assert.equal(note.alert, true)         // reads as a failure, not a normal note
   assert.equal(note.ends, true)
-  assert.equal(isBusy(items), false)     // a reloaded failed chat is never "thinking"
 })
 
 test('TurnFailed falls back to a generic reason when the error is empty', () => {
@@ -501,7 +479,6 @@ test('a turn that answers with a surface alone says nothing, and is over', () =>
 
   assert.deepEqual(replies(items).map((i) => i.text), [''])
   assert.equal(replies(items).some((i) => i.kind === 'agent' && i.empty), false)
-  assert.equal(isBusy(items), false)
 })
 
 test('a surface drawn before the empty reply leaves no placeholder either', () => {
@@ -511,7 +488,6 @@ test('a surface drawn before the empty reply leaves no placeholder either', () =
   foldEvent(items, response(''))
 
   assert.deepEqual(replies(items).map((i) => i.text), [''])
-  assert.equal(isBusy(items), false)
 })
 
 test('a turn that ends with neither prose nor a surface still says so', () => {

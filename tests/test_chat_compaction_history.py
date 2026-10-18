@@ -18,18 +18,10 @@ from ag2.testing import TestConfig
 from assistant.config import Config
 from assistant.events import A2UISurface
 from assistant.gateway.core import Gateway
-from assistant.gateway.stream_bridge import StreamBridge
 from assistant.memory import build_compaction_config, build_knowledge_config
 from tests.support.apps import compacting_agent
+from tests.support.chat import drawn_log
 from tests.support.fakes import CheckpointTestConfig, fake_agent_factory
-
-
-class _WebSocket:
-    def __init__(self):
-        self.sent = []
-
-    async def send_json(self, frame):
-        self.sent.append(frame)
 
 
 @pytest.mark.parametrize("profile_memory", [False, True])
@@ -104,11 +96,7 @@ async def test_replay_restores_archived_messages_and_cards_without_expanding_con
             assert [type(e) for e in await stream.history.get_events()] == [type(e) for e in recent]
 
             for _ in range(2):
-                ws = _WebSocket()
-                bridge = StreamBridge(gw, ws, "c1")
-                await bridge.open()
-                bridge.close()
-                events = [frame["event"] for frame in ws.sent if "event" in frame]
+                events = await drawn_log(gw)
                 assert len(events) == len(old) + len(recent)
                 assert [event["type"].rsplit(".", 1)[-1] for event in events] == [
                     type(event).__name__ for event in [*old, *recent]

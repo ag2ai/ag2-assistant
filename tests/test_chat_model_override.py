@@ -22,6 +22,7 @@ from assistant.profiles import ProfileRegistry
 from assistant.settings import profile_settings
 from assistant.tasks.store import TaskStore
 from tests.support.apps import api
+from tests.support.chat import run
 from tests.support.fakes import (
     FakeReply,
     FakeRunMixin,
@@ -693,19 +694,14 @@ def test_the_single_chat_read_names_the_pinned_model(profile_app_factory):
     assert body["model"] == b and body["effective_model"] == "deployment-model"
 
 
-def test_a_first_stream_frame_carrying_a_model_records_the_override(profile_app):
-    """The WebUI composer's pre-send choice rides the WebSocket frame the WebUI
-    actually sends turns on — there is no Chat to patch yet — and the install-wide
+def test_a_first_run_carrying_a_model_records_the_override(profile_app):
+    """The WebUI composer's pre-send choice rides the run the WebUI actually sends
+    turns on (its forwarded props) — there is no Chat to patch yet — and the install-wide
     Active is untouched. ``POST /message`` deliberately carries no model: a
     per-message model is out of scope (ADR 0025)."""
     client, pid = profile_app
     a, b = _api_models(client)
-    with client.websocket_connect(api(pid, "/stream?chat=w1")) as ws:
-        while ws.receive_json().get("type") != "ready":
-            pass
-        ws.send_json({"text": "hi", "model": b})
-        while ws.receive_json().get("type") != "turn_end":
-            pass
+    run(client, pid, "w1", text="hi", props={"model": b})
 
     body = client.get(api(pid, "/chats/w1")).json()
     assert body["model"] == b and body["effective_model"] == b

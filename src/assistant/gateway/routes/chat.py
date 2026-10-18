@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from assistant.acp.chats import LIVE_SESSIONS
 from assistant.connections import ConnectionStore
+from assistant.gateway.agui.projection import project
 from assistant.gateway.history import event_page
 from assistant.gateway.profile_manager import ProfileRuntime
 from assistant.gateway.routes.common import chat_asker
@@ -27,7 +28,7 @@ from assistant.gateway.schemas import (
     TranscriptResponse,
 )
 from assistant.gateway.schemas.chat import ChatEventsResponse
-from assistant.gateway.wire import as_drawn, is_binary_event, to_wire
+from assistant.gateway.wire import as_drawn, is_binary_event
 from assistant.peers import Peer, PeerStore
 from assistant.profiles import ACP_PLATFORM
 
@@ -133,11 +134,15 @@ def build_profile_router(d: GatewayDeps, get_runtime) -> APIRouter:
             raise HTTPException(
                 status_code=409, detail="History cursor is no longer available"
             ) from exc
+        drawn = (
+            as_drawn(event, gw.catalog, gw.card_sources)
+            for event in page.events
+            if not is_binary_event(event)
+        )
         return {
             "events": [
-                to_wire(as_drawn(event, gw.catalog, gw.card_sources))
-                for event in page.events
-                if not is_binary_event(event)
+                event.model_dump(mode="json", by_alias=True, exclude_none=True)
+                for event in project(drawn)
             ],
             "before": page.before,
             "start": page.start,

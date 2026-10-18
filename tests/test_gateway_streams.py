@@ -15,7 +15,7 @@ from ag2.events import (
 
 from assistant.config import Config
 from assistant.gateway.core import Gateway, is_internal_stream
-from assistant.gateway.stream_bridge import StreamBridge
+from tests.support.chat import drawn_log
 from tests.support.fakes import FakeReply, FakeRunMixin, fake_agent_factory, fake_title_factory
 
 
@@ -50,14 +50,6 @@ class _CompactingAgent(FakeRunMixin):
         return FakeReply("reply")
 
 
-class _WebSocket:
-    def __init__(self):
-        self.sent = []
-
-    async def send_json(self, frame):
-        self.sent.append(frame)
-
-
 @pytest.mark.parametrize(
     "terminal",
     [
@@ -86,19 +78,13 @@ async def test_compaction_replays_while_running_and_after_restart(paths, termina
     turn = asyncio.create_task(gw.send_message("hello", chat_id="compacting"))
     try:
         await asyncio.wait_for(agent.started.wait(), 5)
-        ws = _WebSocket()
-        bridge = StreamBridge(gw, ws, "compacting")
-        await bridge.open()
-        replay = [frame["event"]["type"] for frame in ws.sent if "event" in frame]
+        replay = [event["type"] for event in await drawn_log(gw, "compacting")]
         assert any(name.endswith("CompactionStarted") for name in replay)
         assert not any(name.endswith("ModelMessageChunk") for name in replay)
         agent.release.set()
         assert await turn == "reply"
-        assert any(
-            frame.get("event", {}).get("type", "").endswith(type(terminal).__name__)
-            for frame in ws.sent
-        )
-        bridge.close()
+        finished = [event["type"] for event in await drawn_log(gw, "compacting")]
+        assert any(name.endswith(type(terminal).__name__) for name in finished)
     finally:
         agent.release.set()
         await turn
@@ -107,11 +93,7 @@ async def test_compaction_replays_while_running_and_after_restart(paths, termina
     resumed = gateway()
     await resumed.start()
     try:
-        ws = _WebSocket()
-        bridge = StreamBridge(resumed, ws, "compacting")
-        await bridge.open()
-        replay = [frame["event"]["type"] for frame in ws.sent if "event" in frame]
+        replay = [event["type"] for event in await drawn_log(resumed, "compacting")]
         assert any(name.endswith(type(terminal).__name__) for name in replay)
-        bridge.close()
     finally:
         await resumed.close()

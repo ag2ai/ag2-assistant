@@ -13,6 +13,7 @@ from assistant.gateway.app import create_app
 from assistant.profiles import ProfileRegistry
 from tests.support.apps import api, make_manager
 from tests.support.cards import author, card_definition, replay, send, snapshot_message, write_card
+from tests.support.chat import click
 from tests.support.fakes import ScriptedModels
 
 
@@ -400,32 +401,22 @@ def test_an_older_composite_draft_keeps_nested_bindings_and_complete_local_value
         original_bytes = client.get(
             api(pid, "/files/raw"), params={"path": "old.card-instance.yaml"}
         ).content
-        with client.websocket_connect(api(pid, "/stream?chat=drafts")) as ws:
-            while ws.receive_json().get("type") != "ready":
-                pass
-            ws.send_json(
-                {
-                    "type": "a2ui",
-                    "message": {
-                        "version": "v1.0",
-                        "action": {
-                            "name": "save_surface",
-                            "surfaceId": old["surface_id"],
-                            "sourceComponentId": "root__save",
-                            "timestamp": "2026-10-06T10:00:00Z",
-                            "context": {"data": {**initial, "title": "Updated in Chat"}},
-                        },
-                    },
-                    "state": {
-                        "surfaceId": old["surface_id"],
-                        "data": {**initial, "title": "Updated in Chat"},
-                    },
-                }
-            )
-            while True:
-                frame = ws.receive_json()
-                if frame.get("event", {}).get("type", "").endswith("A2UISurfaceDataUpdated"):
-                    break
+        click(
+            client,
+            pid,
+            {
+                "version": "v1.0",
+                "action": {
+                    "name": "save_surface",
+                    "surfaceId": old["surface_id"],
+                    "sourceComponentId": "root__save",
+                    "timestamp": "2026-10-06T10:00:00Z",
+                    "context": {"data": {**initial, "title": "Updated in Chat"}},
+                },
+            },
+            {"surfaceId": old["surface_id"], "data": {**initial, "title": "Updated in Chat"}},
+            chat="drafts",
+        )
         assert (
             client.get(api(pid, "/files/raw"), params={"path": "old.card-instance.yaml"}).content
             == original_bytes

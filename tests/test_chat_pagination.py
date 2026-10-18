@@ -89,9 +89,9 @@ def test_profile_history_route_and_transcript_limit(paths):
         assert latest.status_code == 200
         body = latest.json()
         questions = [
-            event["data"]["parts"][0]["content"]
+            event["delta"]
             for event in body["events"]
-            if event["type"].endswith(".ModelRequest")
+            if event["type"] == "TEXT_MESSAGE_CONTENT" and event["messageId"].startswith("usr-")
         ]
         assert questions == [f"question {index}" for index in range(7, 12)]
         older = client.get(prefix + "/events", params={"before": body["before"], "limit": 5}).json()
@@ -109,12 +109,3 @@ def test_profile_history_route_and_transcript_limit(paths):
             "before": None,
             "start": None,
         }
-        with client.websocket_connect(api(pid, "/stream?chat=c1&history_limit=5")) as socket:
-            replay = []
-            while True:
-                frame = socket.receive_json()
-                if frame.get("type") == "ready":
-                    assert frame["history"] == {"before": body["before"], "start": body["start"]}
-                    break
-                replay.append(frame["event"])
-            assert replay == body["events"]

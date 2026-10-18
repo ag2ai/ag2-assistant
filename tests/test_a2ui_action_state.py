@@ -11,7 +11,8 @@ from fastapi.testclient import TestClient
 
 from assistant.a2ui_skill import A2UI_SKILL
 from assistant.skills import SkillStateStore
-from tests.support.apps import api, make_profile_app
+from tests.support.apps import make_profile_app
+from tests.support.chat import click, logged, run, wait_for
 from tests.support.fakes import FakeReply, FakeRunMixin, fake_agent_factory
 
 SURFACE = "surface-1"
@@ -29,7 +30,7 @@ class RecordingAgent(FakeRunMixin):
         return FakeReply("ok")
 
 
-def _click(name="apply", *, context=None, surface_id=SURFACE):
+def _msg(name="apply", *, context=None, surface_id=SURFACE):
     return {
         "version": "v1.0",
         "action": {
@@ -40,22 +41,6 @@ def _click(name="apply", *, context=None, surface_id=SURFACE):
             "context": context or {},
         },
     }
-
-
-def _ready(ws) -> None:
-    while ws.receive_json().get("type") != "ready":
-        pass
-
-
-def _events_until_turn_end(ws) -> list[dict]:
-    """Every event frame up to the end of the next turn."""
-    events: list[dict] = []
-    while True:
-        frame = ws.receive_json()
-        if frame.get("type") == "turn_end":
-            return events
-        if "event" in frame:
-            events.append(frame["event"])
 
 
 def _models(events, *, surface_id=SURFACE) -> list[dict]:
@@ -73,19 +58,16 @@ def test_a_click_persists_the_whole_model_the_client_holds(paths):
     All three survive — the context never stands in for the model."""
     app, pid = make_profile_app(paths)
     with TestClient(app) as client:
-        with client.websocket_connect(api(pid, "/stream?chat=c1")) as ws:
-            _ready(ws)
-            ws.send_json(
-                {
-                    "type": "a2ui",
-                    "message": _click(context={"colours": ["red"]}),
-                    "state": {
-                        "surfaceId": SURFACE,
-                        "data": {"selectedColours": ["red"], "note": "keep me", "day": 3},
-                    },
-                }
-            )
-            events = _events_until_turn_end(ws)
+        click(
+            client,
+            pid,
+            _msg(context={"colours": ["red"]}),
+            {
+                "surfaceId": SURFACE,
+                "data": {"selectedColours": ["red"], "note": "keep me", "day": 3},
+            },
+        )
+        events = logged(client, app, pid)
 
     assert _models(events) == [{"selectedColours": ["red"], "note": "keep me", "day": 3}]
 
@@ -100,46 +82,36 @@ def test_a_click_inside_a_repeated_row_leaves_the_array_whole(paths):
     ]
     app, pid = make_profile_app(paths)
     with TestClient(app) as client:
-        with client.websocket_connect(api(pid, "/stream?chat=c1")) as ws:
-            _ready(ws)
-            ws.send_json(
-                {
-                    "type": "a2ui",
-                    "message": _click("buy", context={"symbol": "ABC"}),
-                    "state": {"surfaceId": SURFACE, "data": {"holdings": rows}},
-                }
-            )
-            events = _events_until_turn_end(ws)
+        click(
+            client,
+            pid,
+            _msg("buy", context={"symbol": "ABC"}),
+            {"surfaceId": SURFACE, "data": {"holdings": rows}},
+        )
+        events = logged(client, app, pid)
 
     assert _models(events) == [{"holdings": rows}]
 
 
 def test_the_persisted_model_comes_back_on_a_reload(paths):
-    """A second connection replays the click's model, so the values the user typed
+    """A later read of the log holds the click's model, so the values the user typed
     really are persisted rather than only echoed once."""
     app, pid = make_profile_app(paths)
     with TestClient(app) as client:
-        with client.websocket_connect(api(pid, "/stream?chat=c1")) as ws:
-            _ready(ws)
-            ws.send_json(
-                {
-                    "type": "a2ui",
-                    "message": _click(context={"colours": ["red"]}),
-                    "state": {"surfaceId": SURFACE, "data": {"note": "typed before clicking"}},
-                }
-            )
-            _events_until_turn_end(ws)
+        click(
+            client,
+            pid,
+            _msg(context={"colours": ["red"]}),
+            {"surfaceId": SURFACE, "data": {"note": "typed before clicking"}},
+        )
+        replayed = client.get(f"/api/p/{pid}/chats/c1/events").json()["events"]
 
-        replayed: list[dict] = []
-        with client.websocket_connect(api(pid, "/stream?chat=c1")) as ws:
-            while True:
-                frame = ws.receive_json()
-                if frame.get("type") == "ready":
-                    break
-                if "event" in frame:
-                    replayed.append(frame["event"])
-
-    assert _models(replayed) == [{"note": "typed before clicking"}]
+    cards = [
+        e
+        for e in replayed
+        if e["type"] == "CUSTOM" and e["name"].endswith("A2UISurfaceDataUpdated")
+    ]
+    assert [e["value"]["data"] for e in cards] == [{"note": "typed before clicking"}]
 
 
 def test_a_click_carrying_no_model_leaves_the_instance_alone(paths):
@@ -147,10 +119,8 @@ def test_a_click_carrying_no_model_leaves_the_instance_alone(paths):
     empty one would blank the instance, so nothing is published at all."""
     app, pid = make_profile_app(paths)
     with TestClient(app) as client:
-        with client.websocket_connect(api(pid, "/stream?chat=c1")) as ws:
-            _ready(ws)
-            ws.send_json({"type": "a2ui", "message": _click(context={"colours": ["red"]})})
-            events = _events_until_turn_end(ws)
+        click(client, pid, _msg(context={"colours": ["red"]}))
+        events = logged(client, app, pid)
 
     assert _models(events) == []
     assert any(event["type"].endswith("A2UIActionSubmitted") for event in events)
@@ -161,16 +131,8 @@ def test_a_model_naming_another_card_instance_is_not_written(paths):
     written nowhere — not to that instance, and not to the clicked one."""
     app, pid = make_profile_app(paths)
     with TestClient(app) as client:
-        with client.websocket_connect(api(pid, "/stream?chat=c1")) as ws:
-            _ready(ws)
-            ws.send_json(
-                {
-                    "type": "a2ui",
-                    "message": _click(),
-                    "state": {"surfaceId": "somewhere-else", "data": {"note": "not mine"}},
-                }
-            )
-            events = _events_until_turn_end(ws)
+        click(client, pid, _msg(), {"surfaceId": "somewhere-else", "data": {"note": "not mine"}})
+        events = logged(client, app, pid)
 
     assert _models(events) == []
     assert _models(events, surface_id="somewhere-else") == []
@@ -182,29 +144,18 @@ def test_an_oversized_model_is_refused_and_the_click_still_reaches_the_agent(pat
     handed to the agent."""
     agent = RecordingAgent()
     app, pid = make_profile_app(paths, agent_factory=fake_agent_factory(agent))
-    refused = False
     with TestClient(app) as client:
-        with client.websocket_connect(api(pid, "/stream?chat=c1")) as ws:
-            _ready(ws)
-            ws.send_json(
-                {
-                    "type": "a2ui",
-                    "message": _click(),
-                    "state": {"surfaceId": SURFACE, "data": {"blob": "x" * (2 * 1024 * 1024)}},
-                }
-            )
-            events: list[dict] = []
-            while True:
-                frame = ws.receive_json()
-                if frame.get("type") == "turn_end":
-                    break
-                if frame.get("type") == "error":
-                    refused = True
-                if "event" in frame:
-                    events.append(frame["event"])
+        response = click(
+            client,
+            pid,
+            _msg(),
+            {"surfaceId": SURFACE, "data": {"blob": "x" * (2 * 1024 * 1024)}},
+        )
+        wait_for(lambda: agent.asked)
+        events = logged(client, app, pid)
 
     assert _models(events) == []
-    assert refused
+    assert response.status_code == 413
     assert any("apply" in text for text in agent.asked)
 
 
@@ -214,16 +165,8 @@ def test_the_bound_counts_bytes_not_characters(paths):
     written = {"note": "я" * 100_000}  # 100k characters, 200k UTF-8 bytes
     app, pid = make_profile_app(paths)
     with TestClient(app) as client:
-        with client.websocket_connect(api(pid, "/stream?chat=c1")) as ws:
-            _ready(ws)
-            ws.send_json(
-                {
-                    "type": "a2ui",
-                    "message": _click(),
-                    "state": {"surfaceId": SURFACE, "data": written},
-                }
-            )
-            events = _events_until_turn_end(ws)
+        click(client, pid, _msg(), {"surfaceId": SURFACE, "data": written})
+        events = logged(client, app, pid)
 
     assert len(json.dumps(written).encode()) > 256 * 1024  # \uXXXX-escaped, it would refuse
     assert len(json.dumps(written, ensure_ascii=False).encode()) < 256 * 1024
@@ -236,16 +179,13 @@ def test_the_agents_action_text_still_carries_the_declared_context(paths):
     agent = RecordingAgent()
     app, pid = make_profile_app(paths, agent_factory=fake_agent_factory(agent))
     with TestClient(app) as client:
-        with client.websocket_connect(api(pid, "/stream?chat=c1")) as ws:
-            _ready(ws)
-            ws.send_json(
-                {
-                    "type": "a2ui",
-                    "message": _click("apply_preferences", context={"colours": ["red"]}),
-                    "state": {"surfaceId": SURFACE, "data": {"selectedColours": ["red"]}},
-                }
-            )
-            _events_until_turn_end(ws)
+        click(
+            client,
+            pid,
+            _msg("apply_preferences", context={"colours": ["red"]}),
+            {"surfaceId": SURFACE, "data": {"selectedColours": ["red"]}},
+        )
+        wait_for(lambda: agent.asked)
 
     assert len(agent.asked) == 1
     text = agent.asked[0]
@@ -259,17 +199,14 @@ def test_a_registered_action_ignores_the_model_the_client_sends(paths):
     registered action's model."""
     app, pid = make_profile_app(paths)
     with TestClient(app) as client:
-        with client.websocket_connect(api(pid, "/stream?chat=c1")) as ws:
-            _ready(ws)
-            ws.send_json(
-                {
-                    "type": "a2ui",
-                    "message": _click("save_surface", context={"data": {"kept": "by the server"}}),
-                    "state": {"surfaceId": SURFACE, "data": {"kept": "by the client"}},
-                }
-            )
-            ws.send_json({"text": "ping"})
-            events = _events_until_turn_end(ws)
+        click(
+            client,
+            pid,
+            _msg("save_surface", context={"data": {"kept": "by the server"}}),
+            {"surfaceId": SURFACE, "data": {"kept": "by the client"}},
+        )
+        run(client, pid, text="ping")
+        events = logged(client, app, pid)
 
     assert _models(events) == [{"kept": "by the server"}]
 
@@ -279,12 +216,10 @@ def test_the_model_rides_outside_the_a2ui_message(paths):
     the model inside itself is not a model the gateway reads."""
     app, pid = make_profile_app(paths)
     with TestClient(app) as client:
-        with client.websocket_connect(api(pid, "/stream?chat=c1")) as ws:
-            _ready(ws)
-            message = _click()
-            message["state"] = {"surfaceId": SURFACE, "data": {"note": "smuggled"}}
-            ws.send_json({"type": "a2ui", "message": message})
-            events = _events_until_turn_end(ws)
+        message = _msg()
+        message["state"] = {"surfaceId": SURFACE, "data": {"note": "smuggled"}}
+        click(client, pid, message)
+        events = logged(client, app, pid)
 
     assert _models(events) == []
 
@@ -295,16 +230,8 @@ def test_the_bound_is_on_the_model_not_the_whole_frame(paths):
     rows = [{"symbol": f"S{i}", "note": "x" * 100} for i in range(200)]
     app, pid = make_profile_app(paths)
     with TestClient(app) as client:
-        with client.websocket_connect(api(pid, "/stream?chat=c1")) as ws:
-            _ready(ws)
-            ws.send_json(
-                {
-                    "type": "a2ui",
-                    "message": _click(),
-                    "state": {"surfaceId": SURFACE, "data": {"holdings": rows}},
-                }
-            )
-            events = _events_until_turn_end(ws)
+        click(client, pid, _msg(), {"surfaceId": SURFACE, "data": {"holdings": rows}})
+        events = logged(client, app, pid)
 
     assert len(json.dumps({"holdings": rows})) < 256 * 1024
     assert _models(events) == [{"holdings": rows}]
@@ -317,16 +244,14 @@ def test_a_click_on_a_drawn_card_still_works_with_rich_views_off(paths):
     agent = RecordingAgent()
     app, pid = make_profile_app(paths, agent_factory=fake_agent_factory(agent))
     with TestClient(app) as client:
-        with client.websocket_connect(api(pid, "/stream?chat=c1")) as ws:
-            _ready(ws)
-            ws.send_json(
-                {
-                    "type": "a2ui",
-                    "message": _click("apply", context={"colours": ["red"]}),
-                    "state": {"surfaceId": SURFACE, "data": {"colours": ["red"], "size": "m"}},
-                }
-            )
-            events = _events_until_turn_end(ws)
+        click(
+            client,
+            pid,
+            _msg("apply", context={"colours": ["red"]}),
+            {"surfaceId": SURFACE, "data": {"colours": ["red"], "size": "m"}},
+        )
+        wait_for(lambda: agent.asked)
+        events = logged(client, app, pid)
 
     assert _models(events) == [{"colours": ["red"], "size": "m"}]
     assert len(agent.asked) == 1 and "apply" in agent.asked[0]
@@ -336,15 +261,8 @@ def test_a_saved_surface_still_saves_with_rich_views_off(paths):
     SkillStateStore(paths.root).set_enabled(A2UI_SKILL, False)
     app, pid = make_profile_app(paths)
     with TestClient(app) as client:
-        with client.websocket_connect(api(pid, "/stream?chat=c1")) as ws:
-            _ready(ws)
-            ws.send_json(
-                {
-                    "type": "a2ui",
-                    "message": _click("save_surface", context={"data": {"kept": "yes"}}),
-                }
-            )
-            ws.send_json({"text": "ping"})
-            events = _events_until_turn_end(ws)
+        click(client, pid, _msg("save_surface", context={"data": {"kept": "yes"}}))
+        run(client, pid, text="ping")
+        events = logged(client, app, pid)
 
     assert _models(events) == [{"kept": "yes"}]

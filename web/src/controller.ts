@@ -1,14 +1,17 @@
-// Owns the active thread's stream connection: opens /api/stream for a chat,
-// folds events into items, runs turns, and (for tasks) polls the durable panel.
+// Owns the active thread's connection: loads a chat's history, subscribes to its AG-UI
+// events, runs turns, and (for tasks) polls the durable panel.
 
 import { get, writable, type Writable } from 'svelte/store'
+import type { BaseEvent } from '@ag-ui/client'
 import { thread, runInfo, chats, screenRows, tasks, inquiries, inspectorEvents, viewer, profiles, profileEpoch, chatModel, refreshFiles } from './store.ts'
 import type { ThreadKind } from './store.ts'
 import { NO_CHAT_MODEL, openedChat, sentFirstMessage } from './lib/chatModel.ts'
-import { StreamClient } from './transport/stream.ts'
+import { ChatWatch, runChat } from './transport/agui.ts'
+import type { RunInput } from './transport/agui.ts'
 import { VoiceController } from './transport/voice.ts'
 import { api } from './transport/api/index.ts'
-import { foldEvent, isBusy, queueMessage } from './project.ts'
+import { foldEvent, queueMessage } from './project.ts'
+import { AguiState, foldAgui, runningAfter } from './projectAgui.ts'
 import { nextItemId } from './lib/ids.ts'
 import { projectHistory } from './lib/chatHistory.ts'
 import { errText } from './lib/errors.ts'
@@ -21,15 +24,18 @@ import { go, closeAside, route } from './router.ts'
 type VoiceRole = 'user' | 'agent'
 type VoiceBubble = Extract<ThreadItem, { kind: VoiceRole }>
 
-let client: StreamClient | null = null
+let watch: ChatWatch | null = null
+let stopRun: (() => void) | null = null
 let panelTimer: ReturnType<typeof setInterval> | null = null
 
-// A connection replays the loaded range; older pages prepend to the same event fold.
-let _replaying = false
-let _replayEvents: WireEvent[] = []
-let _historyEvents: WireEvent[] = []
+// The loaded range of the chat as AG-UI events; older pages prepend and the fold reruns.
+let _historyEvents: BaseEvent[] = []
+let _fold = new AguiState()
+let _ready = false                 // the latest page is folded; live events fold straight in
+let _buffer: BaseEvent[] = []      // live events that arrived while it was loading
 let _session = 0
 let _connection = 0
+let _interrupts = new Set<string>()   // Inquiries that ended a run: answered by resuming it
 export const chatHistory = writable<{
   chat: string | null; loading: boolean; loadingOlder: boolean; error: string;
   before: string | null; start: string | null
@@ -43,8 +49,9 @@ export async function loadOlderMessages(): Promise<boolean> {
   try {
     const page = await api.chatEvents(state.chat, state.before)
     if (session !== _session || connection !== _connection) return false
-    _historyEvents = [...page.events, ..._historyEvents]
-    thread.update(t => ({ ...t, items: projectHistory(_historyEvents, t.items) }))
+    _historyEvents = [...(page.events as BaseEvent[]), ..._historyEvents]
+    _fold = new AguiState()
+    thread.update(t => ({ ...t, items: projectHistory(_historyEvents, t.items, _fold) }))
     chatHistory.update(s => ({ ...s, before: page.before, start: page.start ?? s.start, loadingOlder: false }))
     return true
   } catch (error) {
@@ -79,10 +86,9 @@ function _inspect(ev: WireEvent): void {
 export function openThread(kind: ThreadKind, id: string): void {
   closeThread()
   _suppressStream = false       // a fresh thread always folds its stream
-  _replaying = true   // first connect's replay buffers until `ready`
   const session = _session
   const chat = kind === 'run' ? 'task-run:' + id : id
-  _historyEvents = []; _replayEvents = []
+  _historyEvents = []; _buffer = []; _ready = false; _fold = new AguiState(); _interrupts = new Set()
   chatHistory.set({ chat, loading: true, loadingOlder: false, error: '', before: null, start: null })
   thread.set({ id, kind, chat, items: [], busy: false })
   inspectorEvents.set([])       // fresh inspector buffer per thread
@@ -90,51 +96,7 @@ export function openThread(kind: ThreadKind, id: string): void {
   // just left onto this one. The composer's switcher fills it from the server.
   chatModel.set(openedChat(chat))
 
-  client = new StreamClient(chat, {
-    // Each connection rebuilds the loaded range without duplicating live items.
-    onOpen: () => {
-      if (session !== _session) return
-      _connection++
-      _replaying = true; _replayEvents = []
-      chatHistory.update(s => ({ ...s, loading: true, loadingOlder: false, error: '' }))
-    },
-    onEvent: (ev) => {
-      if (session !== _session) return
-      _inspect(ev)
-      if (_suppressStream) return
-      if (!_replaying && ev.type.endsWith('.CardInstanceSaved') && typeof ev.data.path === 'string') refreshFiles(ev.data.path)
-      if (_replaying) { _replayEvents.push(ev); return }
-      _historyEvents.push(ev)
-      thread.update((t) => { foldEvent(t.items, ev); return { ...t, items: t.items, busy: isBusy(t.items) } })
-    },
-    // Replay complete → atomically adopt the freshly-rebuilt buffer as the timeline.
-    onReady: (frame) => {
-      if (session !== _session || !_replaying) return
-      _replaying = false
-      _historyEvents = _replayEvents; _replayEvents = []
-      thread.update(t => {
-        const items = projectHistory(_historyEvents, t.items)
-        return { ...t, items, busy: frame.busy ?? isBusy(items) }
-      })
-      chatHistory.set({ chat, loading: false, loadingOlder: false, error: '',
-        before: frame.history?.before ?? null, start: frame.history?.start ?? null })
-    },
-    onTurnEnd: () => thread.update((t) => ({ ...t, busy: false })),
-    // Fed into the turn already running: show it straight away (marked queued) so the
-    // wait for the agent to reach its next step isn't silent.
-    onQueued: (m) => thread.update((t) => {
-      queueMessage(t.items, m.text ?? '')
-      return { ...t, items: t.items, busy: true }
-    }),
-    onError: (m) => thread.update((t) => {
-      t.items.push({ id: nextItemId(), kind: 'note', icon: 'x', text: m.message || 'error', alert: true })
-      return { ...t, busy: false }
-    }),
-  }, () => {
-    const start = get(chatHistory).start
-    return '/stream?chat=' + encodeURIComponent(chat) + '&history_limit=10' +
-      (start ? '&history_from=' + encodeURIComponent(start) : '')
-  }).connect()
+  watchChat(chat, session, true)
 
   if (kind === 'run') {
     _markedSeen = false
@@ -149,10 +111,99 @@ export function openThread(kind: ThreadKind, id: string): void {
   }
 }
 
-export function send(text: string, attachments: AttachmentPayload[] = []): void {
-  if (!client || (!text.trim() && !attachments.length)) return
-  thread.update((t) => ({ ...t, busy: true }))
+// Subscribe to the chat's events outside a run. Every (re)connect reloads the latest
+// page when `reload` (a run's end re-subscribes without it: the run already showed them).
+function watchChat(chat: string, session: number, reload: boolean): void {
+  let first = reload
+  watch = new ChatWatch(chat, {
+    onOpen: () => {
+      if (session !== _session) return
+      if (!first) { first = true; return }   // later connects have missed events
+      _connection++
+      _ready = false; _buffer = []
+      void loadLatest(chat, session)
+    },
+    onEvent: (event) => {
+      if (session !== _session) return
+      if (!_ready) _buffer.push(event)
+      else apply(event)
+    },
+  })
+}
+
+// Fold the chat's latest page, then the live events that came in while it loaded.
+async function loadLatest(chat: string, session: number): Promise<void> {
+  const connection = _connection
+  chatHistory.update(s => ({ ...s, loading: true, loadingOlder: false, error: '' }))
+  try {
+    const page = await api.chatEvents(chat)
+    if (session !== _session || connection !== _connection) return
+    _historyEvents = page.events as BaseEvent[]
+    _fold = new AguiState()
+    thread.update(t => ({ ...t, items: projectHistory(_historyEvents, t.items, _fold) }))
+    chatHistory.set({ chat, loading: false, loadingOlder: false, error: '', before: page.before, start: page.start })
+  } catch (error) {
+    if (session !== _session || connection !== _connection) return
+    chatHistory.update(s => ({ ...s, loading: false, error: errText(error) }))
+  }
+  _ready = true
+  const buffered = _buffer
+  _buffer = []
+  for (const event of buffered) apply(event)
+}
+
+// Fold one live event into the thread and track whether a run is in flight.
+function apply(event: BaseEvent): void {
+  const ev = event as unknown as Record<string, any>
+  _inspect(ev.type === 'CUSTOM' ? { type: ev.name, data: ev.value ?? {} } : { type: 'ag-ui.' + ev.type, data: ev })
+  if (_suppressStream) return
+  if (ev.type === 'CUSTOM' && String(ev.name).endsWith('.CardInstanceSaved') && typeof ev.value?.path === 'string') refreshFiles(ev.value.path)
+  _historyEvents.push(event)
+  const running = runningAfter(event)
+  thread.update((t) => {
+    foldAgui(t.items, event, _fold)
+    return { ...t, items: t.items, busy: running ?? t.busy }
+  })
+}
+
+// Run a turn, or answer the Inquiry that ended the last run. The subscription is closed for
+// the run's length: the run carries the same events, so nothing is shown twice.
+function startRun(input: RunInput): void {
   const t = get(thread)
+  if (!t.chat) return
+  const { chat } = t
+  const session = _session
+  watch?.close(); watch = null
+  stopRun?.()
+  thread.update((x) => ({ ...x, busy: true }))
+  const finish = (): void => {
+    if (session !== _session) return
+    stopRun = null
+    thread.update((x) => ({ ...x, busy: false }))
+    if (!watch) watchChat(chat, session, false)
+  }
+  stopRun = runChat(chat, input, {
+    onEvent: (event) => {
+      if (session !== _session) return
+      const ev = event as unknown as Record<string, any>
+      for (const interrupt of ev.outcome?.interrupts ?? []) _interrupts.add(interrupt.id)
+      apply(event)
+    },
+    onError: (error) => {
+      if (session !== _session) return
+      thread.update((x) => {
+        x.items.push({ id: nextItemId(), kind: 'note', icon: 'x', text: errText(error), alert: true })
+        return { ...x, items: x.items }
+      })
+      finish()
+    },
+    onEnd: finish,
+  })
+}
+
+export function send(text: string, attachments: AttachmentPayload[] = []): void {
+  const t = get(thread)
+  if (!t.chat || (!text.trim() && !attachments.length)) return
   // A model chosen before this chat existed rides the message that creates it; empty
   // for every other turn, whose override the server already resolves (ADR 0025).
   let model = ''
@@ -162,7 +213,8 @@ export function send(text: string, attachments: AttachmentPayload[] = []): void 
     chatModel.set(next.state)
     model = next.model
   }
-  client.send(text, attachments, model)
+  if (t.busy) feed(t.chat, text, attachments, model)
+  else startRun({ text, attachments, model })
   // Surface a brand-new chat in the drawer immediately — the chats list is
   // only persisted server-side once the first turn completes (which can take a
   // while). The drawer poll merges this until the server reports it for real.
@@ -185,18 +237,47 @@ export function send(text: string, attachments: AttachmentPayload[] = []): void 
   }
 }
 
-// Stop the running turn. Stays busy until the server confirms — the turn ends when
-// the TurnCancelled event lands (or turn_end arrives), not when we ask.
-export function stop(): void {
-  if (client) client.cancel()
+// Steer the running turn: show the message queued at once, since the agent only echoes it
+// when it next drains its inbox. A turn that has already ended runs it as a new one.
+function feed(chat: string, text: string, attachments: AttachmentPayload[], model: string): void {
+  let queued: ThreadItem | undefined
+  if (text) thread.update((x) => { queueMessage(x.items, text); queued = x.items.at(-1); return { ...x, items: x.items } })
+  api.feedChat(chat, text, attachments.length ? attachments : undefined)
+    .then(({ fed }) => {
+      if (fed || get(thread).chat !== chat) return
+      thread.update((x) => ({ ...x, items: x.items.filter((i) => i !== queued) }))
+      startRun({ text, attachments, model })
+    })
+    .catch((error) => {
+      thread.update((x) => {
+        x.items.push({ id: nextItemId(), kind: 'note', icon: 'x', text: errText(error), alert: true })
+        return { ...x, items: x.items.filter((i) => i !== queued) }
+      })
+    })
 }
 
+// Stop the running turn. Stays busy until the server confirms — the run ends when
+// the TurnCancelled event lands, not when we ask.
+export function stop(): void {
+  const { chat } = get(thread)
+  if (chat) api.cancelChat(chat).catch((error) => console.warn('[chat] cancel failed', error))
+}
+
+// An Inquiry that ended the last run is answered by resuming it; any other one (a task's,
+// or one raised outside a run) is answered over REST. Either way the first answer wins.
 export function answer(inquiryId: string, text: string): void {
-  if (client) client.answer(inquiryId, text)
+  if (_interrupts.delete(inquiryId)) {
+    startRun({ interruptId: inquiryId, answer: text })
+    return
+  }
+  api.answerInquiry(inquiryId, text)
+    .catch(() => api.answerHitl(inquiryId, text))
+    .catch((error) => console.warn('[chat] answer failed', error))
 }
 
 export function a2uiAction(message: unknown, state?: A2UISurfaceState): void {
-  if (client) client.a2ui(message, state)
+  const { chat } = get(thread)
+  if (chat) api.chatA2ui(chat, message, state).catch((error) => console.warn('[chat] a2ui action failed', error))
 }
 
 // The stable id/kind of the rated item plus the context the learner distils from.
@@ -211,13 +292,15 @@ export type FeedbackTarget = {
 
 // Send 👍/👎 + a (mandatory) reason on a generated item.
 export function feedback({ targetKind, targetId, sentiment, reason, content = '', request = '' }: FeedbackTarget): void {
-  if (client) client.feedback({ target_kind: targetKind, target_id: targetId, sentiment, reason, content, request })
+  const { chat } = get(thread)
+  if (chat) api.rateChat(chat, { target_kind: targetKind, target_id: targetId, sentiment, reason, content, request }).catch((error) => console.warn('[chat] feedback failed', error))
 }
 
 // Retract a rating (toggle the 👍/👎 off). Clears only the visible thumb — the server
 // emits FeedbackCleared and runs no learner, so learned memory is left untouched.
 export function clearFeedback({ targetKind, targetId }: Pick<FeedbackTarget, 'targetKind' | 'targetId'>): void {
-  if (client) client.clearFeedback({ target_kind: targetKind, target_id: targetId })
+  const { chat } = get(thread)
+  if (chat) api.clearChatRating(chat, { target_kind: targetKind, target_id: targetId }).catch((error) => console.warn('[chat] clear feedback failed', error))
 }
 
 export function closeThread(): void {
@@ -225,7 +308,9 @@ export function closeThread(): void {
   chatHistory.set({ chat: null, loading: false, loadingOlder: false, error: '', before: null, start: null })
   if (voiceCtl) { voiceCtl.stop(); voiceCtl = null }  // _voiceEnded's reload is guarded out on nav
   _voiceActive = false; _vitem = null; _vrole = null
-  if (client) { client.close(); client = null }
+  if (watch) { watch.close(); watch = null }
+  if (stopRun) { stopRun(); stopRun = null }
+  _ready = false; _buffer = []
   if (panelTimer) { clearInterval(panelTimer); panelTimer = null }
 }
 
@@ -233,7 +318,7 @@ export function closeThread(): void {
 // clean without a page reload. Any store keyed to the active profile MUST be reset
 // here; install-wide stores (llmConfigs, foldersStore, permissions) are left alone.
 function resetProfileState(): void {
-  closeThread()                                        // WS + panel timer + voice
+  closeThread()                                        // streams + panel timer + voice
   thread.set({ id: null, kind: 'chat', chat: '', items: [], busy: false })
   chatModel.set(NO_CHAT_MODEL)
   chats.set([])
@@ -247,7 +332,7 @@ function resetProfileState(): void {
 }
 
 // Switch the active profile in place (no reload → the Settings modal doesn't blink).
-// Adopt the pid + accent before the route change so the new chat's WebSocket scopes
+// Adopt the pid + accent before the route change so the new chat's streams scope
 // to it; go('/') lands on the profile's home and preserves the hash. On any failure
 // fall back to a full-page nav.
 export function switchProfile(pid: string): void {

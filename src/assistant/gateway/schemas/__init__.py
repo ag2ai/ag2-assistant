@@ -15,6 +15,7 @@ what its own schema omits, and on the per-phase body tests — not on letting
 undeclared keys through.
 """
 
+from .agui import FeedResponse
 from .chat import (
     ChatListResponse,
     ChatRowOut,
@@ -176,6 +177,7 @@ from .task import (
 )
 
 __all__ = [
+    "FeedResponse",
     "AssistantModelOut",
     "CompactionSavedResponse",
     "CatalogModelOut",

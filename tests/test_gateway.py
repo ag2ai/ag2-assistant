@@ -8,6 +8,7 @@ around a ``ProfileManager`` with one profile and routes live under
 
 import asyncio
 import base64
+from concurrent.futures import ThreadPoolExecutor
 
 import ag2.testing
 import pytest
@@ -31,8 +32,9 @@ from assistant.codex_auth import CodexAuth
 from assistant.config import Config, load_config, write_yaml
 from assistant.connections import ConnectionStore
 from assistant.events import Attachment, TurnCancelled
-from assistant.gateway.app import _allowed_origins, _decode_attachments, _origin_ok, create_app
+from assistant.gateway.app import _allowed_origins, _origin_ok, create_app
 from assistant.gateway.core import Gateway
+from assistant.gateway.uploads import decode_attachments
 from assistant.hitl import GatewayAsker, HitlServer
 from assistant.hitl.base import Question
 from assistant.llm_configs import TYPES, LlmConfigStore
@@ -42,6 +44,7 @@ from assistant.permissions import DENY
 from assistant.profiles import ProfileRegistry
 from assistant.secrets import SecretStore
 from tests.support.apps import api, make_manager, make_profile_app, write_codex_session
+from tests.support.chat import run, run_input, wait_for
 from tests.support.fakes import (
     FakeAgent,
     FakeReply,
@@ -620,23 +623,21 @@ def test_fs_mkdir_rejects_unreadable_parent(paths, tmp_path):
         assert r.json()["error"] == "not a readable directory"
 
 
-def test_stream_roundtrip(profile_app):
-    """The stream WebSocket replays history (ready) then runs a turn (turn_end)."""
+def test_run_roundtrip(profile_app):
+    """An AG-UI run opens with RUN_STARTED and ends with a successful RUN_FINISHED."""
     client, pid = profile_app
-    with client.websocket_connect(api(pid, "/stream?chat=w1")) as ws:
-        assert ws.receive_json()["type"] == "ready"
-        ws.send_json({"text": "ping"})
-        assert ws.receive_json()["type"] == "turn_end"
+    events = run(client, pid, "w1", text="ping")
+    assert events[0]["type"] == "RUN_STARTED"
+    assert events[-1]["type"] == "RUN_FINISHED"
+    assert events[-1]["outcome"]["type"] == "success"
 
 
-def test_stream_unknown_profile_ws_closed(profile_app):
-    """A stream WS on an unknown pid is closed before accept (code 4404)."""
+def test_run_on_an_unknown_profile_is_refused(profile_app):
+    """A run on an unknown pid never reaches a gateway."""
 
     client, _pid = profile_app
-    with pytest.raises(WebSocketDisconnect) as exc:
-        with client.websocket_connect(api("ghost", "/stream?chat=x")) as ws:
-            ws.receive_json()
-    assert exc.value.code == 4404
+    response = client.post(api("ghost", "/chats/x/agui"), json=run_input(text="hi", chat="x"))
+    assert response.status_code == 404
 
 
 # --- static / redirects ---
@@ -697,17 +698,17 @@ async def test_hitl_routes_served_by_gateway(paths):
             assert missing.status_code == 404
 
 
-def test_decode_attachments():
+def testdecode_attachments():
 
     data = base64.b64encode(b"hello").decode()
-    out = _decode_attachments([{"name": "a.png", "mime": "image/png", "data": data}])
+    out = decode_attachments([{"name": "a.png", "mime": "image/png", "data": data}])
     assert len(out) == 1
-    assert _decode_attachments(None) == []
-    assert _decode_attachments([{"name": "x.png", "data": ""}]) == []  # empty → skipped
+    assert decode_attachments(None) == []
+    assert decode_attachments([{"name": "x.png", "data": ""}]) == []  # empty → skipped
 
 
-def test_stream_timeout_sends_error_frame(paths):
-    """A turn that exceeds the configured reply timeout surfaces an error frame on the stream WS."""
+def test_run_timeout_ends_the_run_with_an_error(paths):
+    """A turn that exceeds the configured reply timeout ends its run with RUN_ERROR."""
 
     class _HangAgent(FakeRunMixin):
         tools = []
@@ -718,36 +719,27 @@ def test_stream_timeout_sends_error_frame(paths):
     write_yaml(paths.config_yaml, {"gateway": {"reply_timeout_s": 0.2}})
     app, pid = make_profile_app(paths, agent_factory=fake_agent_factory(_HangAgent()))
     with TestClient(app) as client:
-        with client.websocket_connect(api(pid, "/stream?chat=s1")) as ws:
-            while ws.receive_json().get("type") != "ready":
-                pass
-            ws.send_json({"text": "slow"})
-            saw_error = False
-            for _ in range(5):
-                m = ws.receive_json()
-                if m.get("type") == "error":
-                    saw_error = True
-                    break
-                if m.get("type") == "turn_end":
-                    break
-            assert saw_error
+        events = run(client, pid, "s1", text="slow")
+        assert events[-1]["type"] == "RUN_ERROR"
 
 
-def test_stream_cancel_stops_the_turn(paths):
-    """A `cancel` frame stops the running turn: AG2 propagates the cancellation into
-    the run, a TurnCancelled event comes back out on the stream, and the turn ends."""
+def test_cancel_stops_the_turn(paths):
+    """Cancelling stops the running turn: AG2 propagates the cancellation into the run,
+    a TurnCancelled event comes back out on the stream, and the run ends."""
 
     class _HangAgent(FakeRunMixin):
         tools = []
 
         def __init__(self):
             self.cancelled = False
+            self.started = False
 
         async def ask(self, *a, stream=None, **k):
             try:
                 await ConversationContext(stream=stream).send(
                     ModelResponse(message=ModelMessage(content="Working"))
                 )
+                self.started = True
                 await asyncio.Event().wait()  # runs until someone stops it
             except asyncio.CancelledError:
                 self.cancelled = True
@@ -756,22 +748,15 @@ def test_stream_cancel_stops_the_turn(paths):
     agent = _HangAgent()
     app, pid = make_profile_app(paths, agent_factory=fake_agent_factory(agent))
     with TestClient(app) as client:
-        with client.websocket_connect(api(pid, "/stream?chat=s1")) as ws:
-            while ws.receive_json().get("type") != "ready":
-                pass
-            ws.send_json({"text": "something long"})
-            while not ws.receive_json().get("event", {}).get("type", "").endswith("ModelResponse"):
-                pass
-            ws.send_json({"type": "cancel"})
-            saw_cancelled = False
-            for _ in range(8):
-                m = ws.receive_json()
-                if m.get("event", {}).get("type", "").endswith("TurnCancelled"):
-                    saw_cancelled = True
-                if m.get("type") == "turn_end":
-                    break
-            assert saw_cancelled
-            assert agent.cancelled  # the cancel reached the turn itself, not just the socket
+        with ThreadPoolExecutor() as pool:
+            running = pool.submit(run, client, pid, "s1", text="something long")
+            gateway = app.state.profiles.get(pid).require_gateway()
+            wait_for(lambda: gateway.is_running("s1") and agent.started)
+            assert client.post(api(pid, "/chats/s1/cancel")).json() == {"ok": True}
+            events = running.result(timeout=10)
+        assert any(e["type"] == "CUSTOM" and e["name"].endswith("TurnCancelled") for e in events)
+        assert events[-1]["type"] == "RUN_FINISHED"
+        assert agent.cancelled  # the cancel reached the turn itself, not just the request
 
 
 async def test_feed_message_steers_the_running_turn(paths):
@@ -962,15 +947,19 @@ def test_cross_origin_requests_rejected(paths):
         # cross-origin WebSocket handshake is closed before accept()
         with pytest.raises(WebSocketDisconnect):
             with client.websocket_connect(
-                api(pid, "/stream?chat=x"), headers={"origin": "http://evil.example"}
+                api(pid, "/voice?chat=x"), headers={"origin": "http://evil.example"}
             ) as ws:
                 ws.receive_json()
 
-        # same-origin WebSocket still connects and replays history
-        with client.websocket_connect(
-            api(pid, "/stream?chat=y"), headers={"origin": "http://testserver"}
-        ) as ws:
-            assert ws.receive_json()["type"] == "ready"
+        # a cross-origin run is refused like any other cross-origin request
+        assert (
+            client.post(
+                api(pid, "/chats/y/agui"),
+                json=run_input(text="hi", chat="y"),
+                headers={"origin": "http://evil.example"},
+            ).status_code
+            == 403
+        )
 
 
 # --- POST /api/identity: seed the universal doc from web onboarding ---------- #

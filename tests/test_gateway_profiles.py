@@ -6,10 +6,10 @@ touches an LLM.
 """
 
 import json
+import time
+from concurrent.futures import ThreadPoolExecutor
 
-import pytest
 from fastapi.testclient import TestClient
-from starlette.websockets import WebSocketDisconnect
 
 from assistant import AG2_VERSION, __version__
 from assistant.gateway.app import create_app
@@ -306,22 +306,25 @@ def test_purge_unknown_404(paths):
 # --- WS close on archive (§4.9) ---
 
 
-def test_stream_ws_closed_4001_on_archive(paths):
-    """An open /stream socket is closed with code 4001 when its profile is archived."""
+def test_agui_subscription_ends_on_archive(paths):
+    """An open AG-UI subscription is ended when its profile is archived."""
 
     with TestClient(_app(paths)) as client:
         client.post("/api/profiles", json={"name": "Work", "accent": "#109e91"})
         client.post("/api/profiles", json={"name": "Personal", "accent": "#f95339"})
 
-        with client.websocket_connect(api("work", "/stream?chat=w1")) as ws:
-            assert ws.receive_json()["type"] == "ready"
-            # archive work from under the open socket
+        with ThreadPoolExecutor() as pool:
+
+            def subscribe():
+                with client.stream("GET", api("work", "/chats/w1/agui/events")) as response:
+                    return response.status_code, list(response.iter_lines())
+
+            open_stream = pool.submit(subscribe)
+            time.sleep(0.5)
+            # archive work from under the open subscription
             client.request("DELETE", "/api/profiles/work", json={"new_default": "personal"})
-            with pytest.raises(WebSocketDisconnect) as exc:
-                # the next receive observes the server-side close
-                while True:
-                    ws.receive_json()
-            assert exc.value.code == 4001
+            status, _lines = open_stream.result(timeout=10)
+        assert status == 200
 
 
 # --- /api/status aggregate ---
