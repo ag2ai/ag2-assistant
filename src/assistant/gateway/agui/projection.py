@@ -45,6 +45,7 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 
+from assistant.attachments import INLINED_FILE_PREFIX
 from assistant.events import A2UISurface, AssistantEvent
 from assistant.gateway.history import event_cursor
 
@@ -163,7 +164,11 @@ class Projector:
         return f"msg-{self._anchor[:16]}"
 
     def _user_message(self, event: ModelRequest) -> list[Event]:
-        text = "\n".join(p.content for p in event.parts if isinstance(p, TextInput)).strip()
+        text = "\n".join(
+            p.content
+            for p in event.parts
+            if isinstance(p, TextInput) and not p.content.startswith(INLINED_FILE_PREFIX)
+        ).strip()
         if not text or text.startswith(_PRIVATE_PREFIX):
             return []
         message_id = f"usr-{event_cursor(event)[:16]}"

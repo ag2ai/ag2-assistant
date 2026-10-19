@@ -82,6 +82,7 @@ _TEXT_SUFFIXES = {
     ".sh",
 }
 _MAX_TEXT_CHARS = 50_000
+INLINED_FILE_PREFIX = "Attached file "
 
 _IMAGE_TYPES = frozenset(get_args(_ImageType))
 _AUDIO_TYPES = frozenset(get_args(_AudioType))
@@ -147,7 +148,7 @@ def build_input(data: bytes, filename: str, media_type: str | None = None):
             text = data.decode("utf-8", errors="replace")[:_MAX_TEXT_CHARS]
         except Exception:
             text = ""
-        return TextInput(f"Attached file {filename!r}:\n\n{text}")
+        return TextInput(f"{INLINED_FILE_PREFIX}{filename!r}:\n\n{text}")
 
     # A nameless pasted/dropped file carries a media type but no ".ext".
     if _is_image_type(mime):

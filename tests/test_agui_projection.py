@@ -19,6 +19,7 @@ from ag2.events import (
 )
 from ag_ui.core import Event, EventType
 
+from assistant.attachments import build_input
 from assistant.events import A2UISurface, TaskCreated
 from assistant.gateway.agui import A2UI_ACTIVITY_TYPE, Projector, project
 
@@ -140,6 +141,14 @@ def _is_request(event: BaseEvent, text: str) -> bool:
 
 def test_a_button_instruction_is_not_shown_as_a_user_message():
     assert project([_user("[[A2UI_ACTION]] do it")]) == []
+
+
+def test_a_text_file_inlined_for_the_model_is_not_shown_in_the_user_message():
+    request = ModelRequest(
+        [TextInput("look"), build_input(b'{"a": 1}', "data.json", "application/json")]
+    )
+    said = [e.delta for e in project([request]) if e.type == EventType.TEXT_MESSAGE_CONTENT]
+    assert said == ["look"]
 
 
 def test_a_surface_becomes_an_a2ui_activity():
