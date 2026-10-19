@@ -259,6 +259,8 @@ class Gateway:
         self.card_sources = CardSources(self._config_factory, self)
         # chat_id -> the turn currently running on it (feed_message / cancel_turn)
         self._active: dict[str, _ActiveTurn] = {}
+        # chat_id -> streamed chunks of the model message still being written
+        self._streaming: dict[str, list[ModelMessageChunk]] = {}
         self._invocations: set[asyncio.Task] = set()
         self._background: set[asyncio.Task] = set()
         self._closing = False
@@ -577,6 +579,10 @@ class Gateway:
             return current
         return await self._writer.replay(chat_id, current, self._chat_archive())  # type: ignore[arg-type]
 
+    def streaming_chunks(self, chat_id: str) -> list[ModelMessageChunk]:
+        """The chunks of the model message being written now, which the log never keeps."""
+        return list(self._streaming.get(chat_id, ()))
+
     def is_running(self, chat_id: str = "default") -> bool:
         """Whether a turn is in flight on this chat — what a message sent now would be
         fed into rather than starting a second one."""
@@ -670,6 +676,14 @@ class Gateway:
                 self._chat_activity[chat_id].observe(event)
 
             stream.subscribe(observe)
+
+            async def collect_chunks(event):
+                if isinstance(event, ModelMessageChunk):
+                    self._streaming.setdefault(chat_id, []).append(event)
+                else:
+                    self._streaming.pop(chat_id, None)
+
+            stream.subscribe(collect_chunks, condition=ModelMessageChunk | ModelResponse)
         if self._writer is not None and chat_id not in self._active:
             raw = None
             try:
@@ -1066,6 +1080,7 @@ class Gateway:
                     return reply.body
                 finally:
                     self._active.pop(chat_id, None)
+                    self._streaming.pop(chat_id, None)
                     if a2ui_handle is not None:
                         self._unwatch_a2ui(stream, a2ui_handle)
                     self._record_usage(

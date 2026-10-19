@@ -97,6 +97,7 @@ class ChatListener:
         self._stream: Any = None
         self._sub: Any = None
         self.projector = Projector()
+        self.written: list[Event] = []
 
     def feed(self, event: BaseEvent) -> list[Event]:
         """The AG-UI events ``event`` becomes, with Cards expanded as a client draws them."""
@@ -110,6 +111,9 @@ class ChatListener:
         for event in await self._gateway.replay_events(self._chat_id):
             self._seen.add(event_cursor(event))
             self.feed(event)
+        for chunk in self._gateway.streaming_chunks(self._chat_id):
+            self._seen.add(event_cursor(chunk))
+            self.written += self.feed(chunk)
         return self
 
     async def __aexit__(self, *exc: object) -> None:
@@ -231,6 +235,8 @@ class ChatRuns:
             if gateway.is_running(chat_id):
                 run_id = uuid.uuid4().hex
                 yield started(chat_id, run_id)
+                for out in listener.written:
+                    yield out
             while stop is None or not stop.is_set():
                 event = await listener.next()
                 if event is None:

@@ -185,3 +185,48 @@ def test_an_uploaded_file_reaches_the_run_stream_once_before_the_user_message(pa
     assert len(stored) == 1
     kinds = [e["name"] for e in live if e["type"] == "CUSTOM"]
     assert kinds[0].endswith("Attachment")
+
+
+class _Chunked(FakeRunMixin):
+    """A turn that streams half a reply, waits, then streams the rest."""
+
+    tools: list = []
+
+    def __init__(self, gate):
+        self.gate = gate
+
+    async def ask(self, *msg, stream, **kwargs):
+        context = ConversationContext(stream=stream)
+        await context.send(ModelRequest.ensure_request([msg[0]]))
+        await context.send(ModelMessageChunk("Hello "))
+        await context.send(ModelMessageChunk("wor"))
+        await self.gate.wait()
+        await context.send(ModelMessageChunk("ld"))
+        await context.send(ModelResponse(message=ModelMessage("Hello world")))
+        return FakeReply("Hello world")
+
+
+async def test_a_client_joining_mid_stream_gets_the_text_written_so_far(paths):
+    gateway = await _gateway(paths, _Chunked(asyncio.Event()))
+    gate = gateway.require_agent().gate
+    runs = ChatRuns()
+    text: list[str] = []
+
+    async def collect():
+        async for event in runs.watch(gateway, "c1"):
+            if event.type == "TEXT_MESSAGE_CONTENT":
+                text.append(event.delta)
+            if event.type == "RUN_FINISHED":
+                return
+
+    try:
+        turn = asyncio.ensure_future(gateway.send_message("hi", chat_id="c1"))
+        await asyncio.sleep(0.2)
+        watcher = asyncio.ensure_future(collect())
+        await asyncio.sleep(0.2)
+        gate.set()
+        await turn
+        await asyncio.wait_for(watcher, 5)
+    finally:
+        await gateway.close()
+    assert "".join(text) == "Hello world"
