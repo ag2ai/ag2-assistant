@@ -1,6 +1,7 @@
 """The AG-UI endpoints: a run is a POST answered with SSE; an Inquiry ends it as an interrupt."""
 
 import asyncio
+import base64
 
 from ag2.context import ConversationContext
 from ag2.events import ModelMessage, ModelMessageChunk, ModelRequest, ModelResponse
@@ -11,7 +12,7 @@ from assistant.config import Config
 from assistant.gateway.agui.session import ChatRuns, TurnRequest
 from assistant.gateway.core import Gateway
 from tests.support.apps import api, make_profile_app
-from tests.support.chat import run, run_input
+from tests.support.chat import logged, run, run_input
 from tests.support.fakes import FakeReply, FakeRunMixin, fake_agent_factory
 
 
@@ -166,3 +167,21 @@ async def test_a_client_leaving_mid_run_does_not_stop_the_turn(paths):
         await gateway.close()
     assert not gateway.is_running("c1")
     assert any(getattr(event, "content", "") == "finished anyway" for event in events)
+
+
+def _attachment_events(events):
+    return [e for e in events if e["type"] == "CUSTOM" and e["name"].endswith("Attachment")]
+
+
+def test_an_uploaded_file_reaches_the_run_stream_once_before_the_user_message(paths):
+    app, pid, box = make_client(paths)
+    upload = {"name": "pic.png", "mime": "image/png", "data": base64.b64encode(b"png").decode()}
+    with TestClient(app) as client:
+        box["value"] = app.state.profiles.get(pid)
+        live = run(client, pid, text="look", props={"attachments": [upload]})
+        history = logged(client, app, pid)
+    assert len(_attachment_events(live)) == 1
+    stored = [e for e in history if e["type"].endswith("Attachment")]
+    assert len(stored) == 1
+    kinds = [e["name"] for e in live if e["type"] == "CUSTOM"]
+    assert kinds[0].endswith("Attachment")

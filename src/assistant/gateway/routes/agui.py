@@ -23,7 +23,6 @@ from assistant.a2ui import A2UI_SERVER_ACTIONS
 from assistant.events import (
     A2UIActionSubmitted,
     A2UISurfaceDataUpdated,
-    Attachment,
     FeedbackCleared,
     FeedbackGiven,
 )
@@ -111,14 +110,11 @@ def build_profile_router(d: GatewayDeps, get_runtime, *, surfaces: Mapping[str, 
                 "source_image set to its path; to read an uploaded document, "
                 "read_file that path."
             )
-        for path, name in saved:
-            with contextlib.suppress(Exception):
-                await runtime.require_gateway().emit_event(chat_id, Attachment(path, name=name))
         return TurnRequest(
             text=text,
             attachments=attachments,
             surface=surface,
-            attachment_names=tuple(name for _, name in saved),
+            uploads=tuple(saved),
             chat_model=str(props.get("model") or ""),
         )
 

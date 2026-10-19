@@ -26,7 +26,7 @@ from ag_ui.core import (
     TextPart,
 )
 
-from assistant.events import InquiryRaised
+from assistant.events import Attachment, InquiryRaised
 from assistant.gateway.agui.projection import Projector
 from assistant.gateway.history import event_cursor
 from assistant.gateway.wire import as_drawn
@@ -44,7 +44,7 @@ class TurnRequest:
     asker: Any = None
     attachments: list = field(default_factory=list)
     surface: str = ""
-    attachment_names: tuple[str, ...] = ()
+    uploads: tuple[tuple[str, str], ...] = ()
     chat_model: str = ""
 
 
@@ -144,18 +144,23 @@ class ChatRuns:
     def __init__(self) -> None:
         self._turns: set[asyncio.Task] = set()
 
-    def start(self, gateway: Any, chat_id: str, request: TurnRequest) -> asyncio.Task:
-        turn = asyncio.ensure_future(
-            gateway.send_message(
-                request.text,
-                chat_id=chat_id,
-                asker=request.asker,
-                attachments=request.attachments or None,
-                surface=request.surface,
-                attachment_names=request.attachment_names,
-                chat_model=request.chat_model,
-            )
+    async def _turn(self, gateway: Any, chat_id: str, request: TurnRequest) -> Any:
+        """Log the uploaded files, then run the Turn that carries them."""
+        for path, name in request.uploads:
+            with contextlib.suppress(Exception):
+                await gateway.emit_event(chat_id, Attachment(path, name=name))
+        return await gateway.send_message(
+            request.text,
+            chat_id=chat_id,
+            asker=request.asker,
+            attachments=request.attachments or None,
+            surface=request.surface,
+            attachment_names=tuple(name for _, name in request.uploads),
+            chat_model=request.chat_model,
         )
+
+    def start(self, gateway: Any, chat_id: str, request: TurnRequest) -> asyncio.Task:
+        turn = asyncio.ensure_future(self._turn(gateway, chat_id, request))
         self._turns.add(turn)
         turn.add_done_callback(self._ended)
         return turn
