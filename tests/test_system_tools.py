@@ -111,6 +111,14 @@ async def test_legacy_voice_tools_still_update_the_profile_with_a_configured_key
     assert session["audio"]["output"]["voice"] == "cedar"
 
 
+async def test_openai_voice_transcribes_the_users_speech(config):
+    """The thread draws the user's spoken side from transcription events."""
+    config.secret_env = {"OPENAI_API_KEY": "voice-key"}
+    settings = profile_settings(config.data_dir, voice_provider="openai")
+    session = voice_realtime_config(config, settings)._build_session()
+    assert session["audio"]["input"]["transcription"]["model"]
+
+
 def test_origin_is_the_peer_a_chat_was_started_from(paths):
     """The origin is the Connection the conversation arrived on, so the outcome goes
     back out through that bot rather than through whichever one of its platform."""

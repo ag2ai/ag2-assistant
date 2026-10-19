@@ -72,6 +72,7 @@ let _suppressStream = false     // suppress stream folding while voice drives th
                                 // and through the stop→reload window (cleared only by openThread)
 let _vitem: VoiceBubble | null = null
 let _vrole: VoiceRole | null = null
+let _vuser: VoiceBubble | null = null   // the user bubble awaiting its final transcript
 
 // Buffer raw {type,data} events for the AG2 Inspector (bounded ring). The stream
 // already delivers every AG2 event here — we just keep them so the inspector can
@@ -339,7 +340,7 @@ export function closeThread(): void {
   _session++
   chatHistory.set({ chat: null, loading: false, loadingOlder: false, error: '', before: null, start: null })
   if (voiceCtl) { voiceCtl.stop(); voiceCtl = null }  // _voiceEnded's reload is guarded out on nav
-  _voiceActive = false; _vitem = null; _vrole = null
+  _voiceActive = false; _vitem = null; _vrole = null; _vuser = null
   if (watch) { watch.close(); watch = null }
   if (stopRun) { stopRun(); stopRun = null }
   _ready = false; _buffer = []
@@ -393,9 +394,10 @@ function _setBusy(b: boolean): void { thread.update((t) => ({ ...t, busy: b })) 
 function _voiceTranscript(role: VoiceRole, text: string, final: boolean): void {
   thread.update((t) => {
     if (final && role === 'user') {
-      if (_vitem && _vrole === 'user') _vitem.text = text
+      if (_vuser) { if (text.length >= _vuser.text.length) _vuser.text = text }
       else t.items.push({ id: nextItemId(), kind: 'user', text, voice: true })
-      _vitem = null; _vrole = null
+      if (_vrole === 'user') { _vitem = null; _vrole = null }
+      _vuser = null
       return { ...t, items: t.items, busy: true }   // thinking until the agent replies
     }
     if (_vitem && _vrole === role) { _vitem.text += text }
@@ -404,6 +406,7 @@ function _voiceTranscript(role: VoiceRole, text: string, final: boolean): void {
         ? { id: nextItemId(), kind: 'user', text, voice: true }
         : { id: nextItemId(), kind: 'agent', text, voice: true }
       _vitem = bubble
+      if (role === 'user') _vuser = bubble
       t.items.push(bubble); _vrole = role
     }
     return { ...t, items: t.items }
@@ -420,7 +423,7 @@ export async function startVoice(): Promise<void> {
   try { inputRate = (await api.voices()).input_rate || 16000 } catch {}
   // A profile switch while the rate resolved would bind this session to the old chat.
   if (get(profileEpoch) !== epoch) return
-  _voiceActive = true; _suppressStream = true; _vitem = null; _vrole = null
+  _voiceActive = true; _suppressStream = true; _vitem = null; _vrole = null; _vuser = null
   voice.set({ active: true, status: 'connecting' })
   voiceCtl = new VoiceController(query, {
     onState: (s, text) => {
@@ -445,7 +448,7 @@ export async function startVoice(): Promise<void> {
 // showed) doesn't fold in as duplicates, then resume normal folding for any
 // later typed messages. (A real page refresh still loads the canonical history.)
 function _voiceEnded(): void {
-  voiceCtl = null; _voiceActive = false; _vitem = null; _vrole = null
+  voiceCtl = null; _voiceActive = false; _vitem = null; _vrole = null; _vuser = null
   voice.set({ active: false, status: 'off' })
   thread.update((t) => ({ ...t, busy: false }))   // no lingering "thinking…" after hang-up
   setTimeout(() => { _suppressStream = false }, 2000)

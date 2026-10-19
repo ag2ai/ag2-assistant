@@ -581,6 +581,7 @@ def create_app(
         user_buf: list[str] = []
         agent_buf: list[str] = []
         last_role: dict[str, str | None] = {"v": None}  # "user" | "agent"
+        user_chunked = {"v": False}  # the utterance in flight already arrived as chunks
 
         async def _flush_user():
             text = "".join(user_buf).strip()
@@ -660,11 +661,18 @@ def create_app(
                             "role": "agent",
                             "text": e.content,
                         }
-                    else:  # user (chunk or completed)
+                    elif isinstance(e, TranscriptionCompletedEvent) and user_chunked["v"]:
+                        # Chunks already carried this utterance; the completed text only
+                        # closes the bubble (it can land after the agent started).
+                        user_chunked["v"] = False
+                        frame = {"type": "transcript", "role": "user", "text": e.content}
+                        frame["final"] = True
+                    else:  # user chunk, or a completed with no chunks before it
                         if last_role["v"] == "agent":
                             await _flush_agent()  # agent turn ended
                         last_role["v"] = "user"
                         user_buf.append(e.content)
+                        user_chunked["v"] = isinstance(e, TranscriptionChunkEvent)
                         frame = {"type": "transcript", "role": "user", "text": e.content}
                         if isinstance(e, TranscriptionCompletedEvent):
                             frame["final"] = True
