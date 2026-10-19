@@ -27,7 +27,7 @@
     <button class="insp-x" title="Hide AG2 view" aria-label="Hide AG2 view" onclick={closeAside}><Icon name="x" size={16} /></button>
   </div>
   <div class="insp-sub">
-    Live events on this chat's AG2 <code>Stream</code> — the substrate this UI projects.
+    Live AG-UI projection of this chat's AG2 <code>Stream</code>; app events keep their own names.
   </div>
 
   <div class="insp-list">

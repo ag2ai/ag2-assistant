@@ -330,6 +330,7 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
     }
     case 'TaskCreated': {
       const d = EventData.TaskCreated.parse(data)
+      if (items.some((i) => i.kind === 'taskcard' && i.taskId === d.task_id)) break
       items.push({ id: nid(), kind: 'taskcard', taskId: d.task_id, title: d.title, scheduled: d.kind === 'scheduled' })
       break
     }

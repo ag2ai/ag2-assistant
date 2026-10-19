@@ -54,8 +54,20 @@ const APP_EVENT_SUB: Record<string, string> = {
 // What subsystem an event or item belongs to, and whether it is AG2's or ours.
 export type Ag2Tag = { sub: string; label: string; layer: 'ag2' | 'app' }
 
+// AG-UI event type → subsystem, for the projection the inspector shows.
+const AGUI_SUB: Record<string, string> = {
+  TEXT_MESSAGE_START: 'Model', TEXT_MESSAGE_CONTENT: 'Model', TEXT_MESSAGE_END: 'Model',
+  TOOL_CALL_START: 'Tool', TOOL_CALL_ARGS: 'Tool', TOOL_CALL_END: 'Tool', TOOL_CALL_RESULT: 'Tool',
+  SUBAGENT_STARTED: 'Subagent', SUBAGENT_FINISHED: 'Subagent', SUBAGENT_ERROR: 'Subagent',
+  ACTIVITY_SNAPSHOT: 'A2UI', ACTIVITY_DELTA: 'A2UI',
+}
+
 // Describe a wire event for the inspector.
 export function describe(type: string | null | undefined): Ag2Tag {
+  if ((type || '').startsWith('ag-ui.')) {
+    const t = (type as string).slice('ag-ui.'.length)
+    return { sub: AGUI_SUB[t] || 'Stream', label: t, layer: 'app' }
+  }
   const t = tail(type)
   const native = (type || '').startsWith('ag2.')
   const sub = EVENT_SUB[t] || APP_EVENT_SUB[t] || 'Stream'

@@ -140,6 +140,8 @@ async function loadLatest(chat: string, session: number): Promise<void> {
     const page = await api.chatEvents(chat)
     if (session !== _session || connection !== _connection) return
     _historyEvents = page.events as BaseEvent[]
+    inspectorEvents.set([])
+    _historyEvents.forEach(_inspectAgui)
     _fold = new AguiState()
     thread.update(t => ({ ...t, items: projectHistory(_historyEvents, t.items, _fold) }))
     chatHistory.set({ chat, loading: false, loadingOlder: false, error: '', before: page.before, start: page.start })
@@ -153,10 +155,16 @@ async function loadLatest(chat: string, session: number): Promise<void> {
   for (const event of buffered) apply(event)
 }
 
+// Show an AG-UI event in the AG2 Inspector: an assistant event as itself, the rest by AG-UI type.
+function _inspectAgui(event: BaseEvent): void {
+  const ev = event as unknown as Record<string, any>
+  _inspect(ev.type === 'CUSTOM' ? { type: ev.name, data: ev.value ?? {} } : { type: 'ag-ui.' + ev.type, data: ev })
+}
+
 // Fold one live event into the thread and track whether a run is in flight.
 function apply(event: BaseEvent): void {
   const ev = event as unknown as Record<string, any>
-  _inspect(ev.type === 'CUSTOM' ? { type: ev.name, data: ev.value ?? {} } : { type: 'ag-ui.' + ev.type, data: ev })
+  _inspectAgui(event)
   if (_suppressStream) return
   if (ev.type === 'CUSTOM' && String(ev.name).endsWith('.CardInstanceSaved') && typeof ev.value?.path === 'string') refreshFiles(ev.value.path)
   _historyEvents.push(event)

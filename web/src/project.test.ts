@@ -508,3 +508,11 @@ test('a surface from an earlier turn does not silence a later empty reply', () =
 
   assert.equal(itemOfKind(items.at(-1), 'agent').text, '_(no reply)_')
 })
+
+test('TaskCreated twice for one task (create_task, then run_task_now) draws one card', () => {
+  const created: WireEvent = { type: 'assistant.events.TaskCreated', data: { task_id: 't1', title: 'Story', kind: 'task' } }
+  const items: ThreadItem[] = []
+  foldEvent(items, created)
+  foldEvent(items, created)
+  assert.equal(items.filter((i) => i.kind === 'taskcard').length, 1)
+})

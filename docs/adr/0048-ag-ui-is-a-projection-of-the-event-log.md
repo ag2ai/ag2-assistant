@@ -58,4 +58,6 @@ not logged, so the response itself cannot name it), so both give the same ids.
 - `busy` is the run's state (`RUN_STARTED` → `RUN_FINISHED`/`RUN_ERROR`); the subscription opens with a synthesized `RUN_STARTED` when a Turn is already running.
 - An assistant `TEXT_MESSAGE_END` carries `raw_event.created_at`, the log time `FeedbackGiven.target_id` keys on; stored ratings keep working. A subagent error carries `raw_event.status` (`failed`/`cancelled`).
 - A message sent while a Turn runs goes to `POST /feed` and shows queued; `fed: false` runs it as a new Turn. An Inquiry that ended a run is answered by resuming it, any other over REST.
-- Lost by the projection: the "(no reply)" placeholder for an empty reply, and `continues` on a model response.
+- Lost by the projection, accepted: the "(no reply)" placeholder for an empty reply (the turn simply ends without a bubble) and `continues` on a model response (tool chips are grouped by adjacency instead).
+- The AG2 Inspector shows the AG-UI projection (`ag-ui.*`, tagged by subsystem; app events under their own names), filled from the loaded history page and the live events. Raw AG2 events are not sent: that would be a second data path beside the stream. Pages loaded by scrolling up are not added to it.
+- Accepted gap: between a run's end and the subscription reopening (one SSE round trip) an event from a Peer or Task can be missed until the next reconnect, which reloads the latest page.
