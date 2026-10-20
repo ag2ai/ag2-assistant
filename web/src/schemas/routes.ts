@@ -6,6 +6,7 @@
 // so a new route cannot be added without a decision about its schema.
 import type { z } from 'zod'
 import { AcpListener, AcpListenerCreated, AcpListenerList, AcpListenerTokenRotated } from './acp.ts'
+import { FeedResponse } from './agui.ts'
 import { ChatEvents, ChatList, ChatSeen, MessageReply, Transcript } from './chat.ts'
 import { CardSave } from './card.ts'
 import { CardSourceResponse } from './card_source.ts'
@@ -123,6 +124,11 @@ export const ROUTES: Record<string, z.ZodTypeAny> = {
   // Owner's kill switch on a live ACP chat: drops the client, keeps
   // the Chat. 404/409 (not an ACP chat / not live) never reach the zod gate.
   'POST /api/p/{pid}/chats/{chat_id}/acp/close': Ok,
+  'POST /api/p/{pid}/chats/{chat_id}/cancel': Ok,
+  'POST /api/p/{pid}/chats/{chat_id}/feed': FeedResponse,
+  'POST /api/p/{pid}/chats/{chat_id}/feedback': Ok,
+  'POST /api/p/{pid}/chats/{chat_id}/feedback/clear': Ok,
+  'POST /api/p/{pid}/chats/{chat_id}/a2ui': Ok,
   'POST /api/p/{pid}/message': MessageReply,
   'POST /api/p/{pid}/chats/{chat_id}/cards/save': CardSave,
   'GET /api/p/{pid}/tasks': TaskList,
@@ -288,6 +294,8 @@ export const ROUTES: Record<string, z.ZodTypeAny> = {
 
 // No schema by design — the reason is the point of the entry.
 export const UNMAPPED: Record<string, string> = {
+  'POST /api/p/{pid}/chats/{chat_id}/agui': 'text/event-stream — a run as AG-UI events',
+  'GET /api/p/{pid}/chats/{chat_id}/agui/events': 'text/event-stream — a Chat\'s AG-UI events outside a run',
   'GET /api/p/{pid}/files/raw': 'FileResponse — raw file bytes, not JSON',
   'POST /api/p/{pid}/voice/preview': 'audio/wav',
   'GET /api/google/callback': 'HTMLResponse — the OAuth redirect landing page',

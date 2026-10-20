@@ -129,28 +129,7 @@ class ToolChurnObserver(BaseObserver):
 
 
 class SilenceWatchdog:
-    """Fire when the stream goes silent mid-turn — the *absence* of events.
-
-    The event-driven observers (`LoopDetector`, `ToolChurnObserver`) react to
-    events, so a hung LLM call — which emits nothing — slips past them entirely.
-    This watchdog closes that gap: it resets a timer on every stream event and,
-    if `alert_s` seconds pass with no new event during an active turn, emits a
-    CRITICAL `ObserverAlert`. If `halt_s` is set and elapses, it escalates to a
-    FATAL alert (which an `AlertPolicy`-equipped agent turns into a `HaltEvent`,
-    terminating the wedged turn deterministically).
-
-    Scoping to *in-turn* silence is structural, not heuristic: this observer is
-    registered per-turn (its monitor loop starts on `register` and is torn down
-    when the turn's `ExitStack`/`AsyncExitStack` unwinds), so between turns it
-    isn't running at all — a legitimately idle session never trips it.
-
-    The watchdog ignores its own alerts and the observer-lifecycle events when
-    resetting the timer, so a fired CRITICAL alert doesn't keep the clock alive
-    and block the later FATAL escalation.
-
-    `poll_interval_s` and `clock` are injectable so tests can drive silence in
-    milliseconds without real long sleeps.
-    """
+    """Register an independent silence watch for each turn and emit escalating alerts."""
 
     def __init__(
         self,
@@ -166,24 +145,36 @@ class SilenceWatchdog:
         self._halt_s = halt_s if (halt_s and halt_s > 0) else None
         self._poll = poll_interval_s
         self._clock = clock
-        self._ctx: Context | None = None
-        self._sub_id: UUID | None = None
-        self._task: asyncio.Task | None = None
-        self._last = 0.0
-        self._alerted = False
-        self._halted = False
 
     # --- Observer protocol -------------------------------------------------
     def register(self, stack: "ExitStack | AsyncExitStack", context: Context) -> None:
-        self._ctx = context
+        self.arm(stack, context)
+
+    def arm(self, stack: "ExitStack | AsyncExitStack", context: Context) -> "_SilenceWatch":
+        """Start watching `context`'s stream until `stack` unwinds."""
+        watch = _SilenceWatch(self, context)
+        stack.callback(watch.disarm)
+        return watch
+
+
+class _SilenceWatch:
+    """One turn's silence clock, subscription and monitor loop."""
+
+    def __init__(self, owner: SilenceWatchdog, context: Context) -> None:
+        self.name = owner.name
+        self._alert_s = owner._alert_s
+        self._halt_s = owner._halt_s
+        self._clock = owner._clock
+        self._ctx: Context | None = context
         self._last = self._clock()
         self._alerted = False
         self._halted = False
-        self._sub_id = context.stream.subscribe(self._on_event)
-        self._task = asyncio.ensure_future(self._monitor(context.stream))
-        stack.callback(self._disarm)
+        self._sub_id: UUID | None = context.stream.subscribe(self._on_event)
+        self._task: asyncio.Task | None = asyncio.ensure_future(
+            self._monitor(context.stream, owner._poll)
+        )
 
-    def _disarm(self) -> None:
+    def disarm(self) -> None:
         if self._task is not None:
             self._task.cancel()
             self._task = None
@@ -205,10 +196,10 @@ class SilenceWatchdog:
         self._alerted = False
         self._halted = False
 
-    async def _monitor(self, stream) -> None:
+    async def _monitor(self, stream, poll: float) -> None:
         while True:
             try:
-                await asyncio.sleep(self._poll)
+                await asyncio.sleep(poll)
             except asyncio.CancelledError:
                 return
             await self._check(stream)

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte'
-  import { StreamClient } from '../../transport/stream.ts'
+  import { CardSourceSocket } from '../../transport/cardSourceSocket.ts'
   import { api } from '../../transport/api/index.ts'
   import { asComponent, asComponents } from '../../lib/a2ui.ts'
   import { profileEpoch } from '../../store.ts'
@@ -81,7 +81,7 @@
     const epoch = $profileEpoch
     if (!path) return
     let stale = false
-    const stream = new StreamClient('', {
+    const stream = new CardSourceSocket({
       onEvent: event => { if (!stale && epoch === $profileEpoch) sourceEvent(event) },
       onReady: () => {
         void api.cardInstance(path).then(instance => {
@@ -91,7 +91,7 @@
             components: asComponents(message.component._components), data: message.data }
         }).catch(() => {})
       },
-    }, '/card-sources/stream').connect()
+    }).connect()
     return () => { stale = true; stream.close() }
   })
 

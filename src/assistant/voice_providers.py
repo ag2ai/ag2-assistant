@@ -203,6 +203,7 @@ _OPENAI_VOICES = {
     "verse": "Versatile",
 }
 _OPENAI_TTS_MODEL = "gpt-4o-mini-tts"
+_OPENAI_TRANSCRIBE_MODEL = "gpt-4o-mini-transcribe"  # the user's speech as on-screen text
 # OpenAI realtime is natively 24 kHz in/out — the browser captures at this rate.
 _OPENAI_INPUT_RATE = 24000
 
@@ -214,11 +215,12 @@ def _openai_key(api_key: str, config: Config) -> str:
 
 
 def _openai_realtime(config: Config, voice: str, model: str, api_key: str = ""):
-    # Minimal config matching AG2's known-working tool-calling example: model + voice,
-    # everything else (24 kHz audio, semantic-VAD turn detection) left at the defaults.
+    # AG2's tool-calling example config plus input transcription; audio format and
+    # semantic-VAD turn detection stay at the defaults.
     return oai.RealTimeConfig(
         model,
         output=oai.AudioOutput(voice=voice),
+        input=oai.InputConfig(transcription={"model": _OPENAI_TRANSCRIBE_MODEL}),
         client=AsyncOpenAI(api_key=_openai_key(api_key, config)),
     )
 

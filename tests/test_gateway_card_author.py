@@ -9,6 +9,7 @@ from assistant.gateway.app import create_app
 from assistant.profiles import ProfileRegistry
 from tests.support.apps import api, make_manager
 from tests.support.cards import author, card_definition, replay, send
+from tests.support.chat import click, gateway_of, wait_for
 from tests.support.fakes import ScriptedModels
 
 
@@ -117,48 +118,47 @@ def test_ephemeral_inputs_actions_and_links_use_the_ordinary_surface_path(paths)
         event = next(e["data"] for e in replay(client, pid) if e["type"].endswith("EphemeralCard"))
         surface = event["surface_id"]
         program[:] = ["done"]
-        with client.websocket_connect(api(pid, "/stream?chat=drafts")) as ws:
-            while ws.receive_json().get("type") != "ready":
-                pass
-            ws.send_json(
-                {
-                    "type": "a2ui",
-                    "message": {
-                        "version": "v1.0",
-                        "action": {
-                            "name": "save_surface",
-                            "surfaceId": surface,
-                            "sourceComponentId": "root__save",
-                            "timestamp": "2026-10-05T10:00:00Z",
-                            "context": {"data": {"title": "Real", "note": "Kept"}},
-                        },
-                    },
-                    "state": {"surfaceId": surface, "data": {"title": "Real", "note": "Kept"}},
-                }
+        click(
+            client,
+            pid,
+            {
+                "version": "v1.0",
+                "action": {
+                    "name": "save_surface",
+                    "surfaceId": surface,
+                    "sourceComponentId": "root__save",
+                    "timestamp": "2026-10-05T10:00:00Z",
+                    "context": {"data": {"title": "Real", "note": "Kept"}},
+                },
+            },
+            {"surfaceId": surface, "data": {"title": "Real", "note": "Kept"}},
+            chat="drafts",
+        )
+        saved = [e for e in replay(client, pid) if e["type"].endswith("A2UISurfaceDataUpdated")]
+        assert saved[-1]["data"]["data"]["note"] == "Kept"
+        click(
+            client,
+            pid,
+            {
+                "version": "v1.0",
+                "action": {
+                    "name": "apply_note",
+                    "surfaceId": surface,
+                    "sourceComponentId": "root__ask",
+                    "timestamp": "2026-10-05T10:00:00Z",
+                    "context": {"note": "Edited"},
+                },
+            },
+            {"surfaceId": surface, "data": {"title": "Real", "note": "Edited"}},
+            chat="drafts",
+        )
+        wait_for(
+            lambda: any(
+                e["type"].endswith("ModelRequest") and "apply_note" in str(e["data"])
+                for e in replay(client, pid)
             )
-            while True:
-                frame = ws.receive_json()
-                if frame.get("event", {}).get("type", "").endswith("A2UISurfaceDataUpdated"):
-                    assert frame["event"]["data"]["data"]["note"] == "Kept"
-                    break
-            ws.send_json(
-                {
-                    "type": "a2ui",
-                    "message": {
-                        "version": "v1.0",
-                        "action": {
-                            "name": "apply_note",
-                            "surfaceId": surface,
-                            "sourceComponentId": "root__ask",
-                            "timestamp": "2026-10-05T10:00:00Z",
-                            "context": {"note": "Edited"},
-                        },
-                    },
-                    "state": {"surfaceId": surface, "data": {"title": "Real", "note": "Edited"}},
-                }
-            )
-            while ws.receive_json().get("type") != "turn_end":
-                pass
+        )
+        wait_for(lambda: not gateway_of(client.app, pid).is_running("drafts"))
         events = replay(client, pid)
         assert len([e for e in events if e["type"].endswith("EphemeralCard")]) == 1
         assert any(

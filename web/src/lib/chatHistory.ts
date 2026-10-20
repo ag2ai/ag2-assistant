@@ -1,10 +1,11 @@
-import { foldEvent } from '../project.ts'
-import type { ThreadItem, WireEvent } from '../schemas/events.ts'
+import type { AguiEvent } from '../schemas/agui.ts'
+import { AguiState, foldAgui } from '../projectAgui.ts'
+import type { ThreadItem } from '../schemas/events.ts'
 
 /** Rebuild loaded events while preserving mounted items and nested traces. */
-export function projectHistory(events: WireEvent[], previous: ThreadItem[]): ThreadItem[] {
+export function projectHistory(events: AguiEvent[], previous: ThreadItem[], state = new AguiState()): ThreadItem[] {
   const items: ThreadItem[] = []
-  for (const event of events) foldEvent(items, event)
+  for (const event of events) foldAgui(items, event, state)
   preserveIds(items, previous)
   for (const old of previous) {
     if ((old.kind !== 'user' && old.kind !== 'agent') || (!old.voice && !(old.kind === 'user' && old.queued))) continue
@@ -20,6 +21,7 @@ function identity(item: ThreadItem): string {
   if (item.kind === 'a2ui') return 'a2ui:' + item.surfaceId
   if (item.kind === 'inquiry') return 'inquiry:' + item.inquiryId
   if (item.kind === 'subagent') return 'subagent:' + item.taskId
+  if (item.msg) return 'msg:' + item.msg
   return item.kind + ':' + (item.at ?? ('text' in item ? item.text : JSON.stringify(item)))
 }
 

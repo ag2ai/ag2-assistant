@@ -18,6 +18,7 @@ from assistant.agent import resolve_a2ui_skill
 from assistant.config import Config
 from assistant.skills import FilteredSkillRuntime
 from tests.support.apps import api
+from tests.support.chat import logged
 
 # One minimal Card: a title drawn in a Card, which is the smallest file that loads.
 CARD = """
@@ -111,14 +112,7 @@ def author(script, args):
 
 
 def replay(client, pid, chat="drafts"):
-    events = []
-    with client.websocket_connect(api(pid, f"/stream?chat={chat}")) as ws:
-        while True:
-            frame = ws.receive_json()
-            if frame.get("type") == "ready":
-                return events
-            if "event" in frame:
-                events.append(frame["event"])
+    return logged(client, client.app, pid, chat)
 
 
 def send(client, pid, text="Draw", chat="drafts"):

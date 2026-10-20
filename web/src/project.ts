@@ -60,32 +60,18 @@ function prettyToolName(name: string): string {
   return name.replace(/_/g, ' ')
 }
 
-function clearA2UIActionStatus(items: ThreadItem[]): void {
+export function clearA2UIActionStatus(items: ThreadItem[]): void {
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i]
     if (it.kind === 'note' && it.a2uiActionPending) items.splice(i, 1)
   }
 }
 
-// Derive turn activity from the latest request, tool batch or final response.
-// Replies with tool calls keep the turn busy, including when replayed.
-export function isBusy(items: ThreadItem[]): boolean {
-  for (let i = items.length - 1; i >= 0; i--) {
-    const it = items[i]
-    if (it.kind === 'note' && it.ends) return false   // a stopped turn ends here — never "thinking" on replay
-    if (it.kind === 'note' && it.compactionAgent !== undefined && it.pending) return true
-    if (it.kind === 'agent' && !it.streaming) return !!it.continues
-    if (it.kind === 'tools') return true
-    if (it.kind === 'user') return true
-  }
-  return false
-}
-
 export function isCompacting(items: ThreadItem[]): boolean {
   return items.some((it) => it.kind === 'note' && it.compactionAgent !== undefined && it.pending)
 }
 
-function stopCompaction(items: ThreadItem[]): void {
+export function stopCompaction(items: ThreadItem[]): void {
   for (let i = 0; i < items.length; i++) {
     const it = items[i]
     if (it.kind === 'note' && it.compactionAgent !== undefined && it.pending) {
@@ -118,7 +104,7 @@ function subagentStatus(type: LifecycleEvent): string {
   return 'failed'
 }
 
-function errorText(error: unknown): string {
+export function errorText(error: unknown): string {
   if (!error) return ''
   if (typeof error === 'string') return error
   if (typeof error === 'object') {
@@ -128,7 +114,7 @@ function errorText(error: unknown): string {
   return String(error)
 }
 
-function resultPreview(result: unknown): string {
+export function resultPreview(result: unknown): string {
   if (!result) return ''
   const text = typeof result === 'string' ? result : JSON.stringify(result)
   return text.replace(/\s+/g, ' ').trim().slice(0, 240)
@@ -136,7 +122,7 @@ function resultPreview(result: unknown): string {
 
 // Find the subagent card for `taskId` (creating an empty one if its inner events
 // arrive before its TaskStarted). `items` is the nested array holding the card.
-function ensureSubagent(items: ThreadItem[], taskId: string, agent: string): ItemOf<'subagent'> {
+export function ensureSubagent(items: ThreadItem[], taskId: string, agent: string): ItemOf<'subagent'> {
   const found = items.find((i): i is ItemOf<'subagent'> => i.kind === 'subagent' && i.taskId === taskId)
   if (found) return found
   const item: ItemOf<'subagent'> = {
@@ -288,7 +274,7 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
         }
       } else if (!calls.length) {
         // A final response with no text ends the turn: a finalized agent item clears
-        // isBusy, saying "(no reply)" unless the turn answered with a surface.
+        // the turn's end, saying "(no reply)" unless the turn answered with a surface.
         const drew = turnDrewSurface(items)
         const text = drew ? '' : '_(no reply)_'
         if (streaming) {
@@ -344,6 +330,7 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
     }
     case 'TaskCreated': {
       const d = EventData.TaskCreated.parse(data)
+      if (items.some((i) => i.kind === 'taskcard' && i.taskId === d.task_id)) break
       items.push({ id: nid(), kind: 'taskcard', taskId: d.task_id, title: d.title, scheduled: d.kind === 'scheduled' })
       break
     }
@@ -487,6 +474,7 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
     }
     case 'InquiryRaised': {
       const d = EventData.InquiryRaised.parse(data)
+      if (items.some((i) => i.kind === 'inquiry' && i.inquiryId === d.inquiry_id)) break
       items.push({
         id: nid(), kind: 'inquiry', inquiryId: d.inquiry_id, question: d.question,
         detail: d.detail ?? '', options: d.options ?? [], qkind: d.kind, resolved: false,
@@ -505,7 +493,7 @@ function fold(items: ThreadItem[], type: HandledEvent, data: Record<string, unkn
     case 'TurnCancelled': {
       // The user stopped the turn. Whatever it produced stays (tool chips, partial
       // text); finalize a mid-stream bubble so it reads as what was said before the
-      // stop, and mark the turn ended (`ends` → isBusy stops here on replay too).
+      // stop, and mark the turn ended (`ends`).
       const d = EventData.TurnCancelled.parse(data)
       stopCompaction(items)
       const prev = items[items.length - 1]

@@ -2,10 +2,23 @@ import { mount, tick } from 'svelte'
 import Thread from '../src/components/Thread.svelte'
 import { chats, thread } from '../src/store.ts'
 import { setActiveProfileId } from '../src/lib/profile.ts'
-import { foldEvent, isBusy } from '../src/project.ts'
+import { foldEvent } from '../src/project.ts'
 import type { ThreadItem, WireEvent } from '../src/schemas/events.ts'
 import '../src/design/styles.css'
 import '../src/app.css'
+
+// The thinking dots follow the latest request, tool batch or final response in the fixture's events.
+function isBusy(items: ThreadItem[]): boolean {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i]
+    if (it.kind === 'note' && it.ends) return false
+    if (it.kind === 'note' && it.compactionAgent !== undefined && it.pending) return true
+    if (it.kind === 'agent' && !it.streaming) return !!it.continues
+    if (it.kind === 'tools') return true
+    if (it.kind === 'user') return true
+  }
+  return false
+}
 
 const profile = new URL(location.href).searchParams.get('profile')
 if (!profile) throw new Error('Pass ?profile=<running profile id> to the fixture URL')

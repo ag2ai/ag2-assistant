@@ -7,7 +7,7 @@ validated against real responses.
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from assistant.gateway.chat_activity import ChatStatus
 
@@ -90,14 +90,9 @@ class MessageResponse(BaseModel):
     chat_id: str
 
 
-class ChatEventOut(BaseModel):
-    type: str
-    data: dict[str, Any] = Field(default_factory=dict)
-
-
 class ChatEventsResponse(BaseModel):
-    """A chronological page of complete turns from the typed event stream."""
+    """A chronological page of complete turns, as the AG-UI events a live run would send."""
 
-    events: list[ChatEventOut]
+    events: list[dict[str, Any]]
     before: str | None
     start: str | None

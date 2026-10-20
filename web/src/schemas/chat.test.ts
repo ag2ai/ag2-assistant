@@ -1,6 +1,18 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ChatRow, Transcript } from './chat.ts'
+import { ChatEvents, ChatRow, Transcript } from './chat.ts'
+
+test('chat history rejects malformed protocol events and preserves valid event fields', () => {
+  const page = (events: unknown[]) => ({ events, before: null, start: null })
+  assert.equal(ChatEvents.safeParse(page([{}])).success, false)
+  assert.equal(ChatEvents.safeParse(page([{ type: 'TEXT_MESSAGE_CONTENT', messageId: 'm' }])).success, false)
+  const events = [
+    { type: 'TEXT_MESSAGE_CONTENT', messageId: 'm', delta: 'hello' },
+    { type: 'TEXT_MESSAGE_END', messageId: 'm', rawEvent: { created_at: 7 } },
+    { type: 'CUSTOM', name: 'assistant.events.Attachment', value: { path: 'uploads/a.txt' } },
+  ]
+  assert.deepEqual(ChatEvents.parse(page(events)).events, events)
+})
 
 // A row for an owner-started chat: gateway ships response_model_exclude_unset,
 // so the origin_* trio is genuinely absent, never null.

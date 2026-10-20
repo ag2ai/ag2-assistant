@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { EventData, EventMeta, ServerFrame, WireEvent } from './events.ts'
+import { EventData, EventMeta, WireEvent } from './events.ts'
 
 test('WireEvent keeps a known event and defaults its data', () => {
   const ev = WireEvent.parse({ type: 'ModelMessageChunk', data: { content: 'hi' } })
@@ -40,18 +40,4 @@ test('EventData pins the feedback target to a ratable kind', () => {
   const d = EventData.FeedbackGiven.parse({ target_kind: 'image', target_id: '/a.png', sentiment: 'up' })
   assert.equal(d.target_kind, 'image')
   assert.throws(() => EventData.FeedbackGiven.parse({ target_kind: 'note', target_id: 'x' }))
-})
-
-test('ServerFrame parses the ready frame', () => {
-  const frame = ServerFrame.parse({ type: 'ready', chat: 'c1' })
-  assert.equal('type' in frame && frame.type, 'ready')
-})
-
-test('ServerFrame parses an event frame', () => {
-  const frame = ServerFrame.parse({ event: { type: 'Attachment', data: { path: '/a', name: 'a' } } })
-  assert.equal('event' in frame, true)
-})
-
-test('ServerFrame rejects a frame that is neither an event nor a control type', () => {
-  assert.throws(() => ServerFrame.parse({ nonsense: 1 }))
 })

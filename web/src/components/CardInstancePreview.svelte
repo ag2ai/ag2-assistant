@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api } from '../transport/api/index.ts'
-  import { StreamClient } from '../transport/stream.ts'
+  import { CardSourceSocket } from '../transport/cardSourceSocket.ts'
   import { projectSourceEvent } from '../lib/cardSources.ts'
   import type { CardSourceEvent } from '../schemas/card_source.ts'
   import { asComponent, asComponents } from '../lib/a2ui.ts'
@@ -28,7 +28,7 @@
     const load = () => api.cardInstance(p)
       .then(result => { if (!stale) instance = result })
       .catch(cause => { if (!stale) error = errText(cause) })
-    const stream = new StreamClient('', {
+    const stream = new CardSourceSocket({
       onReady: () => { void load() },
       onEvent: event => {
         if (stale || !item || !instance) return
@@ -37,7 +37,7 @@
         sourceStates = updated.sourceStates || {}
         instance = { ...instance, message: { ...instance.message, data: updated.data } }
       },
-    }, '/card-sources/stream').connect()
+    }).connect()
     void load()
     return () => { stale = true; stream.close() }
   })

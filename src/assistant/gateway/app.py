@@ -64,9 +64,7 @@ Route map:
 """
 
 import asyncio
-import base64
 import contextlib
-import json
 import uuid
 from collections.abc import Callable, Mapping
 from collections.abc import Set as AbstractSet
@@ -75,8 +73,6 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import httpx
-from ag2.a2ui.incoming import A2UIIncomingAction, A2UIIncomingActionResult, parse_incoming_message
-from ag2.a2ui.server_action import build_server_action_context, run_server_action
 from ag2.events import (
     ModelMessage,
     ModelMessageChunk,
@@ -113,10 +109,7 @@ from assistant import (
     provider_catalog,
     voice_providers,
 )
-from assistant import feedback as feedback_learner
-from assistant.a2ui import A2UI_SERVER_ACTIONS
 from assistant.agent import model_config
-from assistant.attachments import build_input
 from assistant.codex_auth import (
     CodexAuth,
     _capture_code,
@@ -124,13 +117,6 @@ from assistant.codex_auth import (
 from assistant.coding.detect import parse_bridge
 from assistant.coding.model_catalog import ModelCatalog
 from assistant.connections import ConnectionStore
-from assistant.events import (
-    A2UIActionSubmitted,
-    A2UISurfaceDataUpdated,
-    Attachment,
-    FeedbackCleared,
-    FeedbackGiven,
-)
 from assistant.gateway.profile_manager import (
     ArchivedProfile,
     ProfileManager,
@@ -139,6 +125,7 @@ from assistant.gateway.profile_manager import (
 )
 from assistant.gateway.routes import (
     acp,
+    agui,
     card,
     card_instance,
     card_source,
@@ -156,21 +143,17 @@ from assistant.gateway.routes import (
     system,
     task,
 )
-from assistant.gateway.routes.common import chat_asker
 from assistant.gateway.routes.deps import GatewayDeps
 from assistant.gateway.schemas import ERROR_RESPONSES
-from assistant.gateway.stream_bridge import StreamBridge
 from assistant.gateway.wire import as_drawn, to_wire
 from assistant.hitl import add_hitl_routes
 from assistant.integrations.google_auth import GoogleAuth
 from assistant.live_configs import LiveConfigStore
 from assistant.llm_configs import LlmConfigStore
-from assistant.observability import log_suppressed
 from assistant.pairing import PairingStore
 from assistant.peers import PeerStore
 from assistant.profiles import ProfileRegistry
 from assistant.secrets import SecretStore
-from assistant.workspace import write_upload
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -218,27 +201,6 @@ def _origin_ok(
     if origin in allowed:
         return True
     return bool(host) and urlsplit(origin).netloc == host
-
-
-# Cap on the data model a click carries, bounding any client-supplied body.
-_MAX_A2UI_STATE_BYTES = 256 * 1024
-
-
-def _clicked_instance_model(state, surface_id: str) -> dict | None:
-    """The data model a click sends for the Card instance `surface_id` — None when it
-    sends none, or names a different instance."""
-    if not isinstance(state, dict) or state.get("surfaceId") != surface_id:
-        return None
-    data = state.get("data")
-    return data if isinstance(data, dict) else None
-
-
-def _oversized_model(model: dict) -> bool:
-    """Whether a client-supplied data model exceeds the bound on a persisted body."""
-    try:
-        return len(json.dumps(model, ensure_ascii=False).encode()) > _MAX_A2UI_STATE_BYTES
-    except (TypeError, ValueError):
-        return True
 
 
 # Surface context the client can request by token (kept server-side, not in the UI).
@@ -515,6 +477,7 @@ def create_app(
     # task-scoped permission pair — in its own module because a module follows its
     # zod twin (TaskRules is declared in permission.ts).
     p.include_router(chat.build_profile_router(deps, get_runtime))
+    p.include_router(agui.build_profile_router(deps, get_runtime, surfaces=_SURFACES))
     p.include_router(card.build_profile_router(deps, get_runtime))
     p.include_router(card_instance.build_profile_router(deps, get_runtime))
     p.include_router(screen.build_profile_router(get_runtime))
@@ -579,250 +542,6 @@ def create_app(
             stream.unsubscribe(subscription)
             runtime.off_close(close)
 
-    @app.websocket("/api/p/{pid}/stream")
-    async def stream_ws(websocket: WebSocket, pid: str) -> None:
-        """Event-stream transport: the client receives the chat's events as
-        `{event:{type,data}}` — replayed on connect, then live — and sends `{text}`
-        turns. Closes with 4001 if the profile is archived mid-session (§4.9)."""
-        if not _origin_ok(
-            websocket.headers.get("origin"), websocket.headers.get("host"), allowed_origins
-        ):
-            await websocket.close(code=1008)  # policy violation
-            return
-        runtime = await _ws_runtime(websocket, pid)
-        if runtime is None:
-            return
-        # A runtime only enters the manager once started, so these are set — bound
-        # here so the handler reads the started runtime rather than re-checking.
-        gateway, tasks, config = runtime.gateway, runtime.tasks, runtime.config
-        if gateway is None or tasks is None or config is None:
-            await websocket.close(code=1011, reason="profile-not-running")
-            return
-        await websocket.accept()
-
-        # Archive → close this socket with 4001 (§4.9). Tolerant: a closed socket
-        # must not error the archive loop (runtime.close suppresses callback errors).
-        async def _on_archive():
-            with contextlib.suppress(Exception):
-                await websocket.close(code=_WS_PROFILE_ARCHIVED, reason="profile-archived")
-
-        runtime.on_close(_on_archive)
-
-        chat_id = websocket.query_params.get("chat") or "default"
-        # A run's chat (stream "task-run:<id>") IS a plain chat — TaskService seeds
-        # its task/run framing into the FIRST turn's surface at start_run time, so
-        # this transport needs no per-task branch here; every turn gets the same
-        # surface a normal chat would.
-        default_surface = _SURFACES.get(websocket.query_params.get("surface", ""), "")
-        history_limit = websocket.query_params.get("history_limit")
-        try:
-            page_limit = int(history_limit) if history_limit is not None else None
-            if page_limit is not None and not 1 <= page_limit <= 50:
-                raise ValueError("Invalid history limit")
-        except ValueError:
-            await websocket.close(code=1008, reason="invalid-history-limit")
-            return
-        bridge = StreamBridge(
-            gateway,
-            websocket,
-            chat_id,
-            history_limit=page_limit,
-            history_from=websocket.query_params.get("history_from"),
-        )
-
-        try:
-            await bridge.open()
-            while True:
-                data = await websocket.receive_json()
-                if data.get("type") == "a2ui":
-                    # A2UI clicks use AG2's standard action envelope. Only actions
-                    # explicitly registered by this app may mutate durable state.
-                    parsed = parse_incoming_message(data.get("message"))
-                    if not isinstance(parsed, A2UIIncomingActionResult):
-                        await websocket.send_json(
-                            {"type": "error", "message": "Invalid A2UI action."}
-                        )
-                        continue
-                    click = parsed.action
-                    action = A2UI_SERVER_ACTIONS.get(click.name)
-                    if not click.surface_id or not click.source_component_id:
-                        await websocket.send_json(
-                            {"type": "error", "message": "Unsupported A2UI action."}
-                        )
-                        continue
-                    if action is None:
-                        # An undeclared Button action falls back to an agent turn:
-                        # persist the model the client holds, then describe the click.
-                        model = _clicked_instance_model(data.get("state"), click.surface_id)
-                        if model is not None and _oversized_model(model):
-                            await websocket.send_json(
-                                {"type": "error", "message": "A2UI state too large to store."}
-                            )
-                            model = None
-                        if model is not None:
-                            await gateway.emit_event(
-                                chat_id,
-                                A2UISurfaceDataUpdated(click.surface_id, data=model),
-                            )
-                        await gateway.emit_event(
-                            chat_id,
-                            A2UIActionSubmitted(click.surface_id, action_name=click.name),
-                        )
-                        action_text = (
-                            f"[[A2UI_ACTION]] The user clicked the A2UI action '{click.name}' on surface "
-                            f"'{click.surface_id}'. Its current values are: {click.context}. "
-                            "Carry out the requested action and respond to the user."
-                        )
-                        asyncio.create_task(
-                            bridge.run_turn(
-                                action_text,
-                                asker=chat_asker(runtime, chat_id),
-                                surface=default_surface,
-                            )
-                        )
-                        continue
-                    # The surface id is transport metadata, never trusted from a model
-                    # supplied context object. The registered handler receives it as a
-                    # normal argument after the standard AG2 action parsing step.
-                    click = A2UIIncomingAction(
-                        name=click.name,
-                        surface_id=click.surface_id,
-                        source_component_id=click.source_component_id,
-                        timestamp=click.timestamp,
-                        context={**click.context, "surface_id": click.surface_id},
-                        response_request=click.response_request,
-                    )
-                    messages = await run_server_action(
-                        action,
-                        click,
-                        version=data.get("message", {}).get("version", "v1.0"),
-                        context=build_server_action_context(gateway.require_agent()),
-                    )
-                    for message in messages:
-                        update = message.get("updateDataModel")
-                        if isinstance(update, dict) and update.get("surfaceId") == click.surface_id:
-                            value = update.get("value")
-                            if update.get("path", "/") == "/" and isinstance(value, dict):
-                                await gateway.emit_event(
-                                    chat_id, A2UISurfaceDataUpdated(click.surface_id, data=value)
-                                )
-                    continue
-                if data.get("type") == "answer" and data.get("id"):
-                    iid, ans = data["id"], data.get("answer", "")
-                    # Chat permission prompts live in this profile's HITL registry;
-                    # durable task inquiries (answered inline on a task page) live in
-                    # the InquiryStore under a different id — fall back to it so an
-                    # inline answer resolves either kind.
-                    if not runtime.hitl.answer(iid, ans):
-                        with contextlib.suppress(Exception):
-                            await tasks.answer_inquiry(iid, ans)
-                    continue
-                if data.get("type") == "cancel":
-                    # Stop the turn running on this chat. The gateway cancels the
-                    # task driving AG2's run, which AG2 propagates into the turn; a
-                    # TurnCancelled event comes back out through the bridge. A no-op
-                    # when nothing is in flight.
-                    await gateway.cancel_turn(chat_id)
-                    continue
-                if data.get("type") == "feedback" and data.get("target_id"):
-                    # 👍/👎 + mandatory reason on a generated item. Emit it onto the
-                    # chat stream (persists/replays → the GUI projects the thumb
-                    # state, shows in the AG2 inspector), then fire-and-forget a learner
-                    # that distils it into the memory profile (never blocks the socket).
-                    sentiment = "down" if data.get("sentiment") == "down" else "up"
-                    reason = (data.get("reason") or "").strip()
-                    content = data.get("content") or ""
-                    request = data.get("request") or ""
-                    with contextlib.suppress(Exception):
-                        await gateway.emit_event(
-                            chat_id,
-                            FeedbackGiven(
-                                data["target_id"],
-                                target_kind=data.get("target_kind", "message"),
-                                sentiment=sentiment,
-                                reason=reason,
-                                content=content[:2000],
-                                request=request[:2000],
-                            ),
-                        )
-                    if reason:  # reason is mandatory client-side; only learn when present
-                        asyncio.create_task(
-                            feedback_learner.learn(
-                                config,
-                                sentiment=sentiment,
-                                reason=reason,
-                                content=content,
-                                request=request,
-                            )
-                        )
-                    continue
-                if data.get("type") == "feedback_clear" and data.get("target_id"):
-                    # Retract a rating (thumb toggled off). Emit onto the stream so the
-                    # cleared state persists/replays; no learner — unmarking takes back
-                    # only the visible thumb, never the memory it already taught.
-                    with contextlib.suppress(Exception):
-                        await gateway.emit_event(
-                            chat_id,
-                            FeedbackCleared(
-                                data["target_id"],
-                                target_kind=data.get("target_kind", "message"),
-                            ),
-                        )
-                    continue
-                text = data.get("text", "")
-                raw_atts = data.get("attachments")
-                attachments = _decode_attachments(raw_atts)
-                if not text and attachments:
-                    text = "Here is a file I'm sharing with you."
-                if not text:
-                    continue
-                asker = chat_asker(runtime, chat_id)
-                surface = default_surface
-                # Persist uploads into the workspace and tell the agent their paths (via
-                # surface, so the transcript stays clean) — enables editing/reading them.
-                saved = _persist_uploads(config.workspace_dir, raw_atts)
-                if saved:
-                    surface = (surface + "\n\n" if surface else "") + (
-                        "The user attached file(s), saved in the workspace at: "
-                        + ", ".join(pth for pth, _ in saved)
-                        + ". To edit an uploaded image, call generate_image with "
-                        "source_image set to its path; to read an uploaded document, "
-                        "read_file that path."
-                    )
-                    # Surface each upload in the thread (thumbnail / file chip) — emitted
-                    # before the turn so it sits with the user's message; persists on the
-                    # chat stream so it survives reload.
-                    for pth, name in saved:
-                        with contextlib.suppress(Exception):
-                            await gateway.emit_event(chat_id, Attachment(pth, name=name))
-                # Typed while the agent is still working? Feed the live turn instead of
-                # queueing a second one behind it — AG2 drains the message before the
-                # turn's next model call, so the user steers the work in progress.
-                if await gateway.feed_message(text, chat_id, attachments):
-                    # The agent won't echo it until it drains the inbox, which can be a
-                    # whole tool round away. Ack now so the thread can show it as queued
-                    # rather than leaving the user wondering if it landed. Transient: the
-                    # durable record is the DrainedModelRequest AG2 emits on the drain.
-                    with contextlib.suppress(Exception):
-                        await websocket.send_json({"type": "queued", "text": text, "chat": chat_id})
-                else:
-                    asyncio.create_task(
-                        bridge.run_turn(
-                            text,
-                            asker=asker,
-                            attachments=attachments,
-                            surface=surface,
-                            attachment_names=tuple(name for _, name in saved),
-                            # The composer's switcher is live before the chat exists;
-                            # its choice rides the first frame (ADR 0025).
-                            chat_model=str(data.get("model") or ""),
-                        )
-                    )
-        except WebSocketDisconnect:
-            return
-        finally:
-            bridge.close()
-
     @app.websocket("/api/p/{pid}/voice")
     async def voice_ws(websocket: WebSocket, pid: str) -> None:
         """Full-duplex voice. The browser streams 16 kHz mono PCM mic frames as
@@ -862,6 +581,7 @@ def create_app(
         user_buf: list[str] = []
         agent_buf: list[str] = []
         last_role: dict[str, str | None] = {"v": None}  # "user" | "agent"
+        user_chunked = {"v": False}  # the utterance in flight already arrived as chunks
 
         async def _flush_user():
             text = "".join(user_buf).strip()
@@ -941,11 +661,18 @@ def create_app(
                             "role": "agent",
                             "text": e.content,
                         }
-                    else:  # user (chunk or completed)
+                    elif isinstance(e, TranscriptionCompletedEvent) and user_chunked["v"]:
+                        # Chunks already carried this utterance; the completed text only
+                        # closes the bubble (it can land after the agent started).
+                        user_chunked["v"] = False
+                        frame = {"type": "transcript", "role": "user", "text": e.content}
+                        frame["final"] = True
+                    else:  # user chunk, or a completed with no chunks before it
                         if last_role["v"] == "agent":
                             await _flush_agent()  # agent turn ended
                         last_role["v"] = "user"
                         user_buf.append(e.content)
+                        user_chunked["v"] = isinstance(e, TranscriptionChunkEvent)
                         frame = {"type": "transcript", "role": "user", "text": e.content}
                         if isinstance(e, TranscriptionCompletedEvent):
                             frame["final"] = True
@@ -1055,38 +782,3 @@ def create_app(
         return RedirectResponse(url="/app/", status_code=307)
 
     return app
-
-
-def _decode_attachments(items) -> list:
-    """Turn UI attachment frames ({name, mime, data:b64}) into AG2 inputs."""
-    out = []
-    for a in items or []:
-        try:
-            raw = base64.b64decode(a.get("data", ""))
-        except Exception as exc:
-            log_suppressed("attachment decode", exc, name=a.get("name"))
-            continue
-        inp = build_input(raw, a.get("name", "file"), a.get("mime"))
-        if inp is not None:
-            out.append(inp)
-    return out
-
-
-def _persist_uploads(workspace_dir, items) -> list[tuple[str, str]]:
-    """Save uploaded files into the workspace (uploads/) so the agent can edit/read
-    them by path — returns ``(workspace_path, original_name)`` per saved file."""
-    out = []
-    for a in items or []:
-        try:
-            raw = base64.b64decode(a.get("data", ""))
-        except Exception as exc:
-            log_suppressed("upload decode", exc, name=a.get("name"))
-            continue
-        if not raw:
-            continue
-        try:
-            name = a.get("name", "file")
-            out.append((write_upload(workspace_dir, name, raw), name))
-        except Exception as exc:
-            log_suppressed("upload persist", exc, name=name)
-    return out

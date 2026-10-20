@@ -31,7 +31,6 @@ from assistant.coding.surface import build_surface, card_fields
 from assistant.config import Config
 from assistant.events import A2UISurface
 from assistant.gateway.core import Gateway
-from assistant.gateway.stream_bridge import StreamBridge
 from assistant.profiles import ProfileRegistry
 from assistant.skills import SkillStateStore
 from assistant.state_store import SUPPRESS_SHARED
@@ -44,6 +43,7 @@ from tests.support.cards import (
     skill_body,
     write_card,
 )
+from tests.support.chat import drawn_log
 from tests.support.fakes import FakeReply, FakeRunMixin, fake_agent_factory
 
 
@@ -71,16 +71,6 @@ class _TurnAgent(FakeRunMixin):
         self.prompts.append(prompt or [])
         self.middleware.append(tuple(middleware))
         return FakeReply("done")
-
-
-class _ClientSocket:
-    """A client's WebSocket: keeps the frames the bridge sent it."""
-
-    def __init__(self):
-        self.sent: list = []
-
-    async def send_json(self, frame) -> None:
-        self.sent.append(frame)
 
 
 async def _started(config, agent) -> Gateway:
@@ -574,13 +564,7 @@ async def test_a_card_the_model_drew_is_still_replayed_with_the_skill_off(paths,
             title="Ship it",
         ),
     )
-    socket = _ClientSocket()
-
-    bridge = StreamBridge(gateway, socket, "c1")
-    await bridge.open()
-    bridge.close()
-
-    drawn = [frame["event"] for frame in socket.sent if "event" in frame][0]
+    drawn = (await drawn_log(gateway))[0]
     assert drawn["data"]["component"]["component"] == "Card"
     assert {node["component"] for node in drawn["data"]["component"]["_components"]} <= (
         CARD_VOCABULARY
@@ -605,11 +589,5 @@ async def test_the_coding_session_is_the_servers_to_draw_whatever_the_switch_say
             ),
         ),
     )
-    socket = _ClientSocket()
-
-    bridge = StreamBridge(gateway, socket, "c1")
-    await bridge.open()
-    bridge.close()
-
-    drawn = [frame["event"] for frame in socket.sent if "event" in frame]
+    drawn = await drawn_log(gateway)
     assert [event["data"]["component"]["component"] for event in drawn] == ["Card"]

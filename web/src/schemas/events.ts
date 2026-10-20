@@ -141,8 +141,7 @@ export const HANDLED_EVENTS = [
 ] as const
 export type HandledEvent = (typeof HANDLED_EVENTS)[number]
 
-// Frames the stream socket receives. stream_bridge.py stamps `chat` (the stream
-// id) on ready/turn_end/error; the failure text rides in `message`, not `error`.
+// Frames the voice socket receives; the failure text rides in `message`, not `error`.
 export const EventFrame = z.object({ event: WireEvent })
 export type EventFrame = z.infer<typeof EventFrame>
 
@@ -162,30 +161,12 @@ export const TurnEndFrame = z.object({
 })
 export type TurnEndFrame = z.infer<typeof TurnEndFrame>
 
-export const QueuedFrame = z.object({
-  type: z.literal('queued'),
-  text: z.string().optional(),
-  chat: z.string().optional(),
-})
-export type QueuedFrame = z.infer<typeof QueuedFrame>
-
 export const ErrorFrame = z.object({
   type: z.literal('error'),
   message: z.string().optional(),
   chat: z.string().optional(),
 })
 export type ErrorFrame = z.infer<typeof ErrorFrame>
-
-export const ControlFrame = z.discriminatedUnion('type', [
-  ReadyFrame,
-  TurnEndFrame,
-  QueuedFrame,
-  ErrorFrame,
-])
-export type ControlFrame = z.infer<typeof ControlFrame>
-
-export const ServerFrame = z.union([EventFrame, ControlFrame])
-export type ServerFrame = z.infer<typeof ServerFrame>
 
 // Frames the voice socket receives on top of the shared event frame: the same
 // ready/turn_end/error plus its own live transcript (app.py:3565-3616).
@@ -203,23 +184,12 @@ export const VoiceFrame = z.union([
 ])
 export type VoiceFrame = z.infer<typeof VoiceFrame>
 
-// One attachment a turn frame carries: the composer base64-encodes the file and the
-// gateway decodes it into an AG2 input (app.py:3689 _decode_attachments).
+// One attachment a turn carries: the composer base64-encodes the file and the
+// gateway decodes it into an AG2 input (gateway/uploads.py decode_attachments).
 export type AttachmentPayload = { name: string; mime: string; data: string }
 
-// One Card instance's data model, riding beside `message` in an a2ui frame.
+// One Card instance's data model, riding beside `message` on an A2UI click.
 export type A2UISurfaceState = { surfaceId: string; data: A2UIData }
-
-// Frames the client sends. A turn is the bare {text, attachments} shape.
-export type ClientFrame =
-  // `model` rides only the message that CREATES a chat: a Text model chosen
-  // before the chat existed, adopted as its override (ADR 0025).
-  | { text: string; attachments?: AttachmentPayload[]; model?: string }
-  | { type: 'cancel' }
-  | { type: 'answer'; id: string; answer: string }
-  | { type: 'feedback'; [k: string]: unknown }
-  | { type: 'feedback_clear'; [k: string]: unknown }
-  | { type: 'a2ui'; message: unknown; state?: A2UISurfaceState }
 
 // Thread items — the projection project.ts folds events into. These never cross
 // the wire, so they are plain types rather than schemas.
@@ -227,8 +197,8 @@ export type Feedback = { sentiment?: string; reason?: string } | null
 
 // `id` keys the rendered list; every producer takes it from lib/ids.ts so items
 // from the reducer, the controller and a2ui.js never collide. `at` is the source
-// event's created_at (Unix seconds).
-type ItemBase = { id: number; at?: number }
+// event's created_at (Unix seconds); `msg` is the AG-UI message id it was projected from.
+type ItemBase = { id: number; at?: number; msg?: string }
 export type ToolRun = ItemBase & { name: string; detail: string; card?: ToolCard }
 
 // Structured provenance and artifact metadata for an individual tool run.
