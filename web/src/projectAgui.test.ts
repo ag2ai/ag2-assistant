@@ -5,10 +5,10 @@ import { test } from 'node:test'
 import { AguiState, foldAgui, runningAfter } from './projectAgui.ts'
 import { queueMessage } from './project.ts'
 import { activity, custom, raw, runError, runFinished, runStarted, say, toolCall } from './testing/agui.ts'
-import type { BaseEvent } from '@ag-ui/client'
+import type { AguiEvent } from './schemas/agui.ts'
 import type { ThreadItem } from './schemas/events.ts'
 
-function fold(events: BaseEvent[], items: ThreadItem[] = [], state = new AguiState()): ThreadItem[] {
+function fold(events: AguiEvent[], items: ThreadItem[] = [], state = new AguiState()): ThreadItem[] {
   for (const event of events) foldAgui(items, event, state)
   return items
 }
@@ -36,6 +36,28 @@ test('a message met twice, in history and live, is drawn once', () => {
   fold(events, items, new AguiState())
   assert.equal(items.length, 1)
   assert.equal(items[0].kind === 'agent' && items[0].text, 'hello')
+})
+
+test('a response resumed under the same id replaces the interrupted text', () => {
+  const state = new AguiState()
+  const items = fold(say('assistant', 'a1', 'Before ', 2), [], state)
+  const id = items[0].id
+  fold([runFinished({ type: 'interrupt', interrupts: [{ id: 'q1', reason: 'choice' }] }), runStarted(), ...say('assistant', 'a1', 'Before after', 3)], items, state)
+  assert.equal(items.filter(item => item.kind === 'agent').length, 1)
+  const answer = items.find(item => item.kind === 'agent')
+  assert.ok(answer?.kind === 'agent')
+  assert.equal(answer.id, id)
+  assert.equal(answer.text, 'Before after')
+  assert.equal(answer.streaming, false)
+  assert.equal(answer.at, 3)
+})
+
+test('a subscription snapshot replaces an open prefix rather than appending it twice', () => {
+  const state = new AguiState()
+  const items = fold(say('assistant', 'a1', 'prefix:', 2).slice(0, 2), [], state)
+  fold(say('assistant', 'a1', 'prefix:done', 3), items, state)
+  assert.equal(items.length, 1)
+  assert.equal(items[0].kind === 'agent' && items[0].text, 'prefix:done')
 })
 
 test("the echo of a fed message resolves its queued bubble in place", () => {

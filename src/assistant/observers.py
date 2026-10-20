@@ -129,29 +129,7 @@ class ToolChurnObserver(BaseObserver):
 
 
 class SilenceWatchdog:
-    """Fire when the stream goes silent mid-turn — the *absence* of events.
-
-    The event-driven observers (`LoopDetector`, `ToolChurnObserver`) react to
-    events, so a hung LLM call — which emits nothing — slips past them entirely.
-    This watchdog closes that gap: it resets a timer on every stream event and,
-    if `alert_s` seconds pass with no new event during an active turn, emits a
-    CRITICAL `ObserverAlert`. If `halt_s` is set and elapses, it escalates to a
-    FATAL alert (which an `AlertPolicy`-equipped agent turns into a `HaltEvent`,
-    terminating the wedged turn deterministically).
-
-    Scoping to *in-turn* silence is structural, not heuristic: each `register`
-    arms its own `_SilenceWatch` (monitor loop + subscription) and tears it down
-    when that turn's `ExitStack`/`AsyncExitStack` unwinds, so between turns nothing
-    is running — and concurrent turns on one agent (a chat turn and a task run)
-    never share or cancel each other's watch.
-
-    The watch ignores its own alerts and the observer-lifecycle events when
-    resetting the timer, so a fired CRITICAL alert doesn't keep the clock alive
-    and block the later FATAL escalation.
-
-    `poll_interval_s` and `clock` are injectable so tests can drive silence in
-    milliseconds without real long sleeps.
-    """
+    """Register an independent silence watch for each turn and emit escalating alerts."""
 
     def __init__(
         self,

@@ -1,9 +1,9 @@
-import type { BaseEvent } from '@ag-ui/client'
+import type { AguiEvent } from '../schemas/agui.ts'
 import { AguiState, foldAgui } from '../projectAgui.ts'
 import type { ThreadItem } from '../schemas/events.ts'
 
 /** Rebuild loaded events while preserving mounted items and nested traces. */
-export function projectHistory(events: BaseEvent[], previous: ThreadItem[], state = new AguiState()): ThreadItem[] {
+export function projectHistory(events: AguiEvent[], previous: ThreadItem[], state = new AguiState()): ThreadItem[] {
   const items: ThreadItem[] = []
   for (const event of events) foldAgui(items, event, state)
   preserveIds(items, previous)

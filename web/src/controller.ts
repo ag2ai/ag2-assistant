@@ -2,7 +2,7 @@
 // events, runs turns, and (for tasks) polls the durable panel.
 
 import { get, writable, type Writable } from 'svelte/store'
-import type { BaseEvent } from '@ag-ui/client'
+import type { AguiEvent } from './schemas/agui.ts'
 import { thread, runInfo, chats, screenRows, tasks, inquiries, inspectorEvents, viewer, profiles, profileEpoch, chatModel, refreshFiles } from './store.ts'
 import type { ThreadKind } from './store.ts'
 import { NO_CHAT_MODEL, openedChat, sentFirstMessage } from './lib/chatModel.ts'
@@ -30,10 +30,10 @@ let stopRun: (() => void) | null = null
 let panelTimer: ReturnType<typeof setInterval> | null = null
 
 // The loaded range of the chat as AG-UI events; older pages prepend and the fold reruns.
-let _historyEvents: BaseEvent[] = []
+let _historyEvents: AguiEvent[] = []
 let _fold = new AguiState()
 let _ready = false                 // the latest page is folded; live events fold straight in
-let _buffer: BaseEvent[] = []      // live events that arrived while it was loading
+let _buffer: AguiEvent[] = []      // live events that arrived while it was loading
 let _session = 0
 let _connection = 0
 let _interrupts = new Set<string>()   // Inquiries that ended a run: answered by resuming it
@@ -50,7 +50,7 @@ export async function loadOlderMessages(): Promise<boolean> {
   try {
     const page = await api.chatEvents(state.chat, state.before)
     if (session !== _session || connection !== _connection) return false
-    _historyEvents = [...(page.events as BaseEvent[]), ..._historyEvents]
+    _historyEvents = [...page.events, ..._historyEvents]
     _fold = new AguiState()
     thread.update(t => ({ ...t, items: projectHistory(_historyEvents, t.items, _fold) }))
     chatHistory.update(s => ({ ...s, before: page.before, start: page.start ?? s.start, loadingOlder: false }))
@@ -140,7 +140,7 @@ async function loadLatest(chat: string, session: number): Promise<void> {
   try {
     const page = await api.chatEvents(chat)
     if (session !== _session || connection !== _connection) return
-    _historyEvents = page.events as BaseEvent[]
+    _historyEvents = page.events
     inspectorEvents.set([])
     _historyEvents.forEach(_inspectAgui)
     _fold = new AguiState()
@@ -157,14 +157,13 @@ async function loadLatest(chat: string, session: number): Promise<void> {
 }
 
 // Show an AG-UI event in the AG2 Inspector: an assistant event as itself, the rest by AG-UI type.
-function _inspectAgui(event: BaseEvent): void {
-  const ev = event as unknown as Record<string, any>
+function _inspectAgui(ev: AguiEvent): void {
   _inspect(ev.type === 'CUSTOM' ? { type: ev.name, data: ev.value ?? {} } : { type: 'ag-ui.' + ev.type, data: ev })
 }
 
 // Fold one live event into the thread and track whether a run is in flight.
-function apply(event: BaseEvent): void {
-  const ev = event as unknown as Record<string, any>
+function apply(event: AguiEvent): void {
+  const ev = event
   _inspectAgui(event)
   if (_suppressStream) return
   if (ev.type === 'CUSTOM' && String(ev.name).endsWith('.CardInstanceSaved') && typeof ev.value?.path === 'string') refreshFiles(ev.value.path)
@@ -185,9 +184,9 @@ function apply(event: BaseEvent): void {
 }
 
 // The assistant event an AG-UI event carries, as the drawer's status reads it; an interrupt is an InquiryRaised.
-function statusEvent(ev: Record<string, any>): WireEvent | null {
+function statusEvent(ev: AguiEvent): WireEvent | null {
   if (ev.type === 'CUSTOM') return { type: ev.name, data: ev.value ?? {} }
-  const interrupt = ev.type === 'RUN_FINISHED' ? ev.outcome?.interrupts?.[0] : undefined
+  const interrupt = ev.type === 'RUN_FINISHED' && ev.outcome?.type === 'interrupt' ? ev.outcome.interrupts[0] : undefined
   if (!interrupt) return null
   return { type: 'InquiryRaised', data: { created_at: (ev.timestamp ?? Date.now()) / 1000, inquiry_id: interrupt.id, expires_at: interrupt.metadata?.expires_at } }
 }
@@ -201,19 +200,27 @@ function startRun(input: RunInput): void {
   const session = _session
   watch?.close(); watch = null
   stopRun?.()
+  let terminal = false
+  if (!_ready) {
+    _connection++
+    void loadLatest(chat, session)
+  }
   thread.update((x) => ({ ...x, busy: true }))
-  const finish = (): void => {
+  const finish = (reload: boolean): void => {
     if (session !== _session) return
     stopRun = null
     thread.update((x) => ({ ...x, busy: false }))
-    if (!watch) watchChat(chat, session, false)
+    if (!watch) watchChat(chat, session, reload)
   }
   stopRun = runChat(chat, input, {
     onEvent: (event) => {
       if (session !== _session) return
-      const ev = event as unknown as Record<string, any>
-      for (const interrupt of ev.outcome?.interrupts ?? []) _interrupts.add(interrupt.id)
-      apply(event)
+      if (runningAfter(event) === false) terminal = true
+      if (event.type === 'RUN_FINISHED' && event.outcome?.type === 'interrupt') {
+        for (const interrupt of event.outcome.interrupts) _interrupts.add(interrupt.id)
+      }
+      if (!_ready) _buffer.push(event)
+      else apply(event)
     },
     onError: (error) => {
       if (session !== _session) return
@@ -221,9 +228,9 @@ function startRun(input: RunInput): void {
         x.items.push({ id: nextItemId(), kind: 'note', icon: 'x', text: errText(error), alert: true })
         return { ...x, items: x.items }
       })
-      finish()
+      finish(true)
     },
-    onEnd: finish,
+    onEnd: () => finish(!terminal),
   })
 }
 

@@ -3,6 +3,7 @@
 import asyncio
 import base64
 
+import pytest
 from ag2.context import ConversationContext
 from ag2.events import ModelMessage, ModelMessageChunk, ModelRequest, ModelResponse
 from ag_ui.core import RunAgentInput
@@ -19,8 +20,10 @@ from tests.support.fakes import FakeReply, FakeRunMixin, fake_agent_factory
 class _Agent(FakeRunMixin):
     """Echo the question; ask an Inquiry first when the message says so."""
 
-    def __init__(self, runtime):
+    def __init__(self, runtime, *, partial=False, stream_reply=True):
         self.runtime = runtime
+        self.partial = partial
+        self.stream_reply = stream_reply
         self.tools = []
 
     async def ask(self, *msg, stream, **kwargs):
@@ -28,19 +31,28 @@ class _Agent(FakeRunMixin):
         await context.send(ModelRequest.ensure_request([msg[0]]))
         reply = f"echo: {msg[0]}"
         if msg[0] == "ask me":
+            if self.partial:
+                await context.send(ModelMessageChunk("Before "))
             inquiries = self.runtime["value"].tasks.inquiries
             inquiry = await inquiries.create("Proceed?", options=["yes", "no"], chat="c1")
             answered = await inquiries.wait(inquiry.id, timeout=5)
             reply = f"you said {answered.answer}"
-        await context.send(ModelMessageChunk(reply))
+        if self.stream_reply:
+            await context.send(ModelMessageChunk(reply))
+        if self.partial:
+            reply = "Before " + reply
         await context.send(ModelResponse(message=ModelMessage(reply)))
         return FakeReply(reply)
 
 
-def make_client(paths):
+def make_client(paths, *, partial=False, stream_reply=True):
     box: dict = {}
     app, pid = make_profile_app(
-        paths, persist=True, agent_factory=fake_agent_factory(lambda config, **kw: _Agent(box))
+        paths,
+        persist=True,
+        agent_factory=fake_agent_factory(
+            lambda config, **kw: _Agent(box, partial=partial, stream_reply=stream_reply)
+        ),
     )
     return app, pid, box
 
@@ -90,6 +102,75 @@ def test_a_second_message_while_a_turn_waits_is_refused(paths):
             api(pid, "/chats/c1/agui"), json=run_input(text="another", run_id="r3")
         )
     assert response.status_code == 409
+
+
+@pytest.mark.parametrize("stream_reply", [True, False])
+def test_resume_restores_a_partially_written_answer_under_the_same_id(paths, stream_reply):
+    app, pid, box = make_client(paths, partial=True, stream_reply=stream_reply)
+    with TestClient(app) as client:
+        box["value"] = app.state.profiles.get(pid)
+        first = run(client, pid, text="ask me")
+        interrupt = first[-1]["outcome"]["interrupts"][0]
+        second = run(
+            client,
+            pid,
+            run_id="r2",
+            resume=[{"interruptId": interrupt["id"], "status": "resolved", "payload": "yes"}],
+        )
+        history = client.get(api(pid, "/chats/c1/events")).json()["events"]
+
+    message_id = next(
+        e["messageId"]
+        for e in first
+        if e["type"] == "TEXT_MESSAGE_START" and e["role"] == "assistant"
+    )
+    text = None
+    for event in second:
+        if event.get("messageId") != message_id:
+            continue
+        if event["type"] == "TEXT_MESSAGE_START":
+            text = ""
+        elif event["type"] == "TEXT_MESSAGE_CONTENT":
+            assert text is not None, "resume sent content without reopening the message"
+            text += event["delta"]
+    assert text == "Before you said yes"
+    end = next(e for e in reversed(second) if e["type"] == "TEXT_MESSAGE_END")
+    stored_end = next(e for e in reversed(history) if e["type"] == "TEXT_MESSAGE_END")
+    assert end["messageId"] == stored_end["messageId"] == message_id
+    assert end["rawEvent"]["created_at"] == stored_end["rawEvent"]["created_at"]
+
+
+def test_a_file_fed_to_a_running_turn_is_saved_and_logged_once(paths):
+    app, pid, box = make_client(paths)
+    upload = {"name": "fed.txt", "mime": "text/plain", "data": base64.b64encode(b"fed").decode()}
+    with TestClient(app) as client:
+        runtime = app.state.profiles.get(pid)
+        box["value"] = runtime
+        run(client, pid, text="ask me")
+        response = client.post(
+            api(pid, "/chats/c1/feed"), json={"text": "also this", "attachments": [upload]}
+        )
+        assert response.json() == {"fed": True}
+        attachments = [e for e in logged(client, app, pid) if e["type"].endswith("Attachment")]
+        assert len(attachments) == 1
+        attachment = attachments[0]["data"]
+        assert attachment["name"] == "fed.txt"
+        assert (runtime.require_config().workspace_dir / attachment["path"]).read_bytes() == b"fed"
+        assert len(list(runtime.require_config().workspace_dir.rglob("fed*.txt"))) == 1
+
+
+def test_an_idle_feed_leaves_attachments_for_the_new_run(paths):
+    app, pid, box = make_client(paths)
+    upload = {"name": "idle.txt", "mime": "text/plain", "data": base64.b64encode(b"idle").decode()}
+    with TestClient(app) as client:
+        runtime = app.state.profiles.get(pid)
+        box["value"] = runtime
+        response = client.post(
+            api(pid, "/chats/c1/feed"), json={"text": "also this", "attachments": [upload]}
+        )
+        assert response.json() == {"fed": False}
+        assert not any(e["type"].endswith("Attachment") for e in logged(client, app, pid))
+        assert not list(runtime.require_config().workspace_dir.rglob("idle*.txt"))
 
 
 class _Slow(FakeRunMixin):

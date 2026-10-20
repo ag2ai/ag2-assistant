@@ -1,8 +1,4 @@
-"""AG-UI runs and subscriptions over a Chat's event stream.
-
-A run starts (or joins) a Turn and projects its events until the Turn ends or asks an
-Inquiry; the Turn itself is a gateway task and outlives the HTTP exchange.
-"""
+"""AG-UI exchanges over server-owned Turns and per-Chat subscriptions."""
 
 import asyncio
 import contextlib
@@ -84,10 +80,7 @@ def interrupt_of(event: InquiryRaised) -> Interrupt:
 
 
 class ChatListener:
-    """A subscription to a Chat's stream that primes a Projector with the log so far.
-
-    Events already in the log are never projected again; later ones arrive in order.
-    """
+    """Prime a Projector with the Chat's log, then receive its later events in order."""
 
     def __init__(self, gateway: Any, chat_id: str) -> None:
         self._gateway = gateway
@@ -193,6 +186,8 @@ class ChatRuns:
             yield started(chat_id, run_id)
             turn: asyncio.Task | None = None
             if body.resume:
+                for out in listener.written:
+                    yield out
                 for entry in body.resume:
                     await answer(entry)
             elif request is not None:

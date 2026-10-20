@@ -1,5 +1,6 @@
 // Chats: the drawer rows and the display transcript a reopened chat restores.
 import { z } from 'zod'
+import { AguiEvent } from './agui.ts'
 
 // gateway/core.py writes {role, text} pairs; role is 'user' or 'agent'.
 export const TranscriptMessage = z.object({
@@ -65,7 +66,7 @@ export type MessageReply = z.infer<typeof MessageReply>
 // A page of the Chat's history as AG-UI events (camelCase, as the stream sends them);
 // projectAgui.ts reads each by its `type` and skips what it does not know.
 export const ChatEvents = z.object({
-  events: z.array(z.record(z.string(), z.unknown())),
+  events: z.array(AguiEvent),
   before: z.string().nullable(),
   start: z.string().nullable(),
 })

@@ -2,7 +2,8 @@
 // Chat does outside a run. Events come back as @ag-ui/client's validated BaseEvents.
 
 import { runHttpRequest, transformHttpEventStream } from '@ag-ui/client'
-import type { BaseEvent } from '@ag-ui/client'
+import { AguiEvent } from '../schemas/agui.ts'
+import { parse } from './validate.ts'
 import { api as P, onProfileGone } from '../lib/profile.ts'
 import { ApiError } from './http.ts'
 import type { AttachmentPayload } from '../schemas/events.ts'
@@ -13,7 +14,7 @@ export type RunInput =
   | { interruptId: string; answer: string }
 
 export type Handlers = {
-  onEvent: (event: BaseEvent) => void
+  onEvent: (event: AguiEvent) => void
   onOpen?: () => void
   onError?: (error: Error) => void
   onEnd?: () => void
@@ -25,7 +26,7 @@ const uuid = (): string => crypto.randomUUID()
 
 // The profile itself is gone (archived or unknown), not just this route.
 function gone(status: number, body: unknown): boolean {
-  const error = (body as { error?: unknown } | null)?.error
+  const error = body !== null && typeof body === 'object' && 'error' in body ? body.error : undefined
   return status === 410 || (status === 404 && typeof error === 'string' && error.startsWith('unknown profile:'))
 }
 
@@ -35,8 +36,9 @@ async function open(path: string, init: RequestInit): Promise<Response> {
   let body: unknown = null
   try { body = await response.json() } catch { /* a non-JSON error keeps its status line */ }
   if (gone(response.status, body)) onProfileGone('sse ' + response.status)
-  const detail = (body as { detail?: unknown; error?: unknown } | null)
-  throw new ApiError(String(detail?.detail ?? detail?.error ?? `${init.method} ${path} -> ${response.status}`),
+  const detail = body !== null && typeof body === 'object'
+    ? ('detail' in body ? body.detail : 'error' in body ? body.error : undefined) : undefined
+  throw new ApiError(String(detail ?? `${init.method} ${path} -> ${response.status}`),
     response.status, body)
 }
 
@@ -47,7 +49,7 @@ function stream(path: string, init: RequestInit, handlers: Handlers): () => void
     handlers.onOpen?.()
     return response
   })).subscribe({
-    next: (event) => handlers.onEvent(event),
+    next: (event) => handlers.onEvent(parse(AguiEvent, event, 'AG-UI event')),
     error: (error) => { if (!controller.signal.aborted) handlers.onError?.(error instanceof Error ? error : new Error(String(error))) },
     complete: () => { if (!controller.signal.aborted) handlers.onEnd?.() },
   })

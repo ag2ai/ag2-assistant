@@ -1,8 +1,4 @@
-"""The AG-UI projection: AG2 and assistant events re-expressed as AG-UI events.
-
-One `Projector` serves live events and a stored Event log alike, and message ids are
-derived from the log, so both give the same ids. Nothing here is persisted.
-"""
+"""Project live and stored AG2 events as AG-UI events with stable message ids."""
 
 import json
 from collections.abc import Iterable
@@ -87,6 +83,7 @@ class Projector:
     def __init__(self) -> None:
         self._anchor = ""
         self._streaming: str | None = None
+        self._content: list[str] = []
         self._calls: set[str] = set()
         self._results: set[str] = set()
 
@@ -158,6 +155,7 @@ class Projector:
         if self._streaming is None:
             return []
         message_id, self._streaming = self._streaming, None
+        self._content.clear()
         return [TextMessageEndEvent(message_id=message_id)]
 
     def _model_message_id(self) -> str:
@@ -184,11 +182,13 @@ class Projector:
         out: list[Event] = []
         if self._streaming is None:
             self._streaming = self._model_message_id()
+            self._content = []
             out.append(
                 TextMessageStartEvent(
                     message_id=self._streaming, role="assistant", timestamp=_ms(event)
                 )
             )
+        self._content.append(event.content)
         out.append(
             TextMessageContentEvent(
                 message_id=self._streaming, delta=event.content, timestamp=_ms(event)
@@ -201,11 +201,12 @@ class Projector:
         content = event.content
         out: list[Event] = []
         stamp = {"created_at": event.created_at}
-        if self._streaming is not None:
+        if self._streaming is not None and (not content or content == "".join(self._content)):
             out.append(
                 TextMessageEndEvent(message_id=message_id, timestamp=_ms(event), raw_event=stamp)
             )
         elif content:
+            out += self.close()
             out += [
                 TextMessageStartEvent(
                     message_id=message_id, role="assistant", timestamp=_ms(event)
@@ -214,6 +215,7 @@ class Projector:
                 TextMessageEndEvent(message_id=message_id, timestamp=_ms(event), raw_event=stamp),
             ]
         self._streaming = None
+        self._content.clear()
         return out
 
     def _tool_calls(self, event: ToolCallsEvent) -> list[Event]:

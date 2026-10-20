@@ -1,10 +1,10 @@
 // AG-UI events as the gateway projects them, for tests that fold or replay a thread.
-import type { BaseEvent } from '@ag-ui/client'
+import { AguiEvent } from '../schemas/agui.ts'
 
-const ev = (type: string, fields: Record<string, unknown>): BaseEvent => ({ type, ...fields }) as BaseEvent
+const ev = (type: string, fields: Record<string, unknown>): AguiEvent => AguiEvent.parse({ type, ...fields })
 
 // A whole text message: START, CONTENT, END. `stamp` is the log time an assistant END carries.
-export function say(role: 'user' | 'assistant', messageId: string, text: string, seconds: number): BaseEvent[] {
+export function say(role: 'user' | 'assistant', messageId: string, text: string, seconds: number): AguiEvent[] {
   const timestamp = seconds * 1000
   return [
     ev('TEXT_MESSAGE_START', { messageId, role, timestamp }),
@@ -13,11 +13,11 @@ export function say(role: 'user' | 'assistant', messageId: string, text: string,
   ]
 }
 
-export function custom(name: string, value: Record<string, unknown>): BaseEvent {
+export function custom(name: string, value: Record<string, unknown>): AguiEvent {
   return ev('CUSTOM', { name, value })
 }
 
-export function toolCall(toolCallId: string, toolCallName: string, args: unknown, seconds = 0): BaseEvent[] {
+export function toolCall(toolCallId: string, toolCallName: string, args: unknown, seconds = 0): AguiEvent[] {
   const timestamp = seconds * 1000
   return [
     ev('TOOL_CALL_START', { toolCallId, toolCallName, timestamp }),
@@ -26,14 +26,14 @@ export function toolCall(toolCallId: string, toolCallName: string, args: unknown
   ]
 }
 
-export const activity = (content: Record<string, unknown>, messageId = 'surface-s'): BaseEvent =>
+export const activity = (content: Record<string, unknown>, messageId = 'surface-s'): AguiEvent =>
   ev('ACTIVITY_SNAPSHOT', { messageId, activityType: 'a2ui-surface', content, replace: true })
 
-export const runStarted = (): BaseEvent => ev('RUN_STARTED', { threadId: 'c', runId: 'r' })
+export const runStarted = (): AguiEvent => ev('RUN_STARTED', { threadId: 'c', runId: 'r' })
 
-export const runFinished = (outcome: Record<string, unknown> = { type: 'success' }): BaseEvent =>
+export const runFinished = (outcome: Record<string, unknown> = { type: 'success' }): AguiEvent =>
   ev('RUN_FINISHED', { threadId: 'c', runId: 'r', outcome })
 
-export const runError = (message: string): BaseEvent => ev('RUN_ERROR', { message })
+export const runError = (message: string): AguiEvent => ev('RUN_ERROR', { message })
 
 export const raw = ev

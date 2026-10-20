@@ -64,8 +64,8 @@ const AGUI_SUB: Record<string, string> = {
 
 // Describe a wire event for the inspector.
 export function describe(type: string | null | undefined): Ag2Tag {
-  if ((type || '').startsWith('ag-ui.')) {
-    const t = (type as string).slice('ag-ui.'.length)
+  if (type?.startsWith('ag-ui.')) {
+    const t = type.slice('ag-ui.'.length)
     return { sub: AGUI_SUB[t] || 'Stream', label: t, layer: 'app' }
   }
   const t = tail(type)

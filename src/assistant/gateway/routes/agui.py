@@ -1,8 +1,4 @@
-"""AG-UI: a Chat's run (POST -> SSE) and its subscription outside runs (GET -> SSE).
-
-The thread id is the Chat id. Pairs with gateway/agui/ (the projection and sessions) and
-ADR 0048; both endpoints answer a stream, so neither names a response model.
-"""
+"""AG-UI runs and subscriptions, with REST actions on the same Chat's stream."""
 
 import asyncio
 import contextlib
@@ -23,6 +19,7 @@ from assistant.a2ui import A2UI_SERVER_ACTIONS
 from assistant.events import (
     A2UIActionSubmitted,
     A2UISurfaceDataUpdated,
+    Attachment,
     FeedbackCleared,
     FeedbackGiven,
 )
@@ -185,7 +182,11 @@ def build_profile_router(d: GatewayDeps, get_runtime, *, surfaces: Mapping[str, 
         running, and the client then runs it as a new one."""
         attachments = decode_attachments(req.attachments)
         gateway = runtime.require_gateway()
-        return {"fed": await gateway.feed_message(req.text, chat_id, attachments)}
+        if not await gateway.feed_message(req.text, chat_id, attachments):
+            return {"fed": False}
+        for path, name in persist_uploads(runtime.require_config().workspace_dir, req.attachments):
+            await gateway.emit_event(chat_id, Attachment(path, name=name))
+        return {"fed": True}
 
     @r.post("/chats/{chat_id}/feedback", response_model=Ok)
     async def feedback(

@@ -2,13 +2,12 @@
 // and fold through project.ts; everything AG-UI names natively folds here.
 
 import { EventType } from '@ag-ui/client'
-import type { BaseEvent } from '@ag-ui/client'
+import type { AguiEvent } from './schemas/agui.ts'
 import { addTool, clearA2UIActionStatus, ensureSubagent, errorText, foldEvent, resultPreview, stopCompaction } from './project.ts'
 import { nextItemId as nid } from './lib/ids.ts'
 import type { ThreadItem } from './schemas/events.ts'
 
 type Msg = Extract<ThreadItem, { kind: 'user' | 'agent' }>
-type Fields = Record<string, any>
 
 // What a fold carries between events: messages being built and tool calls being spoken.
 export class AguiState {
@@ -18,7 +17,7 @@ export class AguiState {
 
 const ROOT_AGENT_NAMES = new Set(['ag2-assistant'])
 
-function seconds(ev: Fields): number | undefined {
+function seconds(ev: AguiEvent): number | undefined {
   return typeof ev.timestamp === 'number' ? ev.timestamp / 1000 : undefined
 }
 
@@ -31,31 +30,35 @@ function subagent(items: ThreadItem[], taskId: string) {
 }
 
 // Whether the run is in flight after this event; undefined when it says nothing about it.
-export function runningAfter(ev: BaseEvent): boolean | undefined {
+export function runningAfter(ev: AguiEvent): boolean | undefined {
   if (ev.type === EventType.RUN_STARTED) return true
   if (ev.type === EventType.RUN_FINISHED || ev.type === EventType.RUN_ERROR) return false
   return undefined
 }
 
-export function foldAgui(items: ThreadItem[], event: BaseEvent, state: AguiState): ThreadItem[] {
-  const ev = event as Fields
-  const at = seconds(ev)
+export function foldAgui(items: ThreadItem[], event: AguiEvent, state: AguiState): ThreadItem[] {
+  const at = seconds(event)
   const before = items.length
   try {
-    fold(items, ev, state)
+    fold(items, event, state)
   } catch (err) {
-    console.warn(`[project] ${ev.type}`, err)
+    console.warn(`[project] ${event.type}`, err)
   }
   for (let i = before; i < items.length; i++) items[i].at ??= at
   return items
 }
 
-function fold(items: ThreadItem[], ev: Fields, state: AguiState): void {
+function fold(items: ThreadItem[], ev: AguiEvent, state: AguiState): void {
   switch (ev.type) {
     case EventType.TEXT_MESSAGE_START: {
       const id: string = ev.messageId
-      if (message(items, id)) break            // already drawn (history met the live stream)
+      const existing = message(items, id)
       state.open.add(id)
+      if (existing) {
+        existing.text = ''
+        if (existing.kind === 'agent') existing.streaming = true
+        break
+      }
       if (ev.role === 'user') {
         stopCompaction(items)
         items.push({ id: nid(), kind: 'user', text: '', msg: id })
@@ -140,7 +143,7 @@ function fold(items: ThreadItem[], ev: Fields, state: AguiState): void {
     }
     case EventType.ACTIVITY_SNAPSHOT: {
       if (ev.activityType !== 'a2ui-surface') break
-      const content: Fields = ev.content ?? {}
+      const content = ev.content
       const type = typeof content.file_path === 'string' ? 'CardInstanceReference'
         : typeof content.draft_id === 'string' ? 'EphemeralCard' : 'A2UISurface'
       foldEvent(items, { type, data: content })
@@ -150,7 +153,8 @@ function fold(items: ThreadItem[], ev: Fields, state: AguiState): void {
       foldEvent(items, { type: ev.name, data: ev.value ?? {} })
       break
     case EventType.RUN_FINISHED: {
-      for (const interrupt of ev.outcome?.interrupts ?? []) {
+      if (ev.outcome?.type !== 'interrupt') break
+      for (const interrupt of ev.outcome.interrupts) {
         foldEvent(items, {
           type: 'InquiryRaised',
           data: {
