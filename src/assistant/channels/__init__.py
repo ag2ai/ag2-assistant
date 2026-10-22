@@ -1,5 +1,6 @@
 """AG2 Assistant channel adapters — messaging-platform frontends to the gateway."""
 
+from assistant.channels.ag2space import AG2SpaceChannel
 from assistant.channels.base import Channel, InboundMessage, should_respond
 from assistant.channels.discord import DiscordChannel
 from assistant.channels.router import AvailableProfile, ChannelRouter, Choose, Outcome
@@ -14,6 +15,8 @@ TOKEN_ARGS = {
     "DISCORD_BOT_TOKEN": "token",
     "SLACK_BOT_TOKEN": "bot_token",
     "SLACK_APP_TOKEN": "app_token",
+    "AG2SPACE_WORKSPACE": "workspace",
+    "AG2SPACE_OWNER": "owner",
 }
 
 __all__ = [
@@ -37,4 +40,6 @@ def get_channel(platform: str, **kwargs) -> Channel:
         return DiscordChannel(**kwargs)
     if platform == "slack":
         return SlackChannel(**kwargs)
+    if platform == "ag2space":
+        return AG2SpaceChannel(**kwargs)
     raise ValueError(f"Unknown channel platform: {platform}")

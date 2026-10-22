@@ -26,6 +26,10 @@ CODE_TTL = 10 * 60.0
 # invitation is refused rather than left pending.
 HANDLE_PLATFORMS = ("telegram", "discord")
 
+# Platforms whose account ids are not numeric (a Matrix id): any value entered is the
+# id itself, authoritative at once, never a handle.
+OPAQUE_ID_PLATFORMS = ("ag2space",)
+
 
 @dataclass(frozen=True)
 class PairedAccount:
@@ -136,7 +140,7 @@ class PairingStore:
         if not value:
             raise ValueError("enter a numeric account id or a handle")
 
-        if value.isdigit():
+        if value.isdigit() or platform in OPAQUE_ID_PLATFORMS:
             account = PairedAccount(connection=connection, account_id=value)
         else:
             handle = normalise_handle(value)

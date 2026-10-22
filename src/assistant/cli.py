@@ -33,6 +33,7 @@ from assistant.hitl import DesktopAsker
 from assistant.integrations.google_auth import GoogleAuth
 from assistant.memory import clear_profile, read_profile
 from assistant.onboarding import needs_onboarding, run_onboarding
+from assistant.pairing import PairingStore
 from assistant.paths import Paths
 from assistant.permissions import PermissionStore, command_rule, parse_command_rule
 from assistant.profiles import ProfileRegistry
@@ -816,6 +817,10 @@ async def _serve_channel(platform: str, label: str, *, memory: bool) -> None:
     cid, tokens = _cli_connection(platform, paths)
     ConnectionStore(paths).adopt_peer_senders()
     channel = get_channel(platform, connection=cid, **tokens)
+    # An adapter run for one account (AG2 Space's owner) serves that account unasked.
+    owner = getattr(channel, "owner", "")
+    if owner:
+        PairingStore(paths).add_account(cid, owner, platform)
     router = _cli_router(gateway, cid, channel, paths)
     tasks.set_notifier(router.push)  # run outcomes -> this channel, past the same gates
     # Single-profile CLI: every message runs on the one gateway built here.
@@ -859,6 +864,16 @@ def slack(
 ) -> None:
     """Run AG2 Assistant on Slack (Socket Mode). Needs SLACK_BOT_TOKEN and SLACK_APP_TOKEN."""
     _run_channel("slack", "Slack", memory=memory)
+
+
+@app.command()
+def ag2space(
+    memory: bool = typer.Option(True, help="Enable persistent user-profile memory."),
+) -> None:
+    """Run AG2 Assistant on AG2 Space, over the relay bridge's task files. Needs
+    AG2SPACE_WORKSPACE (the directory holding tasks/, results/, state/) and
+    AG2SPACE_OWNER (the owner's Matrix id)."""
+    _run_channel("ag2space", "AG2 Space", memory=memory)
 
 
 @app.command()

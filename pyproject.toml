@@ -47,7 +47,12 @@ dev = [
     "types-PyYAML>=6.0",
     "pre-commit>=4.0.0",
     "types-jsonschema>=4.26.0.20260518",
+    # the AG2 Space channel's tests parse the relay's task files with its own parser
+    "ag2-sparrow>=0.5.4",
 ]
+# The AG2 Space channel: the relay client whose task-file parser it reuses.
+# Opt-in: `pip install "ag2-assistant[ag2space]"`.
+ag2space = ["ag2-sparrow>=0.5.4"]
 # Provider client libraries not in the base install.
 # Opt-in: `pip install "ag2-assistant[ollama]"`.
 anthropic = ["ag2[anthropic]>=1.1.2"]
@@ -102,7 +107,7 @@ check_untyped_defs = true
 # No stubs and no type marker. Named individually rather than with a global
 # ignore_missing_imports, which would also silence future unresolved imports.
 [[tool.mypy.overrides]]
-module = ["cron_descriptor.*", "googleapiclient.*", "google_auth_oauthlib.*"]
+module = ["cron_descriptor.*", "googleapiclient.*", "google_auth_oauthlib.*", "ag2_sparrow.*"]
 ignore_missing_imports = true
 
 [tool.codespell]

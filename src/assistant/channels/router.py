@@ -30,7 +30,7 @@ ATTACHMENT_UNREADABLE = "I sent you a file, but it could not be read."
 
 # Platforms with a command surface. Discord and Slack have none (ADR 0022): they sit
 # in their Channel's default profile, and a leading slash there is just words.
-COMMAND_PLATFORMS = ("telegram",)
+COMMAND_PLATFORMS = ("telegram", "ag2space")
 
 # Said when a message has no profile to land in.
 NO_PROFILE = (

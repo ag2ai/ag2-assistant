@@ -93,10 +93,14 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+ag2space = [
+    { name = "ag2-sparrow" },
+]
 anthropic = [
     { name = "ag2", extra = ["anthropic"] },
 ]
 dev = [
+    { name = "ag2-sparrow" },
     { name = "mypy" },
     { name = "pre-commit" },
     { name = "pytest" },
@@ -121,6 +125,8 @@ requires-dist = [
     { name = "ag2", extras = ["anthropic"], marker = "extra == 'anthropic'", specifier = ">=1.1.2" },
     { name = "ag2", extras = ["gemini", "ddgs", "openai", "acp", "ag-ui"], specifier = ">=1.1.2" },
     { name = "ag2", extras = ["ollama"], marker = "extra == 'ollama'", specifier = ">=1.1.2" },
+    { name = "ag2-sparrow", marker = "extra == 'ag2space'", specifier = ">=0.5.4" },
+    { name = "ag2-sparrow", marker = "extra == 'dev'", specifier = ">=0.5.4" },
     { name = "beautifulsoup4", specifier = ">=4.12.0" },
     { name = "cron-descriptor", specifier = ">=1.4" },
     { name = "cronsim", specifier = ">=2.7" },
@@ -150,7 +156,16 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
     { name = "websockets", specifier = ">=15" },
 ]
-provides-extras = ["dev", "anthropic", "ollama", "google"]
+provides-extras = ["dev", "ag2space", "anthropic", "ollama", "google"]
+
+[[package]]
+name = "ag2-sparrow"
+version = "0.6.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b2/c2/69bfe0145127033681345ebebf862564fe0c9d4edd3f02c54f402b549949/ag2_sparrow-0.6.0.tar.gz", hash = "sha256:a69eef2953e2629300af4f8135609a9f9de676b157bd0130ce99a0649ee23629", size = 791340, upload-time = "2026-10-22T01:29:25.635Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/80/0f/824d359b2b0ebb2a4f8eafa5a7912cde10cd5415a2db5e664381f261fdd6/ag2_sparrow-0.6.0-py3-none-any.whl", hash = "sha256:59cf197d7b7c2f1b82733744efb0c63bc5238182efe3e6ada4127d76f10144f9", size = 540329, upload-time = "2026-10-22T01:29:23.914Z" },
+]
 
 [[package]]
 name = "agent-client-protocol"

@@ -268,7 +268,7 @@ the selected configuration has no key. Diagnostic settings tools remain availabl
 
 ### 5.9 Channels — `src/assistant/channels/*`
 
-`Channel` adapters (`telegram.py`, `discord.py`, `slack.py`) normalize inbound
+`Channel` adapters (`telegram.py`, `discord.py`, `slack.py`, `ag2space.py`) normalize inbound
 messages to `InboundMessage`, hand them to the shared `ChannelRouter`
 (`router.py`) and render the platform-neutral `Outcome` it returns —
 `Reply` / `Choose` / `Refuse` / `Ack` / `Nothing` — formatting per platform

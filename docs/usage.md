@@ -291,6 +291,34 @@ profile while your DM sits in another. Switching moves that conversation to a fr
 chat (a chat cannot cross profiles); the one you left is untouched. `/profile` works in
 DMs only — a group's profile is set from **Settings → Channels**.
 
+### AG2 Space
+
+AG2 Space runs the assistant inside a cloud instance pod, next to a relay bridge
+(`ag2-sparrow`) that turns room messages into files. The channel speaks that file
+protocol, so it needs no bot token: install the extra and point it at the workspace.
+
+```bash
+pip install "ag2-assistant[ag2space]"
+```
+
+```env
+AG2SPACE_WORKSPACE=/sutando/workspace   # holds tasks/, results/, state/
+AG2SPACE_OWNER=@you:ag2.space           # the account the instance answers to
+```
+
+```bash
+ag2-assistant ag2space
+# AG2 Assistant is live on AG2 Space. Press Ctrl+C to stop.
+```
+
+Every task file the bridge writes becomes one message in the room's own chat, and the
+reply becomes the result file the bridge posts back. Only owner-tier tasks run a turn;
+a guest or team message gets a fixed refusal. The owner is paired on start, so nothing
+has to be typed in the room first. A task created from a room reports each run's
+outcome back to that room: the channel writes a `results/proactive-*.txt` addressed to
+the room, which the bridge delivers whenever it runs. Questions a turn raises are posted
+as numbered text; a room has no buttons, so answer them in the browser.
+
 ### Discord
 
 1. Create an application + bot at the [Discord Developer Portal](https://discord.com/developers/applications).

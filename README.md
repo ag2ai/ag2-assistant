@@ -76,7 +76,7 @@ The primary interface is the Svelte web UI served at `/` (→ `/app`). It includ
 - **Chat** — multi-turn conversations with live, streamed agent events (tool calls, code runs, web searches) rendered inline. Attach images or documents and ask about them.
 - **Rich answers** — where structure beats prose, the agent renders a live surface instead: a weather panel, market board, news digest, agenda, inbox brief, or decision matrix.
 - **Steer or stop a turn while it runs** — send a message mid-turn and the agent folds it into the work it's already doing, or hit **Stop** to end the turn — keeping whatever it produced up to that point, so the conversation carries on with that context.
-- **Tasks** — standing jobs the agent runs on a schedule. A task is just a prompt + an optional model + a schedule (hourly/daily/weekly/weekdays, custom cron, one-shot, or manual), editable in place at any time — or created for you by the agent from chat. Every run is a real chat: open it to watch the agent work, steer it mid-run, stop it, or keep talking in it after it finishes. Recent run outcomes feed the next run, and tasks created from Telegram/Slack/Discord report their results back there.
+- **Tasks** — standing jobs the agent runs on a schedule. A task is just a prompt + an optional model + a schedule (hourly/daily/weekly/weekdays, custom cron, one-shot, or manual), editable in place at any time — or created for you by the agent from chat. Every run is a real chat: open it to watch the agent work, steer it mid-run, stop it, or keep talking in it after it finishes. Recent run outcomes feed the next run, and tasks created from Telegram/Slack/Discord/AG2 Space report their results back there.
 - **It asks when it's unsure** — mid-task the agent can put a question to you (with tappable options) and resume with your answer, in the web UI or on a connected channel.
 - **Image generation** — generated images are saved to the shared workspace and shown as clickable inline thumbnails.
 - **Files** — browse, preview, download and delete everything the assistant has saved.
@@ -159,6 +159,7 @@ ag2-assistant google login              # connect Gmail/Calendar/Drive (also: lo
 
 ag2-assistant telegram                  # run on Telegram   (needs TELEGRAM_BOT_TOKEN)
 ag2-assistant discord                   # run on Discord    (needs DISCORD_BOT_TOKEN)
+ag2-assistant ag2space                  # run on AG2 Space  (needs AG2SPACE_WORKSPACE + AG2SPACE_OWNER)
 ag2-assistant slack                     # run on Slack      (needs SLACK_BOT_TOKEN + SLACK_APP_TOKEN)
 ```
 
@@ -271,7 +272,7 @@ Install-wide state lives under `~/.ag2assistant/` — the global `config.yaml` (
 - [x] Voice (Gemini Live / OpenAI realtime over a browser audio bridge)
 - [x] Folders — install-wide registry with per-profile/per-chat read & read+write grants; user-extensible MCP servers
 - [x] Google — Gmail, Calendar, Drive
-- [x] Channels: Telegram, Discord, Slack (DM + group @mention gating)
+- [x] Channels: Telegram, Discord, Slack (DM + group @mention gating), AG2 Space (relay task files)
 - [x] Skills — searches & installs from the skills.sh registry, runs them
 - [ ] More channels (WhatsApp)
 - [ ] Desktop / mobile clients

@@ -34,7 +34,7 @@ def _norm_accent(accent: str) -> str:
 
 # The canonical messaging platforms a channel can run on. This is the single
 # source of truth for platform names.
-CHANNEL_PLATFORMS = ("telegram", "discord", "slack")
+CHANNEL_PLATFORMS = ("telegram", "discord", "slack", "ag2space")
 
 # Platform → env vars that must ALL be present for its channel to run. Lives here
 # (dependency-light) so both ProfileManager and the secrets store can import it
@@ -43,6 +43,8 @@ CHANNEL_TOKEN_ENVS = {
     "telegram": ("TELEGRAM_BOT_TOKEN",),
     "discord": ("DISCORD_BOT_TOKEN",),
     "slack": ("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"),
+    # AG2 Space has no bot token: the pod's workspace directory and the owner's Matrix id.
+    "ag2space": ("AG2SPACE_WORKSPACE", "AG2SPACE_OWNER"),
 }
 assert set(CHANNEL_TOKEN_ENVS) == set(CHANNEL_PLATFORMS)
 

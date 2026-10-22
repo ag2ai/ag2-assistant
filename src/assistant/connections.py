@@ -15,7 +15,13 @@ from assistant.secrets import SecretStore
 
 # What a Connection of each platform is called when the user does not name it ("acp"
 # is display-only here; it stays out of CHANNEL_PLATFORMS/CHANNEL_TOKEN_ENVS).
-PLATFORM_TITLES = {"telegram": "Telegram", "discord": "Discord", "slack": "Slack", "acp": "ACP"}
+PLATFORM_TITLES = {
+    "telegram": "Telegram",
+    "discord": "Discord",
+    "slack": "Slack",
+    "ag2space": "AG2 Space",
+    "acp": "ACP",
+}
 
 # Platforms whose direct messages and groups are exposed independently.
 SPLIT_PLATFORMS = ("telegram",)
