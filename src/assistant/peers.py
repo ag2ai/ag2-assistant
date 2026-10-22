@@ -40,6 +40,10 @@ class Peer:
     # The Pending override (ADR 0025): a Text model chosen while Attached to nothing,
     # which the next message's Chat is born on. Dropped on detach, attach, or a switch.
     pending_model: str | None = None
+    # Where this conversation's unsolicited messages belong when the platform's own
+    # chat id is not durable (an ACP session: reconnect = new session). Declared by
+    # the client; None means the chat id itself.
+    destination: str | None = None
 
 
 def _peer(entry: dict) -> Peer:
@@ -56,6 +60,7 @@ def _peer(entry: dict) -> Peer:
         # Absent on an entry written before the Pending override existed, and absent
         # reads as holding nothing.
         pending_model=entry.get("pending_model") or None,
+        destination=entry.get("destination") or None,
     )
 
 
@@ -236,6 +241,17 @@ class PeerStore:
         chat = f"{origin}-{secrets.token_hex(4)}"
         self.attach(connection, chat_id, chat, platform=platform, surface=surface, sender=sender)
         return chat
+
+    def set_destination(self, connection: str, chat_id: str, destination: str | None) -> Peer:
+        """Record where this conversation's unsolicited messages belong; None clears it.
+        The Peer must already exist: a destination belongs to a conversation that has
+        spoken, it is not a way to create one."""
+        with self._transaction() as entries:
+            index = _index(entries, connection, chat_id)
+            if index is None:
+                raise KeyError(f"no peer for {connection}/{chat_id}")
+            peer = replace(_peer(entries[index]), destination=destination or None)
+            return self._save(entries, index, peer)
 
     def set_pending_model(self, connection: str, chat_id: str, model: str) -> Peer:
         """Hold ``model`` for the Chat this conversation's next message starts, the empty

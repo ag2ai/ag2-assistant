@@ -57,7 +57,9 @@ def _origin(peers: PeerStore | None, context) -> tuple[str | None, str | None]:
     sid = str(getattr(getattr(context, "stream", None), "id", "") or "")
     peer = peers.peer_for_chat(sid) if peers is not None and sid else None
     if peer is not None and peer.connection and peer.platform in PUSH_CHANNELS:
-        return peer.connection, peer.chat_id
+        # A declared destination outranks the platform's chat id: an ACP session id
+        # does not survive a reconnect, the room it was opened for does.
+        return peer.connection, peer.destination or peer.chat_id
     return None, None
 
 
