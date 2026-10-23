@@ -6,38 +6,20 @@ wraps the bound profile's agent in ``ACPAgent``, which the fake lacks the surfac
 for (mirrors tests/test_acp_lifecycle.py).
 """
 
-import socket
-
 import pytest
-from ag2 import Agent as Ag2Agent
-from ag2.testing import TestConfig
 from fastapi.testclient import TestClient
 
 from assistant.gateway.app import create_app
 from assistant.profiles import ProfileRegistry
-from tests.support.apps import make_manager, make_paths, no_loopback_code_reader
-from tests.support.fakes import fake_agent_factory
+from tests.support.apps import free_port, make_manager, make_paths, no_loopback_code_reader
+from tests.support.fakes import pong_agent_factory
 
 LISTENER_KEYS = {"id", "name", "profile", "port", "running", "error", "has_token"}
 
 
-def _free_port() -> int:
-    """A loopback port nothing is listening on yet — released before the caller binds it."""
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
-
-
-def _pong_factory():
-    """A real, ACP-wrappable Agent that always replies "pong"."""
-    return fake_agent_factory(
-        agent=lambda config, **kwargs: Ag2Agent(name="acp-settings-test", config=TestConfig("pong"))
-    )
-
-
 def _app(paths):
     return create_app(
-        make_manager(paths, agent_factory=_pong_factory()), code_reader=no_loopback_code_reader
+        make_manager(paths, agent_factory=pong_agent_factory()), code_reader=no_loopback_code_reader
     )
 
 
@@ -62,7 +44,7 @@ def test_the_listener_list_is_empty_on_a_fresh_install(bare):
 
 def test_creating_starts_it_and_returns_the_token_exactly_once(profiled):
     client, pid = profiled
-    port = _free_port()
+    port = free_port()
     r = client.post(
         "/api/acp/listeners", json={"profile": pid, "port": port, "name": "Space · work"}
     )
@@ -89,7 +71,7 @@ def test_creating_starts_it_and_returns_the_token_exactly_once(profiled):
 
 def test_a_supplied_token_is_kept_and_still_only_answered_once(profiled):
     client, pid = profiled
-    port = _free_port()
+    port = free_port()
     r = client.post(
         "/api/acp/listeners", json={"profile": pid, "port": port, "token": "s3cret-value"}
     )
@@ -98,7 +80,7 @@ def test_a_supplied_token_is_kept_and_still_only_answered_once(profiled):
 
 
 def test_an_unknown_profile_is_refused_before_anything_is_written(bare):
-    r = bare.post("/api/acp/listeners", json={"profile": "nope", "port": _free_port()})
+    r = bare.post("/api/acp/listeners", json={"profile": "nope", "port": free_port()})
     assert r.status_code == 400
     assert "unknown profile" in r.json()["error"]
     assert bare.get("/api/acp/listeners").json() == {"listeners": []}
@@ -108,7 +90,7 @@ def test_a_taken_port_creates_a_record_that_reads_as_unreachable(profiled):
     """Creation still answers 200 — the honesty pattern channels use for a bad
     token: the record exists, and `error` says why it is not live."""
     client, pid = profiled
-    port = _free_port()
+    port = free_port()
     first = client.post("/api/acp/listeners", json={"profile": pid, "port": port}).json()
     assert first["listener"]["running"] is True
 
@@ -123,7 +105,7 @@ def test_a_taken_port_creates_a_record_that_reads_as_unreachable(profiled):
 
 def test_stop_and_start_flip_the_running_flag(profiled):
     client, pid = profiled
-    port = _free_port()
+    port = free_port()
     cid = client.post("/api/acp/listeners", json={"profile": pid, "port": port}).json()["listener"][
         "id"
     ]
@@ -140,7 +122,7 @@ def test_stop_and_start_flip_the_running_flag(profiled):
 
 def test_rotating_the_token_answers_a_new_one_and_restarts(profiled):
     client, pid = profiled
-    port = _free_port()
+    port = free_port()
     created = client.post(
         "/api/acp/listeners", json={"profile": pid, "port": port, "token": "old-token"}
     ).json()
@@ -158,7 +140,7 @@ def test_rotating_the_token_answers_a_new_one_and_restarts(profiled):
 
 def test_deleting_stops_it_and_forgets_the_record_and_token(profiled):
     client, pid = profiled
-    port = _free_port()
+    port = free_port()
     cid = client.post("/api/acp/listeners", json={"profile": pid, "port": port}).json()["listener"][
         "id"
     ]

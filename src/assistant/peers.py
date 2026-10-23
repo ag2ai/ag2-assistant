@@ -40,9 +40,7 @@ class Peer:
     # The Pending override (ADR 0025): a Text model chosen while Attached to nothing,
     # which the next message's Chat is born on. Dropped on detach, attach, or a switch.
     pending_model: str | None = None
-    # Where this conversation's unsolicited messages belong when the platform's own
-    # chat id is not durable (an ACP session: reconnect = new session). Declared by
-    # the client; None means the chat id itself.
+    # The declared destination for unsolicited messages; None uses the chat id.
     destination: str | None = None
 
 
@@ -243,9 +241,7 @@ class PeerStore:
         return chat
 
     def set_destination(self, connection: str, chat_id: str, destination: str | None) -> Peer:
-        """Record where this conversation's unsolicited messages belong; None clears it.
-        The Peer must already exist: a destination belongs to a conversation that has
-        spoken, it is not a way to create one."""
+        """Persist the destination declared by an existing Peer."""
         with self._transaction() as entries:
             index = _index(entries, connection, chat_id)
             if index is None:

@@ -1,12 +1,4 @@
-"""An ACP session's destination and the listener's outbound delivery (ADR 0049).
-
-A client says on ``session/new`` where that session's unsolicited messages belong;
-the Peer keeps it, a Task created in the session records it as its origin, and a
-task-run outcome reaches the client as an ``_ag2/notify`` extension notification,
-queued in a durable outbox while no receiver is connected. A receiver is a client
-that said ``_meta["ag2/receive"] = true`` on ``initialize``; a probe that did not
-is never flushed to.
-"""
+"""ACP destination tracking and durable outcome delivery to declared receivers."""
 
 import asyncio
 import json
@@ -14,6 +6,8 @@ from types import SimpleNamespace
 
 import acp
 import pytest
+from acp import connect_to_agent
+from acp.ws.client import create_websocket_stream
 from ag2.acp.testing import connect
 
 from assistant.acp.outbound import (
@@ -26,9 +20,10 @@ from assistant.acp.outbound import (
 )
 from assistant.channels.base import PUSH_CHANNELS
 from assistant.peers import PeerStore
+from assistant.profiles import ProfileRegistry
 from assistant.system_tools import _origin
-from tests.support.apps import make_manager
-from tests.test_acp_chats import _new_profile, _served
+from tests.support.apps import free_port, make_acp_agent, make_manager, wait_listening
+from tests.support.fakes import ScriptedModels, fake_summary_factory, pong_agent_factory
 
 ROOM = "!room:ag2.space"
 
@@ -81,8 +76,8 @@ def test_a_peer_remembers_its_destination(paths):
 
 
 async def test_session_new_metadata_becomes_the_peers_destination_and_the_tasks_origin(paths):
-    pid = _new_profile(paths)
-    served, _storage, _config = _served(paths, pid)
+    pid = ProfileRegistry(paths).create_profile("Work", "#109e91").id
+    served, _storage, _config = make_acp_agent(paths, pid)
     async with connect(served) as (client, _recorder):
         session = await client.new_session(cwd=".", **{DESTINATION_META_KEY: {"chat_id": ROOM}})
         await client.prompt(session_id=session.session_id, prompt=[acp.text_block("hi")])
@@ -95,8 +90,8 @@ async def test_session_new_metadata_becomes_the_peers_destination_and_the_tasks_
 
 
 async def test_a_session_without_a_destination_keeps_the_session_id_as_origin(paths):
-    pid = _new_profile(paths)
-    served, _storage, _config = _served(paths, pid)
+    pid = ProfileRegistry(paths).create_profile("Work", "#109e91").id
+    served, _storage, _config = make_acp_agent(paths, pid)
     async with connect(served) as (client, _recorder):
         session = await client.new_session(cwd=".")
         await client.prompt(session_id=session.session_id, prompt=[acp.text_block("hi")])
@@ -148,12 +143,15 @@ async def test_the_outbox_is_flushed_in_order_when_a_client_connects(tmp_path):
     await out.notify(ROOM, "first")
     await out.notify(ROOM, "second")
     client = FakeClient()
-    assert await out.flush(client) == 2
+    out.attach(client)
+    assert await out.flush() == 2
     assert [p["text"] for _, p in client.sent] == ["first", "second"]
     assert out.pending() == []
     # A flush that fails midway keeps what was not sent.
+    out.detach(client)
     await out.notify(ROOM, "third")
-    assert await out.flush(FakeClient(fail=ConnectionError("closed"))) == 0
+    out.attach(FakeClient(fail=ConnectionError("closed")))
+    assert await out.flush() == 0
     assert [p["text"] for p in out.pending()] == ["third"]
 
 
@@ -161,6 +159,195 @@ async def test_an_unreadable_outbox_reads_as_empty(tmp_path):
     (tmp_path / "outbox").mkdir()
     (tmp_path / "outbox" / "cn-1.json").write_text("{not json")
     assert Outbound("cn-1", tmp_path / "outbox").pending() == []
+
+
+async def test_overlapping_receivers_keep_the_unsent_message(tmp_path):
+    out = Outbound("cn-1", tmp_path / "outbox")
+    await out.notify(ROOM, "first")
+    await out.notify(ROOM, "second")
+    entered, release = asyncio.Event(), asyncio.Event()
+    delivered = []
+
+    class Receiver:
+        def __init__(self, slow=False):
+            self.slow = slow
+
+        async def ext_notification(self, method, params):
+            if params["text"] == "second":
+                raise ConnectionError("closed")
+            if self.slow:
+                entered.set()
+                await release.wait()
+            delivered.append(params["text"])
+
+    out.attach(Receiver(slow=True))
+    await asyncio.wait_for(entered.wait(), 5)
+    out.attach(Receiver())
+    await asyncio.sleep(0)
+    release.set()
+    assert await _until(lambda: out.connected == 0)
+    assert delivered == ["first"]
+    assert [entry["text"] for entry in out.pending()] == ["second"]
+
+
+@pytest.mark.parametrize("destination", [ROOM, "session-1"])
+@pytest.mark.parametrize("running", [True, False])
+async def test_completed_acp_task_reaches_the_listener_outbox(paths, destination, running):
+
+    pid = ProfileRegistry(paths).create_profile("Work", "#109e91").id
+    manager = make_manager(
+        paths, model_factory=ScriptedModels(), summary_factory=fake_summary_factory(summary="done")
+    )
+    await manager.start()
+    try:
+        cid = manager._connections.create_acp_connection(pid, port=free_port()).connection.id
+        ok, reason = await manager.start_acp_listener(cid)
+        assert ok, reason
+        if not running:
+            await manager.stop_acp_listener(cid)
+        peers = PeerStore(paths)
+        peers.start_chat(cid, "session-1", platform="acp")
+        peers.set_destination(cid, "session-1", ROOM)
+        tasks = manager.get(pid).tasks
+        task = await tasks.create_task(
+            name="nightly", prompt="report", origin_channel=cid, origin_chat=destination
+        )
+        run = await tasks.start_run(task["id"])
+        assert run is not None
+        await asyncio.wait_for(tasks._jobs_done(), 5)
+        assert (await tasks.get_run(run.id))["status"] == "completed"
+        pending = manager.acp_outbound[cid].pending()
+        assert len(pending) == 1
+        assert pending[0]["destination"] == destination
+        assert pending[0]["text"] == "✅ nightly: done"
+        assert pending[0]["connection"] == cid
+    finally:
+        await manager.close()
+
+
+async def test_task_outcomes_cannot_cross_acp_profiles(paths):
+    registry = ProfileRegistry(paths)
+    first = registry.create_profile("First", "#109e91").id
+    second = registry.create_profile("Second", "#109e91").id
+    manager = make_manager(paths, model_factory=ScriptedModels())
+    await manager.start()
+    try:
+        cid = manager._connections.create_acp_connection(first, port=free_port()).connection.id
+        ok, reason = await manager.start_acp_listener(cid)
+        assert ok, reason
+        tasks = manager.get(second).tasks
+        task = await tasks.create_task(
+            name="wrong profile", prompt="report", origin_channel=cid, origin_chat=ROOM
+        )
+        run = await tasks.start_run(task["id"])
+        assert run is not None
+        await asyncio.wait_for(tasks._jobs_done(), 5)
+        assert (await tasks.get_run(run.id))["status"] == "completed"
+        assert manager.acp_outbound[cid].pending() == []
+    finally:
+        await manager.close()
+
+
+async def test_live_outcomes_follow_a_blocked_backlog(tmp_path):
+    out = Outbound("cn-1", tmp_path / "outbox")
+    await out.notify(ROOM, "first")
+    await out.notify(ROOM, "second")
+    entered, release = asyncio.Event(), asyncio.Event()
+    delivered = []
+
+    class Receiver:
+        async def ext_notification(self, method, params):
+            if params["text"] == "first":
+                entered.set()
+                await release.wait()
+            delivered.append(params["text"])
+
+    out.attach(Receiver())
+    await asyncio.wait_for(entered.wait(), 5)
+    live = asyncio.create_task(out.notify(ROOM, "third"))
+    await asyncio.sleep(0)
+    release.set()
+    assert await asyncio.wait_for(live, 5)
+    assert delivered == ["first", "second", "third"]
+    assert out.pending() == []
+    await out.aclose()
+
+
+async def test_closing_a_blocked_flush_retains_the_outbox(tmp_path):
+    out = Outbound("cn-1", tmp_path / "outbox")
+    await out.notify(ROOM, "first")
+    entered = asyncio.Event()
+
+    class Receiver:
+        async def ext_notification(self, method, params):
+            entered.set()
+            await asyncio.Event().wait()
+
+    out.attach(Receiver())
+    await asyncio.wait_for(entered.wait(), 5)
+    await out.aclose()
+    restarted = Outbound("cn-1", tmp_path / "outbox")
+    receiver = FakeClient()
+    restarted.attach(receiver)
+    await restarted.flush()
+    assert [params["text"] for _, params in receiver.sent] == ["first"]
+    assert restarted.pending() == []
+    await restarted.aclose()
+
+
+async def test_stopping_a_listener_preserves_a_concurrent_outcome(paths):
+    pid = ProfileRegistry(paths).create_profile("Work", "#109e91").id
+    manager = make_manager(paths, model_factory=ScriptedModels())
+    await manager.start()
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    class Receiver:
+        async def ext_notification(self, method, params):
+            entered.set()
+            await release.wait()
+
+    try:
+        cid = manager._connections.create_acp_connection(pid, port=free_port()).connection.id
+        ok, reason = await manager.start_acp_listener(cid)
+        assert ok, reason
+        await wait_listening("127.0.0.1", manager._connections.get_acp_connection(cid).port)
+        manager.acp_outbound[cid].attach(Receiver())
+        first = asyncio.create_task(manager.get(pid).notify_channel(cid, ROOM, "first"))
+        await asyncio.wait_for(entered.wait(), 5)
+        await manager.stop_acp_listener(cid)
+        second = asyncio.create_task(manager.get(pid).notify_channel(cid, ROOM, "second"))
+        await asyncio.sleep(0)
+        release.set()
+        await asyncio.wait_for(asyncio.gather(first, second), 5)
+        assert [entry["text"] for entry in manager.acp_outbound[cid].pending()] == ["second"]
+    finally:
+        release.set()
+        await manager.close()
+
+
+async def test_cancelled_live_delivery_waiter_keeps_its_outcome(tmp_path):
+    out = Outbound("cn-1", tmp_path / "outbox")
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    class Receiver:
+        async def ext_notification(self, method, params):
+            entered.set()
+            await release.wait()
+
+    receiver = Receiver()
+    out.attach(receiver)
+    first = asyncio.create_task(out.notify(ROOM, "first"))
+    await asyncio.wait_for(entered.wait(), 5)
+    second = asyncio.create_task(out.notify(ROOM, "second"))
+    await asyncio.sleep(0)
+    second.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await second
+    out.detach(receiver)
+    release.set()
+    assert not await asyncio.wait_for(first, 5)
+    assert [entry["text"] for entry in out.pending()] == ["second"]
+    await out.aclose()
 
 
 # --- the manager routes an ACP listener's outcomes to its outbound side -------------------
@@ -206,26 +393,18 @@ class _WsClient:
 
 
 async def test_a_queued_outcome_reaches_the_next_websocket_client_to_bind(paths):
-    """The task service pushes an outcome while nobody is connected: it waits in the
-    outbox. A client that then dials in, as agent-connect does, receives it as
-    ``_ag2/notify`` right after the handshake, and a later push arrives live."""
-    from acp import connect_to_agent
-    from acp.ws.client import create_websocket_stream
-
-    from assistant.profiles import ProfileRegistry
-    from tests.test_acp_serve_ws import _wait_listening
-    from tests.test_gateway_acp import _free_port, _pong_factory
+    """A queued outcome reaches the next receiver; subsequent outcomes arrive live."""
 
     pid = ProfileRegistry(paths).create_profile("Work", "#109e91").id
-    manager = make_manager(paths, agent_factory=_pong_factory())
+    manager = make_manager(paths, agent_factory=pong_agent_factory())
     await manager.start()
     try:
-        port = _free_port()
+        port = free_port()
         token = "listener-token"  # noqa: S105 - test fixture
         cid = manager._connections.create_acp_connection(pid, port=port, token=token).connection.id
         ok, reason = await manager.start_acp_listener(cid)
         assert ok, reason
-        await _wait_listening("127.0.0.1", port)
+        await wait_listening("127.0.0.1", port)
 
         # Pushed with no client connected: queued, durably.
         await manager.notify_channel(cid, ROOM, "✅ nightly: done")
@@ -268,29 +447,18 @@ async def _until(cond, timeout: float = 5.0) -> bool:
 
 
 async def test_a_probe_that_does_not_declare_itself_a_receiver_leaves_the_outbox_alone(paths):
-    """A worker's startup check connects, initializes and hangs up, with no handler for
-    ``_ag2/notify`` — agent-connect's ``preflight`` does exactly this before its Room
-    Ops notifier exists. It must not be handed the outbox: everything queued while the
-    worker was down would vanish into it. Nothing is flushed or sent live to a client
-    that did not say ``ag2/receive`` on ``initialize``; the next client that does gets
-    all of it, in order."""
-    from acp import connect_to_agent
-    from acp.ws.client import create_websocket_stream
-
-    from assistant.profiles import ProfileRegistry
-    from tests.test_acp_serve_ws import _wait_listening
-    from tests.test_gateway_acp import _free_port, _pong_factory
+    """Startup probes preserve the backlog until a declared receiver connects."""
 
     pid = ProfileRegistry(paths).create_profile("Work", "#109e91").id
-    manager = make_manager(paths, agent_factory=_pong_factory())
+    manager = make_manager(paths, agent_factory=pong_agent_factory())
     await manager.start()
     try:
-        port = _free_port()
+        port = free_port()
         token = "listener-token"  # noqa: S105 - test fixture
         cid = manager._connections.create_acp_connection(pid, port=port, token=token).connection.id
         ok, reason = await manager.start_acp_listener(cid)
         assert ok, reason
-        await _wait_listening("127.0.0.1", port)
+        await wait_listening("127.0.0.1", port)
         out = manager.acp_outbound[cid]
 
         # Queued while the worker was down.

@@ -26,6 +26,12 @@ message waits in the outbox and is flushed, in order, to the next receiver that 
 `ProfileManager.notify_channel` routes a listener's Connection id there before looking for a
 Channel.
 
+Task outcomes pass through a profile-bound notifier: ACP destinations use the listener's
+profile binding, while messaging channels retain the router's pairing and exposure gates.
+A stopped listener can queue outcomes for its next start. Outbox writes and sends share one
+lock; each delivered entry is removed separately, and background flushing is cancelled when
+the listener stops. Live outcomes follow the existing backlog.
+
 **A receiver says so.** A client that can route `_ag2/notify` onward sets
 `_meta["ag2/receive"] = true` on `initialize`; the connection scope attaches it to the
 `Outbound` when that request lands. A client that connects without the declaration is never
@@ -55,8 +61,8 @@ inferred from capabilities because the SDK advertises none for extension notific
   Nothing is delivered to a client that does not declare, and the message stays queued; a
   client that declares and then drops the notification loses it, which is why agent-connect
   declares only on connections whose notifier is already installed.
-- Delivery is at-least-once in one case: a notification sent on a socket that dies before the
-  client acts on it is not retried, while one the socket refuses is. The outbox is per listener
-  and survives restarts.
+- An entry is removed after the transport accepts its notification. Relay posting is not
+  acknowledged to the listener: a failure after that point is not retried. Unsent entries
+  remain in the per-listener outbox across restarts.
 - A standalone `acp-serve` builds no task service, so it creates no outcomes to deliver; the
   wiring is the manager's (`ag2-assistant run`).

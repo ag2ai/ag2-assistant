@@ -4,11 +4,18 @@ Everything here is a plain function, so tests import it directly instead of rely
 on fixtures — the fixtures in ``conftest.py`` are thin wrappers over these.
 """
 
+import asyncio
+import contextlib
 import json
+import socket
 import time
 
+from ag2 import Agent
+from ag2.acp import SessionConfig
 from ag2.middleware import Middleware
+from ag2.testing import TestConfig
 
+from assistant.acp.chats import ChatBackedStorage, ChatTrackingACPAgent
 from assistant.agent import create_agent
 from assistant.codex_auth import CodexAuthError
 from assistant.compaction import (
@@ -20,7 +27,7 @@ from assistant.compaction import (
 from assistant.config import load_config
 from assistant.gateway.app import create_app
 from assistant.gateway.core import Gateway
-from assistant.gateway.profile_manager import ProfileManager
+from assistant.gateway.profile_manager import ProfileManager, resolve_active_profile
 from assistant.paths import Paths
 from assistant.profiles import ProfileRegistry
 from tests.support.fakes import (
@@ -177,3 +184,44 @@ def turn_catalog(client, models, pid: str) -> str:
 def real_gateway(config, **kwargs):
     """A production Gateway with deterministic background naming for acceptance tests."""
     return Gateway(config, title_factory=fake_title_factory(), **kwargs)
+
+
+def make_acp_agent(paths, pid: str, *, connection_id: str = "acp:test"):
+    """Build a chat-tracking ACP agent over a local scripted model."""
+    _, config, _ = resolve_active_profile(pid, paths=paths, env={})
+    storage = ChatBackedStorage(paths=paths, data_dir=config.data_dir, profile=pid)
+    agent = Agent(name="acp-test", config=TestConfig("42"))
+    served = ChatTrackingACPAgent(
+        agent,
+        name="AG2 Assistant",
+        version="0.0.0-test",
+        sessions=SessionConfig(storage=storage, retain_history=True),
+        chat_storage=storage,
+        connection_id=connection_id,
+    )
+    return served, storage, config
+
+
+def free_port() -> int:
+    """A loopback port nothing is listening on yet — released before the caller binds it."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+async def wait_listening(host: str, port: int, timeout: float = 5.0) -> None:
+    """Poll a raw TCP connect until ``serve_ws``'s uvicorn instance is accepting."""
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + timeout
+    while True:
+        try:
+            _, writer = await asyncio.open_connection(host, port)
+        except OSError:
+            if loop.time() > deadline:
+                raise
+            await asyncio.sleep(0.02)
+            continue
+        writer.close()
+        with contextlib.suppress(Exception):
+            await writer.wait_closed()
+        return

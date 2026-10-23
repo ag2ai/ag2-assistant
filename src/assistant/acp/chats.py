@@ -532,15 +532,7 @@ class ChatTrackingACPAgent(ACPAgent):
 
 
 class _LinkedScope(_ConnectionScope):
-    """A connection scope that hands its Client to the agent's outbound side once
-    the client has declared itself a receiver, and takes it back on close, so a
-    task-run outcome has a socket to use.
-
-    The declaration is ``_meta["ag2/receive"] = true`` on ``initialize``. A client
-    that connects without it — a worker's startup probe, say — is never attached:
-    the outbox is not flushed to it and nothing live is sent to it, because it
-    has no handler to receive with and the message would be lost (ADR 0049).
-    """
+    """Attach declared ACP receivers during initialization and detach them on close."""
 
     __slots__ = ()
 

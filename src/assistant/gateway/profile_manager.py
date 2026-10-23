@@ -20,6 +20,7 @@ import contextlib
 import shutil
 import socket
 from collections.abc import Callable, Iterable, Iterator, Mapping
+from functools import partial
 
 from assistant import channels, profiles
 from assistant.acp.approvals import install_owner_side_approvals
@@ -391,7 +392,7 @@ class ProfileManager:
             env=self._env,
             memory=self._memory,
             persist=self._persist,
-            notifier=self.router.push,
+            notifier=partial(self.push_task_outcome, meta.id),
             mirror=self.router.mirror,
             questions=self.router,
             agent_factory=self._agent_factory,
@@ -416,10 +417,29 @@ class ProfileManager:
         """Push a message into a chat through the Connection it belongs to — task-run
         outcomes are delivered this way. An ACP listener delivers to its client."""
         outbound = self.acp_outbound.get(connection)
+        if outbound is None and self._connections.get_acp_connection(connection) is not None:
+            outbound = self._outbound(connection)
         if outbound is not None:
             await outbound.notify(chat_id, text)
             return
         await self._channel(connection).notify(chat_id, text)
+
+    def _outbound(self, connection: str) -> Outbound:
+        if connection not in self.acp_outbound:
+            self.acp_outbound[connection] = Outbound(connection, self.paths.root / "acp_outbox")
+        return self.acp_outbound[connection]
+
+    async def push_task_outcome(
+        self, profile: str, connection: str, chat_id: str, text: str
+    ) -> None:
+        """Deliver ACP outcomes within their bound profile, or use the channel gates."""
+        listener = self._connections.get_acp_connection(connection)
+        if listener is not None:
+            if listener.profile != profile:
+                raise RuntimeError("ACP listener belongs to another profile")
+            await self.notify_channel(connection, chat_id, text)
+            return
+        await self.router.push(connection, chat_id, text)
 
     async def ask_channel(
         self, connection: str, chat_id: str, inquiry: str, question: channels.Choose
@@ -559,7 +579,7 @@ class ProfileManager:
         install_owner_side_approvals(agent, gateway, self._acp_asker(listener.profile))
         token = self._connections.acp_token_for(cid)
         listener_auth = choose_auth(gateway.config, dict(self._env or {}))
-        outbound = Outbound(cid, self.paths.root / "acp_outbox")
+        outbound = self._outbound(cid)
         task = asyncio.create_task(
             self._run_acp_listener(
                 cid, agent, listener.port, token, chat_storage, listener_auth, outbound
@@ -609,7 +629,9 @@ class ProfileManager:
         task = self.acp_listeners.pop(cid, None)
         if task is None:
             return False
-        self.acp_outbound.pop(cid, None)
+        outbound = self.acp_outbound.get(cid)
+        if outbound is not None:
+            await outbound.aclose()
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
@@ -639,6 +661,9 @@ class ProfileManager:
         for runtime in list(self._runtimes.values()):
             await runtime.close()
         self._runtimes.clear()
+        for outbound in self.acp_outbound.values():
+            await outbound.aclose()
+        self.acp_outbound.clear()
         self.channel_errors.clear()
         self.acp_listener_errors.clear()
 

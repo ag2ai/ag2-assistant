@@ -20,6 +20,7 @@ from assistant.acp.serve_ws import (
     serve_ws,
 )
 from assistant.profiles import ProfileRegistry
+from tests.support.apps import wait_listening
 from tests.support.fakes import fake_agent_factory
 
 
@@ -28,24 +29,6 @@ def _free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
-
-
-async def _wait_listening(host: str, port: int, timeout: float = 5.0) -> None:
-    """Poll a raw TCP connect until ``serve_ws``'s uvicorn instance is accepting."""
-    loop = asyncio.get_event_loop()
-    deadline = loop.time() + timeout
-    while True:
-        try:
-            _, writer = await asyncio.open_connection(host, port)
-        except OSError:
-            if loop.time() > deadline:
-                raise
-            await asyncio.sleep(0.02)
-            continue
-        writer.close()
-        with contextlib.suppress(Exception):
-            await writer.wait_closed()
-        return
 
 
 @contextlib.asynccontextmanager
@@ -57,7 +40,7 @@ async def _running_server(paths, *, profile=None, host="127.0.0.1", token="", ag
         serve_ws(profile, paths, host=host, port=port, token=token, agent_factory=agent_factory)
     )
     try:
-        await _wait_listening(host, port)
+        await wait_listening(host, port)
         yield port
     finally:
         task.cancel()

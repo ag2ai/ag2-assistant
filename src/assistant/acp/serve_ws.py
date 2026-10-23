@@ -113,9 +113,7 @@ def build_ws_app(acp_agent: ACPAgent, token: str) -> AsgiApp:
             try:
                 await conn_app(scope, receive, send)
             finally:
-                # The scope's own teardown: it closes the connection's SessionStore
-                # and, for a listener with an outbound side, detaches the Client
-                # handle so no task-run outcome is sent down a closed socket.
+                # Close the connection's sessions and detach its outbound receiver.
                 for conn_scope in scopes:
                     with contextlib.suppress(Exception):
                         await conn_scope.aclose()

@@ -1,20 +1,7 @@
-"""Outbound delivery from an ACP listener to its clients.
-
-ACP has no agent-initiated message outside a prompt, so a task-run outcome for a
-session has no protocol route back on its own. The listener sends one as an
-extension notification, ``_ag2/notify``, on a client connection it still holds;
-with no client connected the message waits in a durable outbox and goes out when
-the next *receiver* binds.
-
-Not every connection is a receiver. A client that only probes the listener (a
-worker's startup check: ``initialize`` and nothing else) has nowhere to put a
-notification and would drop it on the floor, so handing it the outbox would lose
-every outcome queued while that worker was down. A client that can route
-``_ag2/notify`` onward says so on ``initialize`` with ``_meta["ag2/receive"] =
-true``; only such a client is attached here, flushed to, and sent live messages.
-"""
+"""Deliver ACP outcomes to declared receivers through a durable, ordered outbox."""
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -31,9 +18,7 @@ NOTIFY_METHOD = "ag2/notify"
 # The ``_meta`` key a client sets on ``session/new`` to say where that session's
 # unsolicited messages belong: a string, or a mapping with ``chat_id``.
 DESTINATION_META_KEY = "ag2/destination"
-# The ``_meta`` key a client sets to ``true`` on ``initialize`` to say it takes
-# ``_ag2/notify`` and delivers it: the outbox is flushed to such a client and to
-# no other. A probe that does not say so is left out, and the outbox waits.
+# A client declares notification delivery on ``initialize`` with this ``_meta`` key.
 RECEIVE_META_KEY = "ag2/receive"
 
 _SAFE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -63,20 +48,19 @@ class Outbound:
         self.connection_id = connection_id
         self._path = outbox_dir / f"{_SAFE.sub('_', connection_id) or 'listener'}.json"
         self._clients: list[Any] = []
+        self._lock = asyncio.Lock()
+        self._flush_task: asyncio.Task[int] | None = None
 
     # ---- clients -------------------------------------------------------------
 
     def attach(self, client: Any) -> None:
-        """A receiver bound to the listener; anything waiting goes to it.
-
-        Callers attach only a client that declared itself with ``RECEIVE_META_KEY``
-        (see :func:`wants_delivery`): a probe never comes through here.
-        """
+        """Register a declared receiver and schedule delivery of queued outcomes."""
         if client in self._clients:
             return
         self._clients.append(client)
-        if self.pending():
-            asyncio.get_running_loop().create_task(self.flush(client))
+        if self.pending() and (self._flush_task is None or self._flush_task.done()):
+            self._flush_task = asyncio.create_task(self.flush())
+            self._flush_task.add_done_callback(self._flushed)
 
     def detach(self, client: Any) -> None:
         if client in self._clients:
@@ -86,35 +70,46 @@ class Outbound:
     def connected(self) -> int:
         return len(self._clients)
 
+    def _flushed(self, task: asyncio.Task[int]) -> None:
+        if not task.cancelled() and (error := task.exception()) is not None:
+            log.error("acp outbound %s: flush failed: %s", self.connection_id, error)
+
+    async def aclose(self) -> None:
+        """Detach receivers and stop background delivery, retaining unsent outcomes."""
+        self._clients.clear()
+        if self._flush_task is not None:
+            self._flush_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._flush_task
+            self._flush_task = None
+
     # ---- delivery ------------------------------------------------------------
 
     async def notify(self, destination: str, text: str) -> bool:
-        """Send one message for ``destination``, or queue it. True when a client took it."""
+        """Persist an outcome and drain deliveries; return whether the outbox is empty."""
         params = {"destination": destination, "text": text, "connection": self.connection_id}
-        if await self._send(params):
-            return True
         self._queue(params)
-        log.info("acp outbound %s: no client connected, message queued", self.connection_id)
-        return False
+        await self.flush()
+        return not self.pending()
 
-    async def flush(self, client: Any) -> int:
-        """Deliver the outbox to ``client`` in order; stop at the first failure."""
+    async def flush(self) -> int:
+        """Deliver queued outcomes in order to the connected receivers."""
+        async with self._lock:
+            return await self._drain()
+
+    async def _drain(self) -> int:
         sent = 0
-        for params in self.pending():
-            try:
-                await client.ext_notification(NOTIFY_METHOD, _wire(params))
-            except Exception as exc:
-                log.warning("acp outbound %s: flush stopped: %s", self.connection_id, exc)
-                self.detach(client)
+        while entries := self.pending():
+            if not await self._send(_wire(entries[0])):
                 break
+            # This drain removes entries; concurrent notifiers only append.
+            self._write(self.pending()[1:])
             sent += 1
-        if sent:
-            self._write(self.pending()[sent:])
         return sent
 
     async def _send(self, params: dict) -> bool:
-        # Newest client first: it is the one most likely still open.
-        for client in list(reversed(self._clients)):
+        while self._clients:
+            client = self._clients[-1]
             try:
                 await client.ext_notification(NOTIFY_METHOD, params)
                 return True
