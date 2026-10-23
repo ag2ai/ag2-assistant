@@ -141,6 +141,15 @@ class PeerStore:
         """Every recorded Peer, in registry order."""
         return [_peer(entry) for entry in self._load()]
 
+    def peer_for_session(self, session_id: str) -> Peer | None:
+        """The ACP Peer whose session this is, or None. An ACP turn runs on the
+        session's own stream — its id *is* the session id — not on the Chat the Peer
+        started, so a tool resolving its origin from the stream lands here."""
+        for entry in self._load():
+            if entry.get("platform") == "acp" and entry.get("chat_id") == session_id:
+                return _peer(entry)
+        return None
+
     def attached_to(self, chat: str) -> Peer | None:
         """The Peer Attached to this Chat right now, or None when no Peer is in it."""
         for entry in self._load():

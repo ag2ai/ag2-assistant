@@ -11,6 +11,7 @@ string the agent reads — never a giant blob — which is the point of retrieva
 """
 
 from typing import Annotated
+from uuid import UUID
 
 from ag2 import Context, tool
 from pydantic import Field
@@ -47,6 +48,14 @@ async def _emit_task_card(context, task_id: str, title: str, kind: str) -> None:
         log_suppressed("chat task-card event emit", exc, task_id=task_id, kind=kind)
 
 
+def _session_hex(sid: str) -> str:
+    """A stream id as ``ag2.acp`` spells a session id (UUID hex); other ids unchanged."""
+    try:
+        return UUID(sid).hex
+    except ValueError:
+        return sid
+
+
 def _origin(peers: PeerStore | None, context) -> tuple[str | None, str | None]:
     """The Peer the current turn is running for, as (connection_id, platform_chat_id) —
     run outcomes get pushed back through that Connection, whichever Chat the Peer has
@@ -56,6 +65,11 @@ def _origin(peers: PeerStore | None, context) -> tuple[str | None, str | None]:
 
     sid = str(getattr(getattr(context, "stream", None), "id", "") or "")
     peer = peers.peer_for_chat(sid) if peers is not None and sid else None
+    if peer is None and peers is not None and sid:
+        # An ACP turn does not run on the Chat the Peer started: its stream is the
+        # session's own (ag2.acp keys a session's history by its stream id), so the
+        # id in hand is the session id, in whichever spelling the runtime used.
+        peer = peers.peer_for_session(_session_hex(sid))
     if peer is not None and peer.connection and peer.platform in PUSH_CHANNELS:
         # A declared destination outranks the platform's chat id: an ACP session id
         # does not survive a reconnect, the room it was opened for does.

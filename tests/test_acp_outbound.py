@@ -3,6 +3,7 @@
 import asyncio
 import json
 from types import SimpleNamespace
+from uuid import UUID
 
 import acp
 import pytest
@@ -84,9 +85,16 @@ async def test_session_new_metadata_becomes_the_peers_destination_and_the_tasks_
     peers = PeerStore(paths)
     peer = peers.get_peer("acp:test", session.session_id)
     assert peer is not None and peer.destination == ROOM
-    # What create_task records: the listener and the room, not the session id.
-    context = SimpleNamespace(stream=SimpleNamespace(id=peer.chat))
+    # What create_task records: the listener and the room, not the session id. The
+    # turn's stream is the session's own (its id is the session id, as a UUID), not
+    # the Chat the Peer started — resolve it the way a real tool call sees it.
+    context = SimpleNamespace(stream=SimpleNamespace(id=UUID(session.session_id)))
     assert _origin(peers, context) == ("acp:test", ROOM)
+    # The Chat id still resolves too (the gateway path runs on the Chat's stream).
+    assert _origin(peers, SimpleNamespace(stream=SimpleNamespace(id=peer.chat))) == (
+        "acp:test",
+        ROOM,
+    )
 
 
 async def test_a_session_without_a_destination_keeps_the_session_id_as_origin(paths):
@@ -98,7 +106,7 @@ async def test_a_session_without_a_destination_keeps_the_session_id_as_origin(pa
     peers = PeerStore(paths)
     peer = peers.get_peer("acp:test", session.session_id)
     assert peer is not None and peer.destination is None
-    context = SimpleNamespace(stream=SimpleNamespace(id=peer.chat))
+    context = SimpleNamespace(stream=SimpleNamespace(id=UUID(session.session_id)))
     assert _origin(peers, context) == ("acp:test", session.session_id)
 
 

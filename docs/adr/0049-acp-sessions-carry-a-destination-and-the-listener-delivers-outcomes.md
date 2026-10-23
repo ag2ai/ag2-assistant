@@ -15,7 +15,12 @@ Two additions, both on the ACP side and neither a new Channel:
 `destination`, and `_origin` prefers it over the Peer's chat id. The session id itself is not
 a durable address: reconnect = new session = new Peer (ADR 0034), while the room the session
 was opened for outlives every reconnect. A session without one keeps today's behaviour, with
-the session id as origin.
+the session id as origin. One more step makes that resolution reach a real turn: an ACP turn
+does not run on the Chat the Peer started but on the session's own stream (`ag2.acp` keys a
+session's history by its stream id, so the stream id *is* the session id), and `_origin`
+resolves a stream id it finds no Chat for as a session id (`PeerStore.peer_for_session`).
+Without that, `create_task` from a room recorded no origin at all — found by running the real
+worker against the real listener, not by the unit test, which had handed `_origin` the Chat id.
 
 **The listener has an outbound side.** `acp` joins `PushChannel`. Each supervised listener
 owns an `Outbound`: the Client handles of its *receivers*, and a durable outbox under
