@@ -359,3 +359,13 @@ def test_a_write_that_fails_leaves_the_previous_registry_intact(paths):
 
     assert registry.read_text() == before
     assert not list(paths.root.glob(".peers-*")), "the temp file outlived the failure"
+
+
+def test_an_acp_session_id_finds_its_peer_and_nothing_else_does(paths):
+    store = PeerStore(paths)
+    session = "caeb211b1c2444d48438c485e7b30164"
+    store.start_chat("acp_1", session, platform="acp")
+    store.start_chat("tg", session, platform="telegram")  # same id, not a session
+    found = store.peer_for_session(session)
+    assert found is not None and (found.connection, found.platform) == ("acp_1", "acp")
+    assert store.peer_for_session("not-a-session") is None

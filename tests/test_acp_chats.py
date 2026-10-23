@@ -24,28 +24,12 @@ from assistant.gateway.core import Gateway
 from assistant.gateway.profile_manager import resolve_active_profile
 from assistant.peers import PeerStore
 from assistant.profiles import ProfileRegistry
+from tests.support.apps import make_acp_agent
 from tests.support.fakes import fake_agent_factory
 
 
 def _new_profile(paths, name: str = "acp-profile") -> str:
     return ProfileRegistry(paths).create_profile(name, "#336699").id
-
-
-def _served(paths, pid: str, *, connection_id: str = "acp:test"):
-    """A ``ChatTrackingACPAgent`` wired like ``serve.py``'s warm path, over a
-    scripted ``TestConfig`` agent. Returns ``(agent, storage, config)``."""
-    _, config, _ = resolve_active_profile(pid, paths=paths, env={})
-    storage = ChatBackedStorage(paths=paths, data_dir=config.data_dir, profile=pid)
-    agent = Agent(name="acp-test", config=TestConfig("42"))
-    served = ChatTrackingACPAgent(
-        agent,
-        name="AG2 Assistant",
-        version="0.0.0-test",
-        sessions=SessionConfig(storage=storage, retain_history=True),
-        chat_storage=storage,
-        connection_id=connection_id,
-    )
-    return served, storage, config
 
 
 async def _reader_gateway(config) -> Gateway:
@@ -57,7 +41,7 @@ async def _reader_gateway(config) -> Gateway:
 
 async def test_prompt_answer_produces_a_real_chat(paths):
     pid = _new_profile(paths)
-    served, _storage, config = _served(paths, pid)
+    served, _storage, config = make_acp_agent(paths, pid)
 
     async with connect(served) as (client, _recorder):
         session = await client.new_session(cwd=".")
@@ -88,7 +72,7 @@ async def test_prompt_answer_produces_a_real_chat(paths):
 
 async def test_session_new_alone_creates_no_chat(paths):
     pid = _new_profile(paths)
-    served, _storage, config = _served(paths, pid)
+    served, _storage, config = make_acp_agent(paths, pid)
 
     async with connect(served) as (client, _recorder):
         await client.new_session(cwd=".")
@@ -103,7 +87,7 @@ async def test_drop_history_keeps_the_chat_and_transcript(paths):
     SessionStore.close, via _discard) — closing a session must detach the live
     stream, never delete the Chat."""
     pid = _new_profile(paths)
-    served, storage, config = _served(paths, pid)
+    served, storage, config = make_acp_agent(paths, pid)
 
     async with connect(served) as (client, _recorder):
         session = await client.new_session(cwd=".")
@@ -124,7 +108,7 @@ async def test_drop_history_keeps_the_chat_and_transcript(paths):
 
 async def test_reconnect_creates_a_second_chat(paths):
     pid = _new_profile(paths)
-    served, _storage, config = _served(paths, pid)
+    served, _storage, config = make_acp_agent(paths, pid)
 
     async def one_turn(text: str) -> str:
         async with connect(served) as (client, _recorder):
@@ -194,7 +178,7 @@ async def test_session_loads_into_a_storage_that_never_served_it(paths):
     empty, so a memory-only slice would fail the load outright.
     """
     pid = _new_profile(paths)
-    first, _first_storage, config = _served(paths, pid)
+    first, _first_storage, config = make_acp_agent(paths, pid)
 
     async with connect(first) as (client, _recorder):
         session = await client.new_session(cwd=".")
@@ -202,7 +186,7 @@ async def test_session_loads_into_a_storage_that_never_served_it(paths):
         await client.prompt(session_id=session_id, prompt=[acp.text_block("remember me")])
 
     # A brand-new agent + storage pair: nothing of the first is carried over.
-    second, second_storage, _ = _served(paths, pid)
+    second, second_storage, _ = make_acp_agent(paths, pid)
     async with connect(second) as (client, _recorder):
         await client.load_session(session_id=session_id, cwd=".")
         await client.prompt(session_id=session_id, prompt=[acp.text_block("still there?")])
@@ -241,7 +225,7 @@ async def test_deleting_a_chat_takes_its_replay_history_with_it(paths):
     ``Gateway.delete_chat`` purging the ACP history prevents.
     """
     pid = _new_profile(paths)
-    served, _storage, config = _served(paths, pid)
+    served, _storage, config = make_acp_agent(paths, pid)
 
     async with connect(served) as (client, _recorder):
         session = await client.new_session(cwd=".")
@@ -254,7 +238,7 @@ async def test_deleting_a_chat_takes_its_replay_history_with_it(paths):
     assert await gw.list_chats() == []
 
     # A fresh storage — the next process — must no longer resurrect that Chat.
-    second, second_storage, _ = _served(paths, pid)
+    second, second_storage, _ = make_acp_agent(paths, pid)
     async with connect(second) as (client, _recorder):
         with pytest.raises(acp.RequestError):
             await client.load_session(session_id=session_id, cwd=".")
@@ -273,7 +257,7 @@ async def test_two_connections_hold_sessions_without_cross_talk(paths):
     other's session and each turn lands in its own Chat.
     """
     pid = _new_profile(paths)
-    served, storage, config = _served(paths, pid)
+    served, storage, config = make_acp_agent(paths, pid)
 
     async with connect(served) as (client_a, _ra), connect(served) as (client_b, _rb):
         session_a = await client_a.new_session(cwd=".")
@@ -311,7 +295,7 @@ async def test_one_connection_runs_concurrent_turns_on_separate_sessions(paths):
     sequence. Each turn must keep to its own session's slice and its own Chat.
     """
     pid = _new_profile(paths)
-    served, storage, config = _served(paths, pid)
+    served, storage, config = make_acp_agent(paths, pid)
     rooms = ["alpha", "bravo", "charlie", "delta"]
 
     async with connect(served) as (client, _recorder):

@@ -15,6 +15,7 @@ from ag2.acp import ACPAgent, SessionConfig
 from ag2.acp.auth import AuthProvider
 
 from assistant.acp.chats import ChatBackedStorage, ChatTrackingACPAgent
+from assistant.acp.outbound import Outbound
 from assistant.acp.serve_ws import serve_acp_agent
 from assistant.connections import AcpConnection, ConnectionStore
 from assistant.version import __version__
@@ -30,6 +31,7 @@ async def serve_listener(
     chat_storage: ChatBackedStorage | None = None,
     connection_id: str = "",
     auth: AuthProvider | None = None,
+    outbound: Outbound | None = None,
 ) -> None:
     """Serve ``agent`` over ACP WebSocket until cancelled. ``agent`` is expected to
     already be built (a running profile's gateway agent) — this never constructs a
@@ -45,6 +47,7 @@ async def serve_listener(
             sessions=SessionConfig(storage=chat_storage, retain_history=True),
             chat_storage=chat_storage,
             connection_id=connection_id or "acp:listener",
+            outbound=outbound,
             auth=auth,
         )
     else:
