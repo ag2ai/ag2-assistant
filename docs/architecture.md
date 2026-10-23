@@ -272,7 +272,8 @@ A Task created in an ACP session records the session's declared destination
 (`_meta["ag2/destination"]` on `session/new`, kept on the Peer) as its origin, and a run's
 outcome is delivered to the listener's connected client as the extension notification
 `_ag2/notify` (`{destination, text, connection}`), queued in `<root>/acp_outbox/` while no
-client is connected (ADR 0049).
+receiver is connected. A receiver is a client that set `_meta["ag2/receive"] = true` on
+`initialize`; a connection without it (a startup probe) is never flushed to (ADR 0049).
 
 ### 5.9 Channels — `src/assistant/channels/*`
 

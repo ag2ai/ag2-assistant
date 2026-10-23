@@ -4,7 +4,14 @@ ACP has no agent-initiated message outside a prompt, so a task-run outcome for a
 session has no protocol route back on its own. The listener sends one as an
 extension notification, ``_ag2/notify``, on a client connection it still holds;
 with no client connected the message waits in a durable outbox and goes out when
-the next client binds.
+the next *receiver* binds.
+
+Not every connection is a receiver. A client that only probes the listener (a
+worker's startup check: ``initialize`` and nothing else) has nowhere to put a
+notification and would drop it on the floor, so handing it the outbox would lose
+every outcome queued while that worker was down. A client that can route
+``_ag2/notify`` onward says so on ``initialize`` with ``_meta["ag2/receive"] =
+true``; only such a client is attached here, flushed to, and sent live messages.
 """
 
 import asyncio
@@ -24,6 +31,10 @@ NOTIFY_METHOD = "ag2/notify"
 # The ``_meta`` key a client sets on ``session/new`` to say where that session's
 # unsolicited messages belong: a string, or a mapping with ``chat_id``.
 DESTINATION_META_KEY = "ag2/destination"
+# The ``_meta`` key a client sets to ``true`` on ``initialize`` to say it takes
+# ``_ag2/notify`` and delivers it: the outbox is flushed to such a client and to
+# no other. A probe that does not say so is left out, and the outbox waits.
+RECEIVE_META_KEY = "ag2/receive"
 
 _SAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -40,6 +51,11 @@ def destination_of(meta: Any) -> str | None:
     return None
 
 
+def wants_delivery(meta: Any) -> bool:
+    """Whether ``initialize``'s ``_meta`` declares the client a receiver."""
+    return isinstance(meta, dict) and meta.get(RECEIVE_META_KEY) is True
+
+
 class Outbound:
     """One listener's outbound side: the clients it can reach and what waits for one."""
 
@@ -51,7 +67,11 @@ class Outbound:
     # ---- clients -------------------------------------------------------------
 
     def attach(self, client: Any) -> None:
-        """A client bound to the listener; anything waiting goes to it."""
+        """A receiver bound to the listener; anything waiting goes to it.
+
+        Callers attach only a client that declared itself with ``RECEIVE_META_KEY``
+        (see :func:`wants_delivery`): a probe never comes through here.
+        """
         if client in self._clients:
             return
         self._clients.append(client)

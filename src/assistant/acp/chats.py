@@ -40,7 +40,7 @@ from ag2.events import BaseEvent, ModelRequest, ModelResponse, TextInput, Unknow
 from ag2.events._serialization import import_event_class, qualified_name
 from ag2.knowledge import SqliteKnowledgeStore
 
-from assistant.acp.outbound import Outbound, destination_of
+from assistant.acp.outbound import Outbound, destination_of, wants_delivery
 from assistant.paths import Paths
 from assistant.peers import PeerStore
 from assistant.storage import SerialStore, now_iso
@@ -532,16 +532,33 @@ class ChatTrackingACPAgent(ACPAgent):
 
 
 class _LinkedScope(_ConnectionScope):
-    """A connection scope that hands its Client to the agent's outbound side on
-    connect and takes it back on close, so a task-run outcome has a socket to use."""
+    """A connection scope that hands its Client to the agent's outbound side once
+    the client has declared itself a receiver, and takes it back on close, so a
+    task-run outcome has a socket to use.
+
+    The declaration is ``_meta["ag2/receive"] = true`` on ``initialize``. A client
+    that connects without it — a worker's startup probe, say — is never attached:
+    the outbox is not flushed to it and nothing live is sent to it, because it
+    has no handler to receive with and the message would be lost (ADR 0049).
+    """
 
     __slots__ = ()
 
-    def on_connect(self, conn: "acp.Client") -> None:
-        super().on_connect(conn)
+    async def initialize(
+        self,
+        protocol_version: int,
+        client_capabilities: Any = None,
+        client_info: Any = None,
+        **kwargs: Any,
+    ) -> Any:
+        response = await super().initialize(
+            protocol_version, client_capabilities, client_info, **kwargs
+        )
         outbound = getattr(self._owner, "outbound", None)
-        if outbound is not None:
-            outbound.attach(conn)
+        # The SDK router spreads ``_meta`` into the handler's kwargs.
+        if outbound is not None and self._client is not None and wants_delivery(dict(kwargs)):
+            outbound.attach(self._client)
+        return response
 
     async def aclose(self) -> None:
         outbound = getattr(self._owner, "outbound", None)

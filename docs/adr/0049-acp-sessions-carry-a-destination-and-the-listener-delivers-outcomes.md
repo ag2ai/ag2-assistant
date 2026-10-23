@@ -18,13 +18,24 @@ was opened for outlives every reconnect. A session without one keeps today's beh
 the session id as origin.
 
 **The listener has an outbound side.** `acp` joins `PushChannel`. Each supervised listener
-owns an `Outbound`: the Client handles its connections have bound (reported by the connection
-scope on `on_connect`), and a durable outbox under `<root>/acp_outbox/`. A task-run outcome
-for the listener goes out as the extension notification `_ag2/notify` with
-`{destination, text, connection}` on the newest connected client; a client that refuses the
-send is dropped and the next one tried; with none connected the message waits in the outbox
-and is flushed, in order, to the next client that binds. `ProfileManager.notify_channel`
-routes a listener's Connection id there before looking for a Channel.
+owns an `Outbound`: the Client handles of its *receivers*, and a durable outbox under
+`<root>/acp_outbox/`. A task-run outcome for the listener goes out as the extension
+notification `_ag2/notify` with `{destination, text, connection}` on the newest connected
+receiver; one that refuses the send is dropped and the next one tried; with none connected the
+message waits in the outbox and is flushed, in order, to the next receiver that binds.
+`ProfileManager.notify_channel` routes a listener's Connection id there before looking for a
+Channel.
+
+**A receiver says so.** A client that can route `_ag2/notify` onward sets
+`_meta["ag2/receive"] = true` on `initialize`; the connection scope attaches it to the
+`Outbound` when that request lands. A client that connects without the declaration is never
+attached: not flushed to, not sent live messages. This matters because not every connection
+is a delivery path — agent-connect's startup `preflight` dials, initializes and hangs up with
+no notification handler, before the worker has anything to post with. Flushing to every new
+connection (the first cut did, on `on_connect`) handed that probe the outbox, which it
+discarded, and the receiver that followed found it empty: every outcome queued while the
+worker was down was lost on the worker's own restart. The declaration is explicit rather than
+inferred from capabilities because the SDK advertises none for extension notifications.
 
 ## Considered options
 
@@ -39,9 +50,11 @@ routes a listener's Connection id there before looking for a Channel.
 
 ## Consequences
 
-- The client owns the far side: it must implement `Client.ext_notification` for `_ag2/notify`
-  and post the text where `destination` says. Nothing is delivered to a client that does not,
-  and the message stays queued.
+- The client owns the far side: it must declare `ag2/receive` on `initialize`, implement
+  `Client.ext_notification` for `_ag2/notify`, and post the text where `destination` says.
+  Nothing is delivered to a client that does not declare, and the message stays queued; a
+  client that declares and then drops the notification loses it, which is why agent-connect
+  declares only on connections whose notifier is already installed.
 - Delivery is at-least-once in one case: a notification sent on a socket that dies before the
   client acts on it is not retried, while one the socket refuses is. The outbox is per listener
   and survives restarts.

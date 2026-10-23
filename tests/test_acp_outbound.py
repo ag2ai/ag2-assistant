@@ -3,7 +3,9 @@
 A client says on ``session/new`` where that session's unsolicited messages belong;
 the Peer keeps it, a Task created in the session records it as its origin, and a
 task-run outcome reaches the client as an ``_ag2/notify`` extension notification,
-queued in a durable outbox while no client is connected.
+queued in a durable outbox while no receiver is connected. A receiver is a client
+that said ``_meta["ag2/receive"] = true`` on ``initialize``; a probe that did not
+is never flushed to.
 """
 
 import asyncio
@@ -14,7 +16,14 @@ import acp
 import pytest
 from ag2.acp.testing import connect
 
-from assistant.acp.outbound import DESTINATION_META_KEY, NOTIFY_METHOD, Outbound, destination_of
+from assistant.acp.outbound import (
+    DESTINATION_META_KEY,
+    NOTIFY_METHOD,
+    RECEIVE_META_KEY,
+    Outbound,
+    destination_of,
+    wants_delivery,
+)
 from assistant.channels.base import PUSH_CHANNELS
 from assistant.peers import PeerStore
 from assistant.system_tools import _origin
@@ -47,6 +56,14 @@ def test_destination_reads_a_string_or_a_chat_id_and_nothing_else():
     assert destination_of({DESTINATION_META_KEY: "  "}) is None
     assert destination_of({}) is None
     assert destination_of(None) is None
+
+
+def test_only_an_explicit_true_declares_a_receiver():
+    assert wants_delivery({RECEIVE_META_KEY: True})
+    assert not wants_delivery({RECEIVE_META_KEY: "yes"})
+    assert not wants_delivery({RECEIVE_META_KEY: 1})
+    assert not wants_delivery({})
+    assert not wants_delivery(None)
 
 
 def test_acp_is_a_push_platform():
@@ -220,7 +237,7 @@ async def test_a_queued_outcome_reaches_the_next_websocket_client_to_bind(paths)
         )
         conn = connect_to_agent(ws_client, transport)
         try:
-            await conn.initialize(protocol_version=1)
+            await conn.initialize(protocol_version=1, **{RECEIVE_META_KEY: True})
             await asyncio.wait_for(ws_client.arrived.wait(), 5)
             assert ws_client.notified == [
                 (
@@ -236,5 +253,82 @@ async def test_a_queued_outcome_reaches_the_next_websocket_client_to_bind(paths)
             assert ws_client.notified[-1][1]["text"] == "✅ nightly: again"
         finally:
             await conn.close()
+    finally:
+        await manager.close()
+
+
+async def _until(cond, timeout: float = 5.0) -> bool:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not cond():
+        if loop.time() > deadline:
+            return False
+        await asyncio.sleep(0.02)
+    return True
+
+
+async def test_a_probe_that_does_not_declare_itself_a_receiver_leaves_the_outbox_alone(paths):
+    """A worker's startup check connects, initializes and hangs up, with no handler for
+    ``_ag2/notify`` — agent-connect's ``preflight`` does exactly this before its Room
+    Ops notifier exists. It must not be handed the outbox: everything queued while the
+    worker was down would vanish into it. Nothing is flushed or sent live to a client
+    that did not say ``ag2/receive`` on ``initialize``; the next client that does gets
+    all of it, in order."""
+    from acp import connect_to_agent
+    from acp.ws.client import create_websocket_stream
+
+    from assistant.profiles import ProfileRegistry
+    from tests.test_acp_serve_ws import _wait_listening
+    from tests.test_gateway_acp import _free_port, _pong_factory
+
+    pid = ProfileRegistry(paths).create_profile("Work", "#109e91").id
+    manager = make_manager(paths, agent_factory=_pong_factory())
+    await manager.start()
+    try:
+        port = _free_port()
+        token = "listener-token"  # noqa: S105 - test fixture
+        cid = manager._connections.create_acp_connection(pid, port=port, token=token).connection.id
+        ok, reason = await manager.start_acp_listener(cid)
+        assert ok, reason
+        await _wait_listening("127.0.0.1", port)
+        out = manager.acp_outbound[cid]
+
+        # Queued while the worker was down.
+        await manager.notify_channel(cid, ROOM, "✅ nightly: done")
+
+        probe = _WsClient()
+        transport = await create_websocket_stream(
+            f"ws://127.0.0.1:{port}/acp", headers={"Authorization": f"Bearer {token}"}
+        )
+        conn = connect_to_agent(probe, transport)
+        try:
+            await conn.initialize(protocol_version=1)  # a probe: no ``ag2/receive``
+            # Pushed while only the probe is connected: it waits too.
+            await manager.notify_channel(cid, ROOM, "✅ weekly: done")
+            await asyncio.sleep(0.2)
+            assert probe.notified == []
+            assert out.connected == 0
+            assert [p["text"] for p in out.pending()] == ["✅ nightly: done", "✅ weekly: done"]
+        finally:
+            await conn.close()
+        assert [p["text"] for p in out.pending()] == ["✅ nightly: done", "✅ weekly: done"]
+
+        receiver = _WsClient()
+        transport = await create_websocket_stream(
+            f"ws://127.0.0.1:{port}/acp", headers={"Authorization": f"Bearer {token}"}
+        )
+        conn = connect_to_agent(receiver, transport)
+        try:
+            await conn.initialize(protocol_version=1, **{RECEIVE_META_KEY: True})
+            assert await _until(lambda: len(receiver.notified) >= 2)
+            assert [p["text"] for _, p in receiver.notified] == [
+                "✅ nightly: done",
+                "✅ weekly: done",
+            ]
+            assert out.pending() == []
+            assert out.connected == 1
+        finally:
+            await conn.close()
+        assert await _until(lambda: out.connected == 0)
     finally:
         await manager.close()
