@@ -21,6 +21,24 @@ async def test_build_hitl_hook_adapts_asker():
     assert msg.content == "answer-to:What is your name?"
 
 
+async def test_a_yes_no_prompt_is_asked_as_options():
+    asked = []
+
+    class FakeAsker:
+        async def ask(self, question, timeout=None):
+            asked.append(question)
+            return "yes"
+
+    hook = build_hitl_hook(FakeAsker())
+
+    await hook(
+        HumanInputRequest(content="Agent requests permission for: gh pr list\nAllow? (yes/no)")
+    )
+    await hook(HumanInputRequest(content="What is your name?"))
+
+    assert [q.options for q in asked] == [["yes", "no"], None]
+
+
 def test_render_body_options_and_freetext():
 
     opts = _render_body(
