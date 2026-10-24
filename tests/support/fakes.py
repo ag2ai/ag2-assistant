@@ -11,6 +11,7 @@ import types
 from contextlib import asynccontextmanager
 from pathlib import PurePosixPath
 
+from ag2 import Agent
 from ag2.events import ModelMessage, ModelResponse
 from ag2.knowledge import SqliteKnowledgeStore
 from ag2.testing import TestClient, TestConfig
@@ -398,3 +399,10 @@ class StatefulEnvironment:
         if self.closed:
             raise RuntimeError("Environment disposed twice")
         self.closed = True
+
+
+def pong_agent_factory():
+    """A real, ACP-wrappable Agent that always replies "pong"."""
+    return fake_agent_factory(
+        agent=lambda config, **kwargs: Agent(name="acp-settings-test", config=TestConfig("pong"))
+    )

@@ -33,13 +33,14 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 from uuid import UUID
 
-from ag2.acp.agent import ACPAgent
+from ag2.acp.agent import ACPAgent, _ConnectionScope
 from ag2.acp.sessions import UnknownSessionError
 from ag2.context import ConversationContext
 from ag2.events import BaseEvent, ModelRequest, ModelResponse, TextInput, UnknownEvent
 from ag2.events._serialization import import_event_class, qualified_name
 from ag2.knowledge import SqliteKnowledgeStore
 
+from assistant.acp.outbound import Outbound, destination_of, wants_delivery
 from assistant.paths import Paths
 from assistant.peers import PeerStore
 from assistant.storage import SerialStore, now_iso
@@ -157,12 +158,15 @@ class _StreamState:
 class _SessionContext:
     """The ACP identity a stream was minted with, reported by ``note_session``."""
 
-    __slots__ = ("session_id", "connection_id", "store")
+    __slots__ = ("session_id", "connection_id", "store", "meta")
 
-    def __init__(self, session_id: str, connection_id: str, store: Any) -> None:
+    def __init__(
+        self, session_id: str, connection_id: str, store: Any, meta: dict | None = None
+    ) -> None:
         self.session_id = session_id
         self.connection_id = connection_id
         self.store = store
+        self.meta = meta or {}
 
 
 class LiveSessionRegistry:
@@ -237,7 +241,13 @@ class ChatBackedStorage:
         self._sessions: dict[UUID, _SessionContext] = {}
 
     def note_session(
-        self, stream_id: UUID, *, session_id: str, connection_id: str, store: Any
+        self,
+        stream_id: UUID,
+        *,
+        session_id: str,
+        connection_id: str,
+        store: Any,
+        meta: dict | None = None,
     ) -> None:
         """Record the (session id, connection id, live ``SessionStore``) a stream
         was created with.
@@ -247,7 +257,7 @@ class ChatBackedStorage:
         A stream rehydrated by ``session/load`` already knows its Chat and never
         reaches ``_birth_chat``, so this is where that Chat rejoins the registry.
         """
-        self._sessions[stream_id] = _SessionContext(session_id, connection_id, store)
+        self._sessions[stream_id] = _SessionContext(session_id, connection_id, store, meta)
         state = self._streams.get(stream_id)
         if state is not None and state.chat_id is not None:
             LIVE_SESSIONS.register(state.chat_id, store, session_id)
@@ -387,6 +397,9 @@ class ChatBackedStorage:
         chat_id = self._peers.start_chat(connection_id, peer_chat_id, platform="acp", surface="dm")
         if corr is not None:
             LIVE_SESSIONS.register(chat_id, corr.store, corr.session_id)
+            destination = destination_of(corr.meta)
+            if destination:
+                self._peers.set_destination(connection_id, peer_chat_id, destination)
         await self._write_stub(chat_id, first_text)
         return chat_id
 
@@ -467,7 +480,7 @@ class _CorrelatingSessionStore:
 
     def _note(self, session: Any) -> None:
         self._seen.add(session.stream_id)
-        self._on_created(session.stream_id, session.session_id)
+        self._on_created(session.stream_id, session.session_id, getattr(session, "meta", None))
 
     def __len__(self) -> int:
         return len(self._inner)
@@ -485,24 +498,62 @@ class ChatTrackingACPAgent(ACPAgent):
     """
 
     def __init__(
-        self, *args: Any, chat_storage: ChatBackedStorage, connection_id: str, **kwargs: Any
+        self,
+        *args: Any,
+        chat_storage: ChatBackedStorage,
+        connection_id: str,
+        outbound: Outbound | None = None,
+        **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
         self._chat_storage = chat_storage
         self._connection_id = connection_id
+        self.outbound = outbound
 
     def bind(self, client: "acp.Client | None") -> "_ConnectionScope":
-        scope = super().bind(client)
+        # Upstream's bind, over a scope that also reports the Client handle to the
+        # outbound side (upstream offers no hook for it).
+        scope: _ConnectionScope = _LinkedScope(self, client)
+        self._scope = scope
         real_store = scope._sessions  # noqa: SLF001 — kept for the close-session registry
         # A duck-typed wrapper, not a SessionStore subclass — mypy can't see the match.
         scope._sessions = _CorrelatingSessionStore(  # type: ignore[assignment]  # noqa: SLF001
             real_store,
-            lambda stream_id, session_id: self._chat_storage.note_session(
+            lambda stream_id, session_id, meta=None: self._chat_storage.note_session(
                 stream_id,
                 session_id=session_id,
                 connection_id=self._connection_id,
                 store=real_store,
+                meta=meta,
             ),
             self._chat_storage.detach,
         )
         return scope
+
+
+class _LinkedScope(_ConnectionScope):
+    """Attach declared ACP receivers during initialization and detach them on close."""
+
+    __slots__ = ()
+
+    async def initialize(
+        self,
+        protocol_version: int,
+        client_capabilities: Any = None,
+        client_info: Any = None,
+        **kwargs: Any,
+    ) -> Any:
+        response = await super().initialize(
+            protocol_version, client_capabilities, client_info, **kwargs
+        )
+        outbound = getattr(self._owner, "outbound", None)
+        # The SDK router spreads ``_meta`` into the handler's kwargs.
+        if outbound is not None and self._client is not None and wants_delivery(dict(kwargs)):
+            outbound.attach(self._client)
+        return response
+
+    async def aclose(self) -> None:
+        outbound = getattr(self._owner, "outbound", None)
+        if outbound is not None and self._client is not None:
+            outbound.detach(self._client)
+        await super().aclose()

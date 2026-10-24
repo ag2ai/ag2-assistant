@@ -40,6 +40,8 @@ class Peer:
     # The Pending override (ADR 0025): a Text model chosen while Attached to nothing,
     # which the next message's Chat is born on. Dropped on detach, attach, or a switch.
     pending_model: str | None = None
+    # The declared destination for unsolicited messages; None uses the chat id.
+    destination: str | None = None
 
 
 def _peer(entry: dict) -> Peer:
@@ -56,6 +58,7 @@ def _peer(entry: dict) -> Peer:
         # Absent on an entry written before the Pending override existed, and absent
         # reads as holding nothing.
         pending_model=entry.get("pending_model") or None,
+        destination=entry.get("destination") or None,
     )
 
 
@@ -137,6 +140,15 @@ class PeerStore:
     def list_peers(self) -> list[Peer]:
         """Every recorded Peer, in registry order."""
         return [_peer(entry) for entry in self._load()]
+
+    def peer_for_session(self, session_id: str) -> Peer | None:
+        """The ACP Peer whose session this is, or None. An ACP turn runs on the
+        session's own stream — its id *is* the session id — not on the Chat the Peer
+        started, so a tool resolving its origin from the stream lands here."""
+        for entry in self._load():
+            if entry.get("platform") == "acp" and entry.get("chat_id") == session_id:
+                return _peer(entry)
+        return None
 
     def attached_to(self, chat: str) -> Peer | None:
         """The Peer Attached to this Chat right now, or None when no Peer is in it."""
@@ -236,6 +248,15 @@ class PeerStore:
         chat = f"{origin}-{secrets.token_hex(4)}"
         self.attach(connection, chat_id, chat, platform=platform, surface=surface, sender=sender)
         return chat
+
+    def set_destination(self, connection: str, chat_id: str, destination: str | None) -> Peer:
+        """Persist the destination declared by an existing Peer."""
+        with self._transaction() as entries:
+            index = _index(entries, connection, chat_id)
+            if index is None:
+                raise KeyError(f"no peer for {connection}/{chat_id}")
+            peer = replace(_peer(entries[index]), destination=destination or None)
+            return self._save(entries, index, peer)
 
     def set_pending_model(self, connection: str, chat_id: str, model: str) -> Peer:
         """Hold ``model`` for the Chat this conversation's next message starts, the empty

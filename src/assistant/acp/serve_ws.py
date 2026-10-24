@@ -87,8 +87,9 @@ def build_ws_app(acp_agent: ACPAgent, token: str) -> AsgiApp:
       request); a bad token gets ``websocket.close`` instead of ``websocket.accept``,
       failing the upgrade itself (uvicorn answers it with HTTP 403).
     - Each accepted connection gets its own SDK app around a bind that records the
-      connection's ``SessionStore``; when the socket closes, that store is
-      ``aclose()``d. Nothing upstream does this — the SDK only clears its own
+      connection scope; when the socket closes, that scope is ``aclose()``d, which
+      drops its ``SessionStore`` and detaches its Client from the listener's
+      outbound side. Nothing upstream does this — the SDK only clears its own
       registry on disconnect — so without it a quit client leaves its sessions
       (and the chat's live badge) alive forever.
     """
@@ -101,20 +102,21 @@ def build_ws_app(acp_agent: ACPAgent, token: str) -> AsgiApp:
                 if message["type"] == "websocket.connect":
                     await send({"type": "websocket.close", "code": 4401})
                 return
-            stores: list[Any] = []
+            scopes: list[Any] = []
 
             def tracked_bind(client: Any) -> Any:
                 conn_scope = acp_agent.bind(client)
-                stores.append(conn_scope._sessions)  # noqa: SLF001 - the one teardown handle
+                scopes.append(conn_scope)  # the one teardown handle
                 return conn_scope
 
             conn_app = create_asgi_app(tracked_bind)
             try:
                 await conn_app(scope, receive, send)
             finally:
-                for store in stores:
+                # Close the connection's sessions and detach its outbound receiver.
+                for conn_scope in scopes:
                     with contextlib.suppress(Exception):
-                        await store.aclose()
+                        await conn_scope.aclose()
             return
         if scope["type"] == "http":
             await _respond_ws_only(receive, send)
