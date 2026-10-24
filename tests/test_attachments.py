@@ -2,7 +2,8 @@
 gateway threading them into the agent turn."""
 
 from ag2 import ImageInput
-from ag2.events import BinaryType, TextInput
+from ag2.context import ConversationContext
+from ag2.events import BinaryType, ModelMessageChunk, TextInput
 
 from assistant.attachments import build_input
 from assistant.config import Config
@@ -164,3 +165,35 @@ async def test_gateway_passes_attachments_as_positional_inputs(paths):
         assert agent.captured[1] is img
     finally:
         await gw.close()
+
+
+class _StreamingAgent(FakeRunMixin):
+    """Writes its reply to the chat's stream in two chunks, as a streaming model does."""
+
+    async def ask(self, *msg, stream=None, **kwargs):
+        context = ConversationContext(stream=stream)
+        await context.send(ModelMessageChunk("Hel"))
+        await context.send(ModelMessageChunk("lo"))
+        return _CapturingReply(msg)
+
+
+async def test_gateway_forwards_the_streamed_reply_to_on_text(paths):
+    gw = Gateway(
+        Config.for_paths(paths),
+        memory=False,
+        onboard=False,
+        persist=False,
+        agent_factory=lambda config, **kwargs: _StreamingAgent(),
+    )
+    await gw.start()
+    seen: list[str] = []
+
+    async def on_text(event):
+        seen.append(event.content)
+
+    try:
+        await gw.send_message("hi", chat_id="s1", on_text=on_text)
+    finally:
+        await gw.close()
+
+    assert seen == ["Hel", "lo"]

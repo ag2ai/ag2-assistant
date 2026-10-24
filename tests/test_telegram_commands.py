@@ -676,3 +676,74 @@ async def test_a_trace_goes_out_exactly_as_it_was_rendered():
     await _tracer(placeholder)(trace)
 
     assert "src/__init__.py" in placeholder.text
+
+
+# --- the reply streaming in as a draft ---
+
+
+class _DraftBot:
+    """Records the drafts Telegram is shown; can refuse them."""
+
+    def __init__(self, refuse: bool = False) -> None:
+        self.drafts: list[tuple[int, int, str]] = []
+        self._refuse = refuse
+
+    async def send_message_draft(self, chat_id, draft_id, text):
+        if self._refuse:
+            raise RuntimeError("draft refused")
+        self.drafts.append((chat_id, draft_id, text))
+
+
+def _draft(bot, clock=None) -> tuple[telegram_mod.DraftStream, list[str]]:
+    started: list[str] = []
+
+    async def on_start() -> None:
+        started.append("start")
+
+    return telegram_mod.DraftStream(bot, 42, on_start, clock=clock or _Clock()), started
+
+
+async def test_the_reply_so_far_is_shown_as_one_draft():
+    bot = _DraftBot()
+    clock = _Clock()
+    draft, started = _draft(bot, clock)
+
+    await draft("Hel")
+    clock.now += telegram_mod.DRAFT_INTERVAL
+    await draft("Hello")
+
+    assert [text for _, _, text in bot.drafts] == ["Hel", "Hello"]
+    assert len({draft_id for _, draft_id, _ in bot.drafts}) == 1  # same draft, animated
+    assert started == ["start"]  # the placeholder is dropped once, at the first draft
+
+
+async def test_a_chunk_inside_the_throttle_window_is_not_shown():
+    bot = _DraftBot()
+    draft, _ = _draft(bot)
+
+    await draft("Hel")
+    await draft("Hello")
+
+    assert [text for _, _, text in bot.drafts] == ["Hel"]
+
+
+async def test_a_refused_draft_ends_streaming_for_the_turn():
+    bot = _DraftBot(refuse=True)
+    clock = _Clock()
+    draft, started = _draft(bot, clock)
+
+    await draft("Hel")
+    clock.now += telegram_mod.DRAFT_INTERVAL
+    await draft("Hello")
+
+    assert bot.drafts == [] and started == [] and draft.started is False
+
+
+async def test_a_draft_longer_than_a_message_shows_its_tail():
+    bot = _DraftBot()
+    draft, _ = _draft(bot)
+
+    await draft("x" * (telegram_mod.TELEGRAM_LIMIT + 10) + "END")
+
+    assert len(bot.drafts[0][2]) == telegram_mod.TELEGRAM_LIMIT
+    assert bot.drafts[0][2].endswith("END")

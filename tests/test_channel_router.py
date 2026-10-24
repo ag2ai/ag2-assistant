@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
-from ag2.events import ModelMessage, ToolCallEvent, ToolCallsEvent
+from ag2.events import ModelMessage, ModelMessageChunk, ToolCallEvent, ToolCallsEvent
 from openai import AsyncOpenAI
 
 from assistant.attachments import build_input
@@ -97,6 +97,8 @@ class FakeGateway:
         self.fed: list[dict] = []
         # Tool calls the next turn makes, one ToolCallsEvent per batch.
         self.tool_batches: list[tuple[tuple[str, dict], ...]] = []
+        # Events the next turn streams to `on_text`, in order.
+        self.streamed: list = []
         self._mirror = None
         self._questions = None
 
@@ -246,6 +248,10 @@ class FakeGateway:
                         ]
                     )
                 )
+        on_text = kw.get("on_text")
+        if on_text is not None:
+            for event in self.streamed:
+                await on_text(event)
         if self.error is not None:
             raise self.error
         self.transcripts.setdefault(chat_id, []).extend(
@@ -2753,3 +2759,34 @@ async def test_files_from_a_message_are_saved_where_the_agent_can_read_them(path
     note = gateway.calls[0]["attachments"][-1].content
     assert "uploads/report.docx" in note
     assert (tmp_path / "uploads" / "report.docx").read_bytes() == b"PK\x03\x04"
+
+
+async def test_the_reply_is_streamed_to_the_adapter_as_it_is_written(paths):
+    router, gateway = _router(paths)
+    gateway.streamed = [ModelMessageChunk("Hel"), ModelMessageChunk("lo")]
+    shown: list[str] = []
+
+    async def show(text: str) -> None:
+        shown.append(text)
+
+    await router.handle(_inbound("hi"), stream=show)
+
+    assert shown == ["Hel", "Hello"]
+
+
+async def test_a_new_model_message_starts_its_stream_afresh(paths):
+    """Text before a tool call is a message of its own, not the start of the answer."""
+    router, gateway = _router(paths)
+    gateway.streamed = [
+        ModelMessageChunk("Let me look."),
+        ModelMessage("Let me look."),
+        ModelMessageChunk("Done."),
+    ]
+    shown: list[str] = []
+
+    async def show(text: str) -> None:
+        shown.append(text)
+
+    await router.handle(_inbound("hi"), stream=show)
+
+    assert shown == ["Let me look.", "Done."]

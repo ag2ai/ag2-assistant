@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
 
-from ag2.events import TextInput, ToolCallsEvent
+from ag2.events import ModelMessageChunk, TextInput, ToolCallsEvent
 from openai import AsyncOpenAI
 
 from assistant import connections
@@ -419,6 +419,26 @@ class ToolTrace:
             await self._progress(tool_trace(tuple(self._calls), working=working), final=final)
         except Exception as exc:
             log_suppressed("channel tool trace", exc)
+
+
+class TextStream:
+    """Accumulates the model message being written and gives the adapter's ``show`` the
+    text so far. Best-effort: text the adapter cannot show never fails a turn."""
+
+    def __init__(self, show) -> None:
+        self._show = show
+        self._text = ""
+
+    async def __call__(self, event) -> None:
+        """Take a streamed chunk, or the ``ModelResponse`` that ends the message."""
+        if not isinstance(event, ModelMessageChunk):
+            self._text = ""
+            return
+        self._text += event.content
+        try:
+            await self._show(self._text)
+        except Exception as exc:
+            log_suppressed("channel text stream", exc)
 
 
 def peer_key(connection: str, chat_id: str) -> str:
@@ -1064,10 +1084,12 @@ class ChannelRouter:
         attachments: list | None = None,
         files: list[tuple[str, bytes]] | None = None,
         progress=None,
+        stream=None,
     ) -> Outcome:
         """Run ``inbound`` and return what the adapter should render. ``progress`` is an
         optional async ``(text, *, final) -> None`` given this turn's Tool trace as it
-        grows and once more when it ends; an adapter passing none gets today's turn."""
+        grows and once more when it ends; an adapter passing none gets today's turn.
+        ``stream`` is an optional async ``(text) -> None`` given the reply written so far."""
         if not should_respond(inbound):
             return NOTHING
         if not self.paired(inbound):
@@ -1125,6 +1147,7 @@ class ChannelRouter:
                 # Wired only for an adapter that asked to trace; the rest run the
                 # unforwarded path.
                 on_event=trace if progress is not None else None,
+                on_text=TextStream(stream) if stream is not None else None,
             )
         except Exception as exc:  # surface failures to the user
             return Reply(f"Sorry, something went wrong: {exc}")
