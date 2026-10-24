@@ -50,8 +50,8 @@ def _has_attachment(msg) -> bool:
     return bool(msg.document or msg.photo or msg.audio or msg.voice or msg.video)
 
 
-async def _download_attachments(msg, bot) -> list:
-    """Download a Telegram message's media and build AG2 multimodal inputs."""
+async def _download_attachments(msg, bot) -> tuple[list, list[tuple[str, bytes]]]:
+    """Download a Telegram message's media; return its AG2 inputs and the raw (name, bytes) files."""
     # (file_id, filename, mime) for each supported attachment on the message.
     specs: list[tuple[str, str, str | None]] = []
     if msg.document:
@@ -69,6 +69,7 @@ async def _download_attachments(msg, bot) -> list:
         specs.append((v.file_id, v.file_name or "video.mp4", v.mime_type))
 
     inputs = []
+    files: list[tuple[str, bytes]] = []
     for file_id, filename, mime in specs:
         try:
             tg_file = await bot.get_file(file_id)
@@ -80,7 +81,8 @@ async def _download_attachments(msg, bot) -> list:
         inp = build_input(data, filename, mime)
         if inp is not None:
             inputs.append(inp)
-    return inputs
+            files.append((filename, data))
+    return inputs, files
 
 
 class TelegramAsker(PendingGuard):
@@ -402,11 +404,12 @@ class TelegramChannel(Channel):
         # The placeholder doubles as the turn's Tool trace while it runs; a steered
         # message has none, and the turn it feeds is already tracing into its own.
         tracer = TraceEditor(placeholder) if placeholder is not None else None
-        attachments = await _download_attachments(msg, context.bot)
+        attachments, files = await _download_attachments(msg, context.bot)
         outcome = await self._require_router().handle(
             inbound,
             asker=self._asker_for(chat_id),
             attachments=attachments,
+            files=files,
             progress=tracer,
         )
         if tracer is None:  # exactly the steered case: no placeholder to land in

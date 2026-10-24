@@ -34,18 +34,21 @@ def _has_files(event: dict) -> bool:
     return bool(event.get("files"))
 
 
-async def _download_attachments(event: dict, bot_token: str) -> list:
-    """Download a Slack message's files and build AG2 multimodal inputs.
+async def _download_attachments(
+    event: dict, bot_token: str
+) -> tuple[list, list[tuple[str, bytes]]]:
+    """Download a Slack message's files; return its AG2 inputs and raw (name, bytes) files.
 
     Slack file URLs are private — they require an `Authorization: Bearer` header
     with the bot token, and the `files:read` scope.
     """
     files = event.get("files") or []
     if not files:
-        return []
+        return [], []
 
     headers = {"Authorization": f"Bearer {bot_token}"}
     inputs = []
+    saved: list[tuple[str, bytes]] = []
     async with aiohttp.ClientSession(headers=headers) as session:
         for f in files:
             url = f.get("url_private_download") or f.get("url_private")
@@ -58,10 +61,12 @@ async def _download_attachments(event: dict, bot_token: str) -> list:
                     data = await resp.read()
             except Exception:
                 continue  # skip what we can't fetch; the text still goes through
-            inp = build_input(data, f.get("name") or "file", f.get("mimetype"))
+            name = f.get("name") or "file"
+            inp = build_input(data, name, f.get("mimetype"))
             if inp is not None:
                 inputs.append(inp)
-    return inputs
+                saved.append((name, data))
+    return inputs, saved
 
 
 class SlackAsker(PendingGuard):
@@ -260,11 +265,12 @@ class SlackChannel(Channel):
             except Exception:
                 pass  # missing reactions:write or already reacted — non-fatal
 
-        attachments = await _download_attachments(event, self._bot_token)
+        attachments, files = await _download_attachments(event, self._bot_token)
         outcome = await self._require_router().handle(
             inbound,
             asker=self._asker_for(channel) if channel else None,
             attachments=attachments,
+            files=files,
         )
 
         spoken = spoken_text(outcome)

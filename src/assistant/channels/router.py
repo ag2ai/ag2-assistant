@@ -9,7 +9,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
 
-from ag2.events import ToolCallsEvent
+from ag2.events import TextInput, ToolCallsEvent
+from openai import AsyncOpenAI
 
 from assistant import connections
 from assistant import pairing as pairing_mod
@@ -18,12 +19,20 @@ from assistant.observability import log_suppressed
 from assistant.pairing import PairingStore
 from assistant.paths import Paths
 from assistant.peers import Peer, PeerStore
+from assistant.transcription import transcribe_audio
+from assistant.workspace import write_upload
 
 if TYPE_CHECKING:
     from assistant.gateway.core import Gateway  # type-only (runtime import would cycle)
 
 # A bare attachment carries no words, so the model is given a prompt for it.
 ATTACHMENT_ONLY_PROMPT = "Here is a file I'm sharing with you."
+
+# Told to the agent when a message's files were saved in the workspace.
+FILES_SAVED = (
+    "The user attached file(s), saved in the workspace at: {paths}. To read an "
+    "uploaded document, read_file that path."
+)
 
 # Said for a bare attachment whose download brought nothing back.
 ATTACHMENT_UNREADABLE = "I sent you a file, but it could not be read."
@@ -527,8 +536,15 @@ class ChannelRouter:
     message runs on is resolved when the message arrives, not captured at start.
     """
 
-    def __init__(self, directory: ProfileDirectory, paths: Paths) -> None:
+    def __init__(
+        self,
+        directory: ProfileDirectory,
+        paths: Paths,
+        *,
+        transcribe_client: AsyncOpenAI | None = None,
+    ) -> None:
         self._directory = directory
+        self._transcribe_client = transcribe_client
         self._peers = PeerStore(paths)
         self._pairing = PairingStore(paths)
 
@@ -1046,6 +1062,7 @@ class ChannelRouter:
         *,
         asker=None,
         attachments: list | None = None,
+        files: list[tuple[str, bytes]] | None = None,
         progress=None,
     ) -> Outcome:
         """Run ``inbound`` and return what the adapter should render. ``progress`` is an
@@ -1071,6 +1088,20 @@ class ChannelRouter:
         # Taken before the Chat is resolved: attaching to one drops what the Peer holds.
         chat_model = self._peers.take_pending_model(inbound.connection, inbound.chat_id)
         chat_id = self._chat_for(inbound)
+
+        if attachments:
+            attachments = await transcribe_audio(
+                attachments,
+                api_key=gateway.config.secret_env.get("OPENAI_API_KEY", ""),
+                client=self._transcribe_client,
+            )
+
+        if files:
+            saved = [write_upload(gateway.config.workspace_dir, n, d) for n, d in files]
+            attachments = [
+                *(attachments or []),
+                TextInput(FILES_SAVED.format(paths=", ".join(saved))),
+            ]
 
         text = inbound.text
         if not text.strip() and inbound.has_attachment:

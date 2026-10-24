@@ -35,9 +35,12 @@ class _Sendable(Protocol):
     async def send(self, content: str) -> Any: ...
 
 
-async def _download_attachments(message: "discord.Message") -> list:
-    """Download a Discord message's attachments and build AG2 multimodal inputs."""
+async def _download_attachments(
+    message: "discord.Message",
+) -> tuple[list, list[tuple[str, bytes]]]:
+    """Download a Discord message's attachments; return its AG2 inputs and raw (name, bytes) files."""
     inputs = []
+    files: list[tuple[str, bytes]] = []
     for att in message.attachments:
         if att.size and att.size > _MAX_ATTACHMENT_BYTES:
             continue
@@ -48,7 +51,8 @@ async def _download_attachments(message: "discord.Message") -> list:
         inp = build_input(data, att.filename, att.content_type)
         if inp is not None:
             inputs.append(inp)
-    return inputs
+            files.append((att.filename, data))
+    return inputs, files
 
 
 class _OptionButton(discord.ui.Button):
@@ -210,11 +214,12 @@ class DiscordChannel(Channel):
             return
 
         async with message.channel.typing():
-            attachments = await _download_attachments(message)
+            attachments, files = await _download_attachments(message)
             outcome = await self._require_router().handle(
                 inbound,
                 asker=self._asker_for(channel_id),
                 attachments=attachments,
+                files=files,
             )
 
         spoken = spoken_text(outcome)
