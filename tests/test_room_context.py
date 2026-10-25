@@ -8,24 +8,29 @@ from pathlib import Path
 from uuid import UUID
 
 import acp
+import httpx2
 import pytest
-from ag2 import Agent
+from ag2 import Agent, tool
 from ag2.acp import SessionConfig
 from ag2.acp.testing import connect
+from ag2.config import OpenAIConfig
 from ag2.config.gemini.mappers import convert_messages as gemini_messages
 from ag2.config.openai.mappers import convert_messages, events_to_responses_input
 from ag2.context import ConversationContext
-from ag2.events import ModelRequest, TextInput, render_for_prompt
+from ag2.events import ModelMessage, ModelRequest, ModelResponse, TextInput, render_for_prompt
 from ag2.knowledge import MemoryKnowledgeStore
 from ag2.middleware import Middleware
+from ag2.policies import AlertPolicy
 from ag2.stream import MemoryStream
 from fast_depends.pydantic import PydanticSerializer
+from pydantic import BaseModel
 
 from assistant.acp.chats import ChatBackedStorage, ChatTrackingACPAgent
 from assistant.acp.room_context_validation import context_scope, validate_room_context
-from assistant.agent import create_agent
+from assistant.agent import _build_middleware, create_agent
 from assistant.compaction import (
     CHECKPOINT_SCHEMA,
+    CompactionSession,
     ContextBudgetError,
     load_checkpoint,
     request_tokens,
@@ -406,6 +411,114 @@ async def test_native_non_compacting_provider_drops_expiry_after_delayed_assembl
     assert int(time.time()) >= expiry
     assert "blue fox" not in text and "unavailable" in text
     assert task["task"] in text
+
+
+@pytest.mark.parametrize("invocation_config", [False, True], ids=["constructor", "invocation"])
+async def test_unmarked_non_compacting_request_matches_plain_framework_agent(
+    paths, invocation_config
+):
+    requests, creations, factories = [], [], []
+
+    def respond(request):
+        requests.append((request.url.path, request.content))
+        return httpx2.Response(
+            200,
+            json={
+                "id": "chatcmpl-legacy",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "test-model",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": '{"answer":"unchanged"}'},
+                        "finish_reason": "stop",
+                    }
+                ],
+            },
+        )
+
+    class CountingProvider(OpenAIConfig):
+        def create(self):
+            creations.append(self)
+            return super().create()
+
+    class Answer(BaseModel):
+        answer: str
+
+    @tool
+    def lookup(term: str) -> str:
+        """Look up one term."""
+        raise AssertionError("A schema-only tool must not run")
+
+    class ContextPolicy:
+        name = "legacy-context-proof"
+
+        async def apply(self, prompts, events, context):
+            assert CompactionSession not in context.dependencies
+            assert context.dependencies[Answer] is Answer
+            return [*prompts, context.variables["legacy_marker"]], events
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(respond)) as network:
+        provider = CountingProvider(
+            model="test-model", api_key="test", http_client=network, max_retries=0
+        )
+
+        def model_factory(*args):
+            factories.append(args)
+            return provider
+
+        cfg = Config.for_paths(paths)
+        cfg.llm.call_retries = 0
+        native = create_agent(
+            cfg,
+            memory=False,
+            compact=False,
+            skills=False,
+            capabilities=[],
+            extra_tools=[lookup],
+            model_factory=model_factory,
+        )
+        native.add_policy(ContextPolicy())
+        legacy = Agent(
+            cfg.agent.name,
+            prompt=cfg.agent.system_prompt,
+            config=provider,
+            tools=native.tools,
+            middleware=_build_middleware(cfg),
+            assembly=[AlertPolicy(), ContextPolicy()],
+        )
+        for agent in (legacy, native):
+            stream = MemoryStream()
+            await stream.history.replace(
+                [
+                    ModelRequest.ensure_request(["Earlier question"]),
+                    ModelResponse(ModelMessage("Earlier answer")),
+                ]
+            )
+            reply = await agent.ask(
+                "Unmarked question 🦊",
+                stream=stream,
+                config=provider if invocation_config else None,
+                prompt=["Turn instructions"],
+                variables={"legacy_marker": "Retained context marker"},
+                dependencies={Answer: Answer},
+                response_schema=Answer,
+            )
+            assert reply.body == '{"answer":"unchanged"}'
+
+    assert len(factories) == 1
+    assert creations == [provider, provider]
+    assert len(requests) == 2
+    assert requests[0] == requests[1]
+    payload = json.loads(requests[0][1])
+    assert payload["tools"][0]["function"]["name"] == "lookup"
+    assert payload["response_format"]["type"] == "json_schema"
+    assert "Retained context marker" in str(payload["messages"])
+    assert "Earlier question" in str(payload["messages"])
+    assert "Earlier answer" in str(payload["messages"])
+    assert "Unmarked question 🦊" in str(payload["messages"])
+    assert "room context" not in str(payload["messages"]).lower()
 
 
 async def test_oversized_reference_cannot_bypass_the_model_input_budget():

@@ -37,8 +37,13 @@ A content-free nonconversational event marks a context-enabled conversation. Pas
 profile aggregation skips that entire conversation, including model/tool output and
 later turns that may derive from room reference data. Existing compaction retains
 the marker as telemetry, and durable ACP replay reloads it on reconnect. Ordinary
-unmarked conversations retain their existing profile behavior; explicit memory tools
-continue to obey the assistant's existing permission and owner instructions.
+unmarked conversations retain their existing profile behavior. This session-wide
+exclusion is intentional: a later turn or reconnected session may reuse a previous
+room-derived answer even without a new packet, so a per-turn skip could learn it.
+A separate clean, unmarked session can still contribute to passive profile learning;
+the marker neither erases the identity's existing profile nor disables learning in
+its other sessions. Explicit memory tools continue to obey the assistant's existing
+permission and owner instructions.
 
 The ACP client must use separate context-aware sessions when the effective room,
 agent, membership, tier, visibility, policy revision or availability changes. This
