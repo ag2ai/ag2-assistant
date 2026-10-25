@@ -1,5 +1,6 @@
 """Bound room data reaches inference without entering the user transcript or profile."""
 
+import asyncio
 import copy
 import json
 import time
@@ -22,13 +23,16 @@ from fast_depends.pydantic import PydanticSerializer
 
 from assistant.acp.chats import ChatBackedStorage, ChatTrackingACPAgent
 from assistant.acp.room_context_validation import context_scope, validate_room_context
+from assistant.agent import create_agent
 from assistant.compaction import (
     CHECKPOINT_SCHEMA,
     ContextBudgetError,
     load_checkpoint,
     request_tokens,
 )
+from assistant.config import Config
 from assistant.memory import PROFILE_PATH, build_compaction_config, build_knowledge_config
+from assistant.middleware import LLMRetryMiddleware
 from assistant.room_context import (
     CONTENT_META_KEY,
     PREPARED_META_KEY,
@@ -244,6 +248,143 @@ async def test_transient_context_is_budgeted_and_not_compacted_into_checkpoint_s
         if request[2].get("response_schema") is CHECKPOINT_SCHEMA
     ]
     assert all("blue fox" not in str(request[0]) for request in summaries)
+
+
+@pytest.mark.parametrize("compaction", [False, True], ids=["retry", "compaction"])
+async def test_expired_context_is_removed_before_provider_attempt(compaction):
+    task = fresh_task()
+    expiry = int(time.time()) + 1
+    for value in (task["room_context"], task["room_context_binding"]):
+        value["expires_at"] = expiry
+    _cleaned, prepared = prepare_room_context(blocks(task))
+    assert prepared is not None and prepared.task is not None
+    seen = []
+
+    async def expire(_delay=0):
+        await asyncio.sleep(max(0, expiry - time.time()) + 0.02)
+
+    async def before_call(messages, context, options):
+        summary = options.get("response_schema") is CHECKPOINT_SCHEMA
+        text = model_text(messages)
+        seen.append((summary, text, int(time.time()) >= expiry))
+        if summary:
+            await expire()
+        elif not compaction and len(seen) == 1:
+            raise ConnectionError("transient scripted provider failure")
+
+    config = CheckpointTestConfig("done", before_call=before_call)
+    middleware = [
+        Middleware(RoomContextMiddleware),
+        LLMRetryMiddleware(1, base_delay=0, sleep=expire),
+    ]
+    stream = MemoryStream()
+    if compaction:
+        await stream.history.replace(
+            [ModelRequest.ensure_request([f"history {i} " + "x" * 4000]) for i in range(8)]
+        )
+        knowledge = build_compaction_config(max_tokens=4000)
+        agent = compacting_agent(config, knowledge, middleware=middleware)
+    else:
+        agent = Agent("room-test", config=config, middleware=middleware)
+    context = ConversationContext(stream, variables={"acp.meta": {PREPARED_META_KEY: prepared}})
+    event = ModelRequest.ensure_request([task["task"]])
+    client = await agent._prepare_turn(event, context, None)
+    await agent._execute(event, context=context, client=client)
+
+    ordinary = [(text, expired) for summary, text, expired in seen if not summary]
+    if compaction:
+        assert any(summary for summary, _text, _expired in seen)
+        assert all("blue fox" not in text for summary, text, _expired in seen if summary)
+        record = await load_checkpoint(knowledge.store, stream.id)
+        assert record is not None and "blue fox" not in record.model_dump_json()
+        assert len(ordinary) == 1
+    else:
+        assert len(ordinary) == 2
+        assert "blue fox" in ordinary[0][0] and not ordinary[0][1]
+    assert ordinary[-1][1]
+    assert "blue fox" not in ordinary[-1][0]
+    assert "unavailable" in ordinary[-1][0]
+    assert all(task["task"] in text for text, _expired in ordinary)
+    durable = "\n".join(json.dumps(event.to_dict()) for event in await stream.history.get_events())
+    assert "Launch target: Friday" not in durable
+    assert "room_context_binding" not in durable
+
+
+@pytest.mark.parametrize("status", ["partial", "denied", "invalid"])
+async def test_provider_guidance_prefers_briefing_and_limits_targeted_mcp_reads(status):
+    task = fresh_task()
+    if status == "denied":
+        task["room_context"]["status"] = "denied"
+        for section in ("room", "readme", "members", "messages"):
+            task["room_context"].pop(section, None)
+    elif status == "invalid":
+        task["room_context"]["room_id"] = "!wrong"
+    _cleaned, prepared = prepare_room_context(blocks(task))
+    config = CheckpointTestConfig("done")
+    agent = Agent("room-test", config=config, middleware=[Middleware(RoomContextMiddleware)])
+    context = ConversationContext(
+        MemoryStream(), variables={"acp.meta": {PREPARED_META_KEY: prepared}}
+    )
+    event = ModelRequest.ensure_request([task["task"]])
+    client = await agent._prepare_turn(event, context, None)
+    await agent._execute(event, context=context, client=client)
+    text = model_text(config.requests[0][0])
+    assert task["task"] in text
+    assert ("blue fox" in text) == (status == "partial")
+    for guidance in (
+        "briefing first",
+        "answer without extra room reads",
+        "specific missing or fresh fact",
+        "available MCP tools",
+        "this agent under its current room permissions",
+        "Do not automatically fetch bulk history",
+        "bypass denied sections or visibility",
+        "switch identities for access",
+        "ask for permitted context",
+    ):
+        assert guidance in text
+
+
+@pytest.mark.parametrize("invocation_config", [False, True], ids=["constructor", "invocation"])
+async def test_native_non_compacting_provider_drops_expiry_after_delayed_assembly(
+    paths, invocation_config
+):
+    task = fresh_task()
+    expiry = int(time.time()) + 1
+    for value in (task["room_context"], task["room_context_binding"]):
+        value["expires_at"] = expiry
+    _cleaned, prepared = prepare_room_context(blocks(task))
+    assert prepared is not None and prepared.task is not None
+
+    class DelayedAssembly:
+        name = "delayed-test-assembly"
+
+        async def apply(self, prompts, events, context):
+            assert "blue fox" in model_text(events)
+            await asyncio.sleep(max(0, expiry - time.time()) + 0.02)
+            return prompts, events
+
+    config = CheckpointTestConfig("done")
+    cfg = Config.for_paths(paths)
+    cfg.llm.call_retries = 0
+    agent = create_agent(
+        cfg,
+        memory=False,
+        compact=False,
+        model_factory=lambda *_args: config,
+    )
+    agent.add_policy(DelayedAssembly())
+    reply = await agent.ask(
+        task["task"],
+        config=config if invocation_config else None,
+        variables={"acp.meta": {PREPARED_META_KEY: prepared}},
+    )
+    assert reply.body == "done"
+    assert len(config.requests) == 1
+    text = model_text(config.requests[0][0])
+    assert int(time.time()) >= expiry
+    assert "blue fox" not in text and "unavailable" in text
+    assert task["task"] in text
 
 
 async def test_oversized_reference_cannot_bypass_the_model_input_budget():

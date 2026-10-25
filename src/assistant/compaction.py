@@ -44,7 +44,7 @@ from ag2.utils import MODEL_CONFIG_CONTEXT_DEPENDENCY_KEY
 from fast_depends.pydantic import PydanticSerializer
 from pydantic import BaseModel, ConfigDict
 
-from assistant.room_context import TransientRoomContextInput
+from assistant.room_context import TransientRoomContextInput, refresh_room_context
 
 
 def event_ref(event: BaseEvent) -> str:
@@ -940,23 +940,17 @@ class BudgetedClient:
                 tools=options["tools"],
                 response_schema=options.get("response_schema"),
             )
-        return await self.client(messages, context, **options)
+        return await self.client(refresh_room_context(messages, context), context, **options)
 
 
 class CompactingAgent(Agent):
-    """Wrap constructor and invocation configurations at the public run boundary."""
+    """Guard provider attempts after native context preparation, with optional compaction."""
 
-    def run(self, *messages, **options):
-        config = options.get("config")
-        if config is not None and not isinstance(config, BudgetedModelConfig):
-            options["config"] = BudgetedModelConfig(config)
-        return super().run(*messages, **options)
-
-    async def ask(self, *messages, **options):
-        config = options.get("config")
-        if config is not None and not isinstance(config, BudgetedModelConfig):
-            options["config"] = BudgetedModelConfig(config)
-        return await super().ask(*messages, **options)
+    async def _prepare_turn(self, trigger, context, config):
+        client = await super()._prepare_turn(trigger, context, config)
+        if isinstance(client, BudgetedClient):
+            return client
+        return BudgetedClient(client, context.dependencies[MODEL_CONFIG_CONTEXT_DEPENDENCY_KEY])
 
 
 @tool

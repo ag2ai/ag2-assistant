@@ -14,6 +14,7 @@ from ag2.events import BaseEvent, ModelRequest, ModelResponse, TextInput
 from ag2.middleware.base import BaseMiddleware, LLMCall, MiddlewareFactory
 
 from assistant.compaction import ContextBudgetError
+from assistant.room_context import refresh_room_context
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +195,7 @@ class _LLMRetryMiddleware(BaseMiddleware):
         attempt = 0
         while True:
             try:
-                return await call_next(events, context)
+                return await call_next(refresh_room_context(events, context), context)
             except Exception as exc:
                 if attempt >= self._retries or not self._predicate(exc):
                     raise

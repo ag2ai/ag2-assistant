@@ -1,5 +1,6 @@
 """Transient room reference data for ACP turns."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -7,7 +8,11 @@ from ag2.acp.executor import META_VARIABLE
 from ag2.events import BaseEvent, ModelRequest, TextInput
 from ag2.middleware import BaseMiddleware
 
-from assistant.acp.room_context_validation import render_room_context, validate_room_context
+from assistant.acp.room_context_validation import (
+    ROOM_CONTEXT_GUIDANCE,
+    render_room_context,
+    validate_room_context,
+)
 
 CONTENT_META_KEY = "ag2/room_context"
 TASK_META_KEY = "ag2/task"
@@ -74,6 +79,27 @@ def prepare_room_context(prompt: list) -> tuple[list, PreparedRoomContext | None
     return cleaned, PreparedRoomContext(task=task, agent_id=agent_id)
 
 
+def refresh_room_context(events: Sequence[BaseEvent], context) -> list[BaseEvent]:
+    """Replace transient references with a freshly validated view for one provider attempt."""
+    outgoing = [event for event in events if not isinstance(event, TransientRoomContextInput)]
+    meta = context.variables.get(META_VARIABLE, {}) if context is not None else {}
+    prepared = meta.get(PREPARED_META_KEY) if isinstance(meta, dict) else None
+    if not isinstance(prepared, PreparedRoomContext):
+        return outgoing
+    packet = (
+        validate_room_context(prepared.task, agent_id=prepared.agent_id) if prepared.task else None
+    )
+    text = (
+        render_room_context(packet)
+        if packet
+        else (
+            "AG2 Space room context unavailable: optional packet did not validate for this turn. "
+            + ROOM_CONTEXT_GUIDANCE
+        )
+    )
+    return [TransientRoomContextInput([TextInput(text)]), *outgoing]
+
+
 class RoomContextMiddleware(BaseMiddleware):
     async def on_turn(self, call_next, event, context):
         meta = context.variables.get(META_VARIABLE, {})
@@ -83,22 +109,4 @@ class RoomContextMiddleware(BaseMiddleware):
         return await call_next(event, context)
 
     async def on_llm_call(self, call_next, events, context):
-        meta = context.variables.get(META_VARIABLE, {})
-        prepared = meta.get(PREPARED_META_KEY) if isinstance(meta, dict) else None
-        if not isinstance(prepared, PreparedRoomContext):
-            return await call_next(events, context)
-        packet = (
-            validate_room_context(prepared.task, agent_id=prepared.agent_id)
-            if prepared.task
-            else None
-        )
-        text = (
-            render_room_context(packet)
-            if packet
-            else (
-                "AG2 Space room context unavailable: optional packet did not validate for this turn. "
-                "Do not replace it with unconditional history reads or use another identity."
-            )
-        )
-        reference = TransientRoomContextInput([TextInput(text)])
-        return await call_next([reference, *events], context)
+        return await call_next(refresh_room_context(events, context), context)

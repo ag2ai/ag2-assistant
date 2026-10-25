@@ -845,8 +845,7 @@ def create_agent(
         assert knowledge is not None
         if selected_model is not None:
             selected_model = BudgetedModelConfig(selected_model)
-    agent_cls = CompactingAgent if compact else Agent
-    agent = agent_cls(
+    agent = CompactingAgent(
         config.agent.name,
         prompt=BEHAVIOR_GUIDANCE if invocation_only else config.agent.system_prompt,
         config=selected_model,

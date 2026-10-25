@@ -15,10 +15,21 @@ A prompt containing only marked data causes no model turn. The binding is a cons
 check, not authorization; the client and authoritative producer must enforce policy.
 
 A typed, process-local prepared value carries accepted data into model middleware.
-The reference is untrusted model input for this turn, revalidated before each model
-call. It never becomes a persisted ModelRequest, task instruction, or global memory
+The reference is untrusted model input for this turn, revalidated for every provider
+attempt, including retries and after asynchronous budget preparation or compaction.
+An expired packet becomes an unavailable notice while the original question survives.
+Revalidation checks the held packet's binding and expiry; it does not query live
+policy or membership, or erase information already seen in an earlier attempt.
+It never becomes a persisted ModelRequest, task instruction, or global memory
 instruction. Compaction budgets the reference alongside protected inputs but does
 not include it in checkpoint sources, summaries, or the latest saved request.
+
+The model is instructed to use the briefing first and answer without extra room
+reads when it suffices. Available MCP tools may supply specific missing or fresh
+facts and requested actions under the same agent's current room permissions. Missing,
+expired or denied context must not trigger automatic bulk history replacement,
+identity switching or a visibility bypass. These are model instructions, not a
+deterministic tool gate; the authoritative server still enforces each read or action.
 
 A content-free nonconversational event marks a context-enabled conversation. Passive
 profile aggregation skips that entire conversation, including model/tool output and
