@@ -44,6 +44,8 @@ from ag2.utils import MODEL_CONFIG_CONTEXT_DEPENDENCY_KEY
 from fast_depends.pydantic import PydanticSerializer
 from pydantic import BaseModel, ConfigDict
 
+from assistant.room_context import TransientRoomContextInput
+
 
 def event_ref(event: BaseEvent) -> str:
     payload = [f"{type(event).__module__}.{type(event).__qualname__}", event.to_dict()]
@@ -171,8 +173,18 @@ def request_tokens(
     fixed = "\n".join(prompt) + json.dumps(
         [list(tools), response_schema], default=_json_value, sort_keys=True
     )
-    conversation = [event for event in events if is_conversational(event)]
-    return (len(fixed) + 3) // 4 + sum(estimated_tokens(event, 4) + 8 for event in conversation)
+    conversation = [
+        event
+        for event in events
+        if is_conversational(event) or isinstance(event, TransientRoomContextInput)
+    ]
+    return (len(fixed) + 3) // 4 + sum(
+        estimated_tokens(
+            ModelRequest(event.parts) if isinstance(event, TransientRoomContextInput) else event, 4
+        )
+        + 8
+        for event in conversation
+    )
 
 
 def _replayable_cut(events: Sequence[BaseEvent], target: int) -> int:
@@ -472,6 +484,8 @@ class CheckpointCompact:
         return projected
 
     async def guard(self, events, context, config, *, tools, response_schema):
+        transient = [e for e in events if isinstance(e, TransientRoomContextInput)]
+        events = [e for e in events if not isinstance(e, TransientRoomContextInput)]
         session = context.dependencies[CompactionSession]
         await self.hydrate(session, context)
         raw = list(await context.stream.history.get_events())
@@ -494,7 +508,7 @@ class CheckpointCompact:
             raw = list(await context.stream.history.get_events())
         original = self.project(events, session.record)
         source = self.deduplicate(original, session)
-        protected = self.skill_events(source, session)
+        protected = [*transient, *self.skill_events(source, session)]
         budget = self.limits.max_tokens
         if budget <= 0:
             return [*protected, *source]
@@ -535,7 +549,7 @@ class CheckpointCompact:
                 tools,
                 response_schema,
             )
-            protected = self.skill_events(reduced, session)
+            protected = [*transient, *self.skill_events(reduced, session)]
             if (
                 request_tokens([*protected, *reduced], context.prompt, tools, response_schema)
                 > budget

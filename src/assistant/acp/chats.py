@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 from uuid import UUID
 
+from acp.schema import PromptResponse
 from ag2.acp.agent import ACPAgent, _ConnectionScope
 from ag2.acp.sessions import UnknownSessionError
 from ag2.context import ConversationContext
@@ -43,6 +44,7 @@ from ag2.knowledge import SqliteKnowledgeStore
 from assistant.acp.outbound import Outbound, destination_of, wants_delivery
 from assistant.paths import Paths
 from assistant.peers import PeerStore
+from assistant.room_context import PREPARED_META_KEY, prepare_room_context
 from assistant.storage import SerialStore, now_iso
 
 if TYPE_CHECKING:
@@ -535,6 +537,17 @@ class _LinkedScope(_ConnectionScope):
     """Attach declared ACP receivers during initialization and detach them on close."""
 
     __slots__ = ()
+
+    async def prompt(self, session_id: str, prompt: list, **kwargs: Any) -> Any:
+        cleaned, prepared = prepare_room_context(prompt)
+        kwargs.pop(PREPARED_META_KEY, None)
+        if prepared is not None:
+            if not any(getattr(block, "text", "").strip() for block in cleaned):
+                self._require_session_scope()
+                await self._get_session(session_id)
+                return PromptResponse(stop_reason="end_turn")
+            kwargs[PREPARED_META_KEY] = prepared
+        return await super().prompt(session_id=session_id, prompt=cleaned, **kwargs)
 
     async def initialize(
         self,
