@@ -121,6 +121,23 @@ def test_validation_checks_bytes_scope_policy_and_exact_shapes():
     assert context_scope(packet) != context_scope({**packet, "status": "denied"})
 
 
+def test_optional_room_category_is_a_bounded_unicode_string():
+    for category in ("", "Research", "x" * 256, "🦊" * 256):
+        task = copy.deepcopy(GOLDEN)
+        task["room_context"]["room"]["category"] = category
+        packet = validate_room_context(task, now=NOW)
+        assert packet is not None
+        assert packet["room"]["category"] == category
+    for category in ("x" * 257, "🦊" * 257, None, True, 1, [], {}, "\ud800", "bad\x00"):
+        task = copy.deepcopy(GOLDEN)
+        task["room_context"]["room"]["category"] = category
+        assert validate_room_context(task, now=NOW) is None
+    task = copy.deepcopy(GOLDEN)
+    task["room_context"]["room"]["category"] = "Research"
+    task["room_context"]["room"]["unknown"] = "Rejected"
+    assert validate_room_context(task, now=NOW) is None
+
+
 async def test_real_acp_keeps_packet_and_derived_outputs_out_of_profile_and_stored_request(paths):
     config = CheckpointTestConfig("Derived answer mentions blue fox")
     profile = MemoryKnowledgeStore()
@@ -143,15 +160,18 @@ async def test_real_acp_keeps_packet_and_derived_outputs_out_of_profile_and_stor
         chat_storage=storage,
         connection_id="room-test",
     )
+    task = fresh_task()
+    task["room_context"]["room"]["category"] = "Transient research category"
     async with connect(served) as (client, _recorder):
         session = await client.new_session(cwd=".")
-        result = await client.prompt(session_id=session.session_id, prompt=blocks(fresh_task()))
+        result = await client.prompt(session_id=session.session_id, prompt=blocks(task))
         assert result.stop_reason == "end_turn"
         # A later reply may still derive from room-specific assistant output.
         await client.prompt(session_id=session.session_id, prompt=[acp.text_block("continue")])
     inputs = config.requests[0][0]
     text = model_text(inputs)
     assert "blue fox" in text and GOLDEN["task"] in text
+    assert "Transient research category" in text
     assert "DISPLAY TEXT MUST NOT BECOME" not in text
     assert await profile.read(PROFILE_PATH) == "Original profile"
     history = list(await storage.get_history(UUID(session.session_id)))
@@ -160,6 +180,7 @@ async def test_real_acp_keeps_packet_and_derived_outputs_out_of_profile_and_stor
     assert any(isinstance(event, RoomContextSession) for event in history)
     serialized = "\n".join(json.dumps(event.to_dict()) for event in history)
     assert "Launch target: Friday" not in serialized
+    assert "Transient research category" not in serialized
     assert "room_context_binding" not in serialized
     restarted_storage = ChatBackedStorage(paths=paths, data_dir=paths.root / "data", profile="test")
     restarted_agent = Agent(

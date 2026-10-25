@@ -137,11 +137,11 @@ def validate_room_context(task: dict, *, agent_id: str = "", now: int | None = N
             return None
     if "room" in packet:
         room = packet["room"]
-        if not _shape(room, set(), {"name", "topic"}):
+        if not _shape(room, set(), {"name", "topic", "category"}):
             return None
         if any(
             not _text(room[k], n, empty=True)
-            for k, n in (("name", 512), ("topic", 2048))
+            for k, n in (("name", 512), ("topic", 2048), ("category", 256))
             if k in room
         ):
             return None

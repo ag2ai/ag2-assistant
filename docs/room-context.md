@@ -5,6 +5,8 @@ request. The first text block carries `_meta["ag2/task"]` with `task_id`, `room_
 `access_tier`, `source_message_id`, and optional independently known `agent_id`.
 A later text block carries `_meta["ag2/room_context"] = {binding, context}`.
 The examples in `tests/fixtures/room-context-*.json` describe the proposed v1 packet.
+The optional `room` card accepts `name`, `topic`, and `category`; `category` is a
+string of at most 256 Unicode code points. Other unknown room fields are rejected.
 
 The native ACP listener removes all marked blocks before creating the ordinary user
 request. It checks exact binding consistency, known agent identity, policy-compatible
