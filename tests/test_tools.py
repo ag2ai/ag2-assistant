@@ -90,6 +90,60 @@ def test_web_fetch_invalid_url():
     assert "Error" in result
 
 
+def test_web_fetch_timeout_is_the_agents_to_choose_within_bounds(monkeypatch):
+    """The agent passes `timeout` (seconds) straight to the fetch; absent or
+    unusable values take the 30 s default, and any value is clamped to 1-120 so a
+    fetch always comes back."""
+    import importlib
+
+    import httpx
+
+    mod = importlib.import_module("assistant.tools.web_fetch")
+
+    seen = []
+
+    class Response:
+        headers = {"content-type": "text/plain"}
+        text = "hello"
+
+        def raise_for_status(self):
+            pass
+
+    def fake_get(url, **kwargs):
+        seen.append(kwargs["timeout"])
+        return Response()
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    assert "hello" in web_fetch(url="https://x.invalid", timeout=5)
+    assert "hello" in web_fetch(url="https://x.invalid")
+    web_fetch(url="https://x.invalid", timeout="2.5")
+    web_fetch(url="https://x.invalid", timeout=0)
+    web_fetch(url="https://x.invalid", timeout=10_000)
+    web_fetch(url="https://x.invalid", timeout="soon")
+    web_fetch(url="https://x.invalid", timeout=None)
+    assert seen == [
+        5.0,
+        mod.DEFAULT_TIMEOUT,
+        2.5,
+        1.0,
+        mod.MAX_TIMEOUT,
+        mod.DEFAULT_TIMEOUT,
+        mod.DEFAULT_TIMEOUT,
+    ]
+
+
+def test_web_fetch_reports_a_timeout_instead_of_failing_the_turn(monkeypatch):
+    import httpx
+
+    def slow_get(url, **kwargs):
+        raise httpx.ReadTimeout("timed out")
+
+    monkeypatch.setattr(httpx, "get", slow_get)
+    result = web_fetch(url="https://slow.invalid", timeout=3)
+    assert result.startswith("Error fetching https://slow.invalid: no response within 3s")
+    assert "larger timeout" in result
+
+
 @pytest.mark.integration
 async def test_agent_uses_web_search():
     """Integration test: agent answers a current-info question using search."""

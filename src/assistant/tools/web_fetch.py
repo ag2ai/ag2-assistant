@@ -7,25 +7,49 @@ import httpx
 from ag2 import tool
 from bs4 import BeautifulSoup
 
+DEFAULT_TIMEOUT = 30.0
+# The ceiling an agent-supplied timeout is clamped to: a fetch must always come
+# back, and a slow site is better reported than waited on for a whole turn.
+MAX_TIMEOUT = 120.0
 
-def web_fetch(url: str, max_chars: int = 10000) -> str:
+
+def _bounded_timeout(timeout) -> float:
+    try:
+        seconds = float(timeout)
+    except (TypeError, ValueError):
+        return DEFAULT_TIMEOUT
+    if seconds != seconds:  # NaN
+        return DEFAULT_TIMEOUT
+    return min(max(seconds, 1.0), MAX_TIMEOUT)
+
+
+def web_fetch(url: str, max_chars: int = 10000, timeout: float = DEFAULT_TIMEOUT) -> str:
     """Fetch a web page and extract its readable text content.
 
     Args:
         url: The URL to fetch.
         max_chars: Maximum characters to return (default 10000).
+        timeout: Seconds to wait for the page (default 30, clamped to 1-120). Pass
+            a shorter value for a quick look, a longer one for a site you know
+            is slow; a fetch that outlasts it is reported, never waited on.
 
     Returns:
         The extracted text content from the page.
     """
+    timeout = _bounded_timeout(timeout)
     try:
         response = httpx.get(
             url,
             follow_redirects=True,
-            timeout=30.0,
+            timeout=timeout,
             headers={"User-Agent": "AG2 Assistant/0.1"},
         )
         response.raise_for_status()
+    except httpx.TimeoutException:
+        return (
+            f"Error fetching {url}: no response within {timeout:g}s"
+            " (pass a larger timeout to wait longer)"
+        )
     except httpx.HTTPError as e:
         return f"Error fetching {url}: {e}"
 
