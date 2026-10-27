@@ -35,6 +35,7 @@ from assistant.hitl import DesktopAsker, HitlServer
 from assistant.observability import log_suppressed, profile_logger, setup_logging
 from assistant.paths import Paths
 from assistant.profiles import ProfileMeta, ProfileRegistry
+from assistant.system_tools import CHAT_ORIGIN
 
 # Host manager-supervised ACP listeners bind. Loopback-only: unlike standalone
 # ``acp-serve``, nothing here lets an operator choose a non-loopback interface.
@@ -210,11 +211,25 @@ class ProfileRuntime:
 
     async def notify_channel(self, connection: str, chat_id: str, text: str) -> None:
         """Push a message to a chat on a Connection — the task service delivers run
-        outcomes through here. The Channel is install-level, so the push is handed to
-        the notifier this runtime was built with."""
+        outcomes through here. A CHAT_ORIGIN outcome goes back into this runtime's own
+        Chat; any other Channel is install-level, so the push is handed to the notifier
+        this runtime was built with."""
+        if connection == CHAT_ORIGIN:
+            await self.push_into_chat(chat_id, text)
+            return
         if self._notifier is None:
             raise RuntimeError(f"connection {connection!r} is not reachable from this runtime")
         await self._notifier(connection, chat_id, text)
+
+    async def push_into_chat(self, chat_id: str, text: str) -> str:
+        """A task's outcome lands in the Chat it was created from as a turn of that
+        chat's agent: the agent reads the outcome and answers the owner there, under
+        the same durable inline HITL a message from the owner gets. → the reply."""
+        from assistant.gateway.routes.common import chat_asker  # local: routes import us
+
+        return await self.require_gateway().send_message(
+            text, chat_id=chat_id, asker=chat_asker(self, chat_id)
+        )
 
     async def start(self) -> None:
         """Build the derived config, construct + start gateway and task service the same

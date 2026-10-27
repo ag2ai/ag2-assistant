@@ -56,11 +56,20 @@ def _session_hex(sid: str) -> str:
         return sid
 
 
+# The origin of a task created in a Chat no Connection started (the web UI, a
+# room chat a connector drives). Its outcome is pushed back INTO that Chat as a
+# turn of the chat's own agent — the owner reads it where they asked and can
+# follow up in place, with nothing further asked of the agent that created it.
+CHAT_ORIGIN = "chat"
+_RUN_STREAM_PREFIX = "task-run:"
+
+
 def _origin(peers: PeerStore | None, context) -> tuple[str | None, str | None]:
     """The Peer the current turn is running for, as (connection_id, platform_chat_id) —
     run outcomes get pushed back through that Connection, whichever Chat the Peer has
-    moved to since. (None, None) for a Chat no Peer started (web/CLI/task-run streams),
-    and for a toolkit built without a Peer registry to consult."""
+    moved to since. A Chat no Peer started reports as (CHAT_ORIGIN, chat_id), so the
+    outcome lands in that Chat; (None, None) only for a task-run stream (a run that
+    schedules a run has no reader to report to) and for a turn with no stream."""
     from assistant.channels.base import PUSH_CHANNELS
 
     sid = str(getattr(getattr(context, "stream", None), "id", "") or "")
@@ -74,6 +83,8 @@ def _origin(peers: PeerStore | None, context) -> tuple[str | None, str | None]:
         # A declared destination outranks the platform's chat id: an ACP session id
         # does not survive a reconnect, the room it was opened for does.
         return peer.connection, peer.destination or peer.chat_id
+    if sid and not sid.startswith(_RUN_STREAM_PREFIX):
+        return CHAT_ORIGIN, sid
     return None, None
 
 

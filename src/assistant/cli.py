@@ -37,6 +37,7 @@ from assistant.paths import Paths
 from assistant.permissions import PermissionStore, command_rule, parse_command_rule
 from assistant.profiles import ProfileRegistry
 from assistant.secrets import SecretStore
+from assistant.system_tools import CHAT_ORIGIN
 
 # oauthlib treats a scope superset returned by Google as an error ("Scope has
 # changed"); a broader grant back is not a failure. Set here, at the entry point —
@@ -782,10 +783,13 @@ class _CliDirectory:
         return self._gateway if pid == CLI_PROFILE.id else None
 
     async def notify_channel(self, connection: str, chat_id: str, text: str) -> None:
-        """Push into a chat on the one Connection this command runs as. An outcome
-        whose origin is another Connection has no adapter here, and is dropped rather
-        than delivered down the wrong one."""
-        if connection == self._connection:
+        """Push into a chat on the one Connection this command runs as, or back into
+        the Chat the task was created from. An outcome whose origin is another
+        Connection has no adapter here, and is dropped rather than delivered down the
+        wrong one."""
+        if connection == CHAT_ORIGIN:
+            await self._gateway.send_message(text, chat_id=chat_id)
+        elif connection == self._connection:
             await self._channel.notify(chat_id, text)
 
     async def ask_channel(self, connection: str, chat_id: str, inquiry: str, question) -> None:
