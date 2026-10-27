@@ -12,6 +12,8 @@ from typing import Protocol, runtime_checkable
 
 from ag2.events import HumanMessage
 
+YES_NO_SUFFIX = "(yes/no)"
+
 
 @dataclass
 class Question:
@@ -67,7 +69,9 @@ def build_hitl_hook(asker: "Asker"):
     # No annotations on `hook`: AG2 inspects the hook's signature, and a
     # forward-ref annotation it can't resolve raises a Pydantic error at call time.
     async def hook(event):
-        answer = await asker.ask(Question(text=event.content))
+        # A yes/no prompt (ACP permission requests) is asked as Yes/No options.
+        options = ["yes", "no"] if event.content.rstrip().endswith(YES_NO_SUFFIX) else None
+        answer = await asker.ask(Question(text=event.content, options=options))
         return HumanMessage(content=answer)
 
     return hook

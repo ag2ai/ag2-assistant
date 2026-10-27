@@ -250,10 +250,13 @@ has its own draft, kept in the current browser tab until the page is closed or r
 Sending a message clears only that thread's draft.
 
 Drop a file into any chat (Telegram, Discord, or Slack) and AG2 Assistant reads it:
-images and PDFs are understood visually, audio/video go to the model natively
-(provider permitting), and text/code files are inlined. Add a caption to ask
-something specific ("summarise this PDF"), or send the file on its own. Slack
-needs the `files:read` scope for this to work.
+images and PDFs are understood visually, video goes to the model natively
+(provider permitting), and text/code files are inlined. Voice messages and other
+audio are transcribed with OpenAI (`gpt-4o-mini-transcribe`, needs `OPENAI_API_KEY`)
+and the agent receives the text. Every file is also saved in the profile workspace
+under `uploads/`, so the agent can read formats it cannot see directly (`.docx`,
+`.xlsx`). Add a caption to ask something specific ("summarise this PDF"), or send the
+file on its own. Slack needs the `files:read` scope for this to work.
 
 ### Telegram
 

@@ -9,7 +9,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
 
-from ag2.events import ToolCallsEvent
+from ag2.events import ModelMessageChunk, TextInput, ToolCallsEvent
+from openai import AsyncOpenAI
 
 from assistant import connections
 from assistant import pairing as pairing_mod
@@ -18,12 +19,20 @@ from assistant.observability import log_suppressed
 from assistant.pairing import PairingStore
 from assistant.paths import Paths
 from assistant.peers import Peer, PeerStore
+from assistant.transcription import transcribe_audio
+from assistant.workspace import write_upload
 
 if TYPE_CHECKING:
     from assistant.gateway.core import Gateway  # type-only (runtime import would cycle)
 
 # A bare attachment carries no words, so the model is given a prompt for it.
 ATTACHMENT_ONLY_PROMPT = "Here is a file I'm sharing with you."
+
+# Told to the agent when a message's files were saved in the workspace.
+FILES_SAVED = (
+    "The user attached file(s), saved in the workspace at: {paths}. To read an "
+    "uploaded document, read_file that path."
+)
 
 # Said for a bare attachment whose download brought nothing back.
 ATTACHMENT_UNREADABLE = "I sent you a file, but it could not be read."
@@ -412,6 +421,26 @@ class ToolTrace:
             log_suppressed("channel tool trace", exc)
 
 
+class TextStream:
+    """Accumulates the model message being written and gives the adapter's ``show`` the
+    text so far. Best-effort: text the adapter cannot show never fails a turn."""
+
+    def __init__(self, show) -> None:
+        self._show = show
+        self._text = ""
+
+    async def __call__(self, event) -> None:
+        """Take a streamed chunk, or the ``ModelResponse`` that ends the message."""
+        if not isinstance(event, ModelMessageChunk):
+            self._text = ""
+            return
+        self._text += event.content
+        try:
+            await self._show(self._text)
+        except Exception as exc:
+            log_suppressed("channel text stream", exc)
+
+
 def peer_key(connection: str, chat_id: str) -> str:
     """How a Peer is named when a turn records which conversation wrote it."""
     return f"{connection}:{chat_id}"
@@ -527,8 +556,15 @@ class ChannelRouter:
     message runs on is resolved when the message arrives, not captured at start.
     """
 
-    def __init__(self, directory: ProfileDirectory, paths: Paths) -> None:
+    def __init__(
+        self,
+        directory: ProfileDirectory,
+        paths: Paths,
+        *,
+        transcribe_client: AsyncOpenAI | None = None,
+    ) -> None:
         self._directory = directory
+        self._transcribe_client = transcribe_client
         self._peers = PeerStore(paths)
         self._pairing = PairingStore(paths)
 
@@ -1046,11 +1082,14 @@ class ChannelRouter:
         *,
         asker=None,
         attachments: list | None = None,
+        files: list[tuple[str, bytes]] | None = None,
         progress=None,
+        stream=None,
     ) -> Outcome:
         """Run ``inbound`` and return what the adapter should render. ``progress`` is an
         optional async ``(text, *, final) -> None`` given this turn's Tool trace as it
-        grows and once more when it ends; an adapter passing none gets today's turn."""
+        grows and once more when it ends; an adapter passing none gets today's turn.
+        ``stream`` is an optional async ``(text) -> None`` given the reply written so far."""
         if not should_respond(inbound):
             return NOTHING
         if not self.paired(inbound):
@@ -1071,6 +1110,20 @@ class ChannelRouter:
         # Taken before the Chat is resolved: attaching to one drops what the Peer holds.
         chat_model = self._peers.take_pending_model(inbound.connection, inbound.chat_id)
         chat_id = self._chat_for(inbound)
+
+        if attachments:
+            attachments = await transcribe_audio(
+                attachments,
+                api_key=gateway.config.secret_env.get("OPENAI_API_KEY", ""),
+                client=self._transcribe_client,
+            )
+
+        if files:
+            saved = [write_upload(gateway.config.workspace_dir, n, d) for n, d in files]
+            attachments = [
+                *(attachments or []),
+                TextInput(FILES_SAVED.format(paths=", ".join(saved))),
+            ]
 
         text = inbound.text
         if not text.strip() and inbound.has_attachment:
@@ -1094,6 +1147,7 @@ class ChannelRouter:
                 # Wired only for an adapter that asked to trace; the rest run the
                 # unforwarded path.
                 on_event=trace if progress is not None else None,
+                on_text=TextStream(stream) if stream is not None else None,
             )
         except Exception as exc:  # surface failures to the user
             return Reply(f"Sorry, something went wrong: {exc}")

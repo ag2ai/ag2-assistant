@@ -8,6 +8,7 @@ typing indicator isn't reliably rendered for bots on Desktop/Web).
 
 import asyncio
 import contextlib
+import secrets
 import time
 
 from telegram import (
@@ -38,6 +39,8 @@ WORKING_PLACEHOLDER = "⏳ Sorting that out…"
 # The least time between two Tool trace edits — nothing paces an edit for us, and
 # flood control is applied to the whole conversation.
 TRACE_INTERVAL = 2.0
+# The least time between two draft updates while a reply streams in.
+DRAFT_INTERVAL = 1.0
 FED_REACTION = "👀"  # "received, will use" on a message fed into a running turn
 TELEGRAM_LIMIT = 4096  # Telegram's per-message character cap
 _CB_PREFIX = "acw:"  # callback_data namespace for HITL question buttons
@@ -50,8 +53,8 @@ def _has_attachment(msg) -> bool:
     return bool(msg.document or msg.photo or msg.audio or msg.voice or msg.video)
 
 
-async def _download_attachments(msg, bot) -> list:
-    """Download a Telegram message's media and build AG2 multimodal inputs."""
+async def _download_attachments(msg, bot) -> tuple[list, list[tuple[str, bytes]]]:
+    """Download a Telegram message's media; return its AG2 inputs and the raw (name, bytes) files."""
     # (file_id, filename, mime) for each supported attachment on the message.
     specs: list[tuple[str, str, str | None]] = []
     if msg.document:
@@ -69,6 +72,7 @@ async def _download_attachments(msg, bot) -> list:
         specs.append((v.file_id, v.file_name or "video.mp4", v.mime_type))
 
     inputs = []
+    files: list[tuple[str, bytes]] = []
     for file_id, filename, mime in specs:
         try:
             tg_file = await bot.get_file(file_id)
@@ -80,7 +84,8 @@ async def _download_attachments(msg, bot) -> list:
         inp = build_input(data, filename, mime)
         if inp is not None:
             inputs.append(inp)
-    return inputs
+            files.append((filename, data))
+    return inputs, files
 
 
 class TelegramAsker(PendingGuard):
@@ -114,6 +119,44 @@ class TelegramAsker(PendingGuard):
         finally:
             self._questions.pop(message.message_id, None)
             self._pending.discard(self._chat_id)
+
+
+class DraftStream:
+    """Shows a reply as it is written, as a Telegram message draft (private chats only).
+
+    Updates are throttled to `DRAFT_INTERVAL`. The draft is a 30-second preview: the
+    final reply is still sent as a real message. A draft Telegram refuses ends streaming
+    for the turn.
+    """
+
+    def __init__(self, bot: Bot, chat_id: int, on_start, clock=time.monotonic) -> None:
+        self._bot = bot
+        self._chat_id = chat_id
+        self._on_start = on_start
+        self._clock = clock
+        self._draft_id = secrets.randbelow(2**31 - 1) + 1
+        self._last: float | None = None
+        self._failed = False
+        self.started = False
+
+    async def __call__(self, text: str) -> None:
+        now = self._clock()
+        if self._failed or not text.strip():
+            return
+        if self._last is not None and now - self._last < DRAFT_INTERVAL:
+            return
+        self._last = now
+        try:
+            await self._bot.send_message_draft(
+                self._chat_id, self._draft_id, text[-TELEGRAM_LIMIT:]
+            )
+        except Exception as exc:
+            log_suppressed("telegram draft", exc)
+            self._failed = True
+            return
+        if not self.started:
+            self.started = True
+            await self._on_start()
 
 
 class TraceEditor:
@@ -402,17 +445,31 @@ class TelegramChannel(Channel):
         # The placeholder doubles as the turn's Tool trace while it runs; a steered
         # message has none, and the turn it feeds is already tracing into its own.
         tracer = TraceEditor(placeholder) if placeholder is not None else None
-        attachments = await _download_attachments(msg, context.bot)
+        attachments, files = await _download_attachments(msg, context.bot)
+        draft = None
+        if inbound.is_direct and placeholder is not None:
+
+            async def drop_placeholder() -> None:
+                # The draft shows the reply, so a placeholder still saying "working" goes;
+                # one holding a Tool trace stays, and the answer arrives beneath it.
+                if tracer is not None and not tracer.traced:
+                    with contextlib.suppress(Exception):
+                        await placeholder.delete()
+
+            draft = DraftStream(context.bot, msg.chat.id, drop_placeholder)
         outcome = await self._require_router().handle(
             inbound,
             asker=self._asker_for(chat_id),
             attachments=attachments,
+            files=files,
             progress=tracer,
+            stream=draft,
         )
         if tracer is None:  # exactly the steered case: no placeholder to land in
             await self._acknowledge(outcome, msg)
             return
-        await self._render(outcome, placeholder, msg, traced=tracer.traced)
+        gone = draft is not None and draft.started and not tracer.traced
+        await self._render(outcome, placeholder, msg, traced=tracer.traced or gone)
 
     async def _acknowledge(self, outcome: Outcome, message) -> None:
         """Render an outcome that has no placeholder to land in: a reaction for a

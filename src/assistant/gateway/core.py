@@ -907,6 +907,7 @@ class Gateway:
         origin: str = "",
         attachment_names: tuple[str, ...] = (),
         chat_model: str = "",
+        on_text=None,
     ) -> str:
         """Run a message with Profile shutdown and invocation scope ownership."""
         if self._closing:
@@ -927,6 +928,7 @@ class Gateway:
                 origin,
                 attachment_names,
                 chat_model,
+                on_text,
             )
         finally:
             if task is not None:
@@ -945,6 +947,7 @@ class Gateway:
         origin: str = "",
         attachment_names: tuple[str, ...] = (),
         chat_model: str = "",
+        on_text=None,
     ) -> str:
         """Send a user message to the universal agent and return its reply.
 
@@ -971,6 +974,8 @@ class Gateway:
         own turn back (ADR 0020). `attachment_names` are what those attachments are
         called, so the mirror can name a file instead of carrying it. `chat_model` becomes
         the override of the Chat this message creates, and is ignored on one that exists.
+        `on_text` is an optional async callback given the turn's streamed `ModelMessageChunk`
+        and `ModelResponse` events, so a channel can show the reply as it is written.
         """
         if self._agent is None:
             raise RuntimeError("Gateway not started")
@@ -1031,7 +1036,7 @@ class Gateway:
                     ) as run:
                         turn = asyncio.ensure_future(run.result())
                         active.run, active.task = run, turn
-                        if on_event is None:
+                        if on_event is None and on_text is None:
                             reply = await wait_reply(
                                 turn,
                                 timeout=effective.gateway.reply_timeout_s,
@@ -1044,6 +1049,7 @@ class Gateway:
                                 on_event,
                                 hitl_pending=hitl_pending,
                                 timeout=effective.gateway.reply_timeout_s,
+                                on_text=on_text,
                             )
                 except asyncio.CancelledError:
                     if active.cancelled:
@@ -1136,7 +1142,9 @@ class Gateway:
             except Exception as exc:
                 log_suppressed("a2ui durable surface emit", exc, surface_id=surface.surface_id)
 
-    async def _forwarding_events(self, stream, turn, on_event, hitl_pending=None, timeout=None):
+    async def _forwarding_events(
+        self, stream, turn, on_event, hitl_pending=None, timeout=None, on_text=None
+    ):
         """Await a driving turn, forwarding the agent's structured events to `on_event`.
 
         Uses AG2's stream subscription — the same event mechanism observers and the
@@ -1149,6 +1157,13 @@ class Gateway:
         """
 
         async def report(event):  # event injected positionally by the stream
+            if on_text is not None and isinstance(event, (ModelMessageChunk, ModelResponse)):
+                try:
+                    await on_text(event)
+                except Exception as exc:
+                    log_suppressed("text stream forward", exc)
+            if on_event is None:
+                return
             if isinstance(event, _CONVERSATION_EVENTS) or is_binary_event(event):
                 return  # transcript/audio are the voice channel's own to render
             try:

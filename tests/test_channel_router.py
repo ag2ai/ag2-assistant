@@ -7,10 +7,13 @@ returns, plus what reached the gateway underneath.
 import json
 import re
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
-from ag2.events import ModelMessage, ToolCallEvent, ToolCallsEvent
+from ag2.events import ModelMessage, ModelMessageChunk, ToolCallEvent, ToolCallsEvent
+from openai import AsyncOpenAI
 
+from assistant.attachments import build_input
 from assistant.channels.base import InboundMessage
 from assistant.channels.router import (
     ALREADY_NEW,
@@ -59,6 +62,8 @@ from assistant.channels.router import (
 )
 from assistant.pairing import PairingStore
 from assistant.peers import PeerStore
+from assistant.transcription import VOICE_PREFIX
+from tests.support.http import async_client, json_responder
 
 # The account every test below speaks as. Numeric, because a numeric id is what a
 # Paired account is ultimately keyed by (ADR 0021).
@@ -72,6 +77,7 @@ class FakeGateway:
     def __init__(self, reply: str = "the answer", error: Exception | None = None) -> None:
         self.reply = reply
         self.error = error
+        self.config = SimpleNamespace(secret_env={}, workspace_dir=None)
         self.calls: list[dict] = []
         self.chats: dict[str, dict] = {}
         self.transcripts: dict[str, list[dict]] = {}
@@ -91,6 +97,8 @@ class FakeGateway:
         self.fed: list[dict] = []
         # Tool calls the next turn makes, one ToolCallsEvent per batch.
         self.tool_batches: list[tuple[tuple[str, dict], ...]] = []
+        # Events the next turn streams to `on_text`, in order.
+        self.streamed: list = []
         self._mirror = None
         self._questions = None
 
@@ -240,6 +248,10 @@ class FakeGateway:
                         ]
                     )
                 )
+        on_text = kw.get("on_text")
+        if on_text is not None:
+            for event in self.streamed:
+                await on_text(event)
         if self.error is not None:
             raise self.error
         self.transcripts.setdefault(chat_id, []).extend(
@@ -2716,3 +2728,65 @@ async def test_a_steering_message_reports_nothing_of_its_own(paths):
     outcome = await router.handle(_inbound("focus on 2026"), progress=progress)
 
     assert isinstance(outcome, Ack) and reported == []
+
+
+async def test_a_voice_message_reaches_the_agent_as_its_transcript(paths):
+    """Providers like OpenAI Responses reject audio, so the router transcribes it."""
+    directory = FakeDirectory("work")
+    gateway = directory.gateways["work"]
+    gateway.config.secret_env["OPENAI_API_KEY"] = "k"
+    openai = AsyncOpenAI(
+        api_key="k", http_client=async_client(json_responder({"text": "turn on the lights"}))
+    )
+    router = ChannelRouter(directory, paths, transcribe_client=openai)
+    voice = build_input(b"OggS....", "voice.ogg", "audio/ogg")
+
+    await router.handle(_inbound("", has_attachment=True), attachments=[voice])
+
+    sent = gateway.calls[0]["attachments"]
+    assert [i.content for i in sent] == [VOICE_PREFIX + "turn on the lights"]
+
+
+async def test_files_from_a_message_are_saved_where_the_agent_can_read_them(paths, tmp_path):
+    """A .docx has no native form for the model, so the agent is pointed at its saved copy."""
+    router, gateway = _router(paths)
+    gateway.config.workspace_dir = tmp_path
+
+    await router.handle(
+        _inbound("summarise", has_attachment=True), files=[("report.docx", b"PK\x03\x04")]
+    )
+
+    note = gateway.calls[0]["attachments"][-1].content
+    assert "uploads/report.docx" in note
+    assert (tmp_path / "uploads" / "report.docx").read_bytes() == b"PK\x03\x04"
+
+
+async def test_the_reply_is_streamed_to_the_adapter_as_it_is_written(paths):
+    router, gateway = _router(paths)
+    gateway.streamed = [ModelMessageChunk("Hel"), ModelMessageChunk("lo")]
+    shown: list[str] = []
+
+    async def show(text: str) -> None:
+        shown.append(text)
+
+    await router.handle(_inbound("hi"), stream=show)
+
+    assert shown == ["Hel", "Hello"]
+
+
+async def test_a_new_model_message_starts_its_stream_afresh(paths):
+    """Text before a tool call is a message of its own, not the start of the answer."""
+    router, gateway = _router(paths)
+    gateway.streamed = [
+        ModelMessageChunk("Let me look."),
+        ModelMessage("Let me look."),
+        ModelMessageChunk("Done."),
+    ]
+    shown: list[str] = []
+
+    async def show(text: str) -> None:
+        shown.append(text)
+
+    await router.handle(_inbound("hi"), stream=show)
+
+    assert shown == ["Let me look.", "Done."]
