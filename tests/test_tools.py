@@ -63,6 +63,88 @@ def test_the_native_fetcher_replaces_ours_only_when_switched_on():
     assert any(t.name == "web_fetch" for t in tools)  # the provider's, same name
 
 
+def test_the_native_fetcher_is_tried_first_with_ours_behind_it():
+    """Switched on, the provider's web_fetch is wrapped: same name and schema, a
+    client-side fallback, and `fetch_page` beside it for a retry; switched off,
+    neither the wrapper nor the extra tool appears."""
+    from ag2.tools import WebFetchTool
+
+    from assistant.tools.web_fetch import FALLBACK_TOOL_NAME, NativeWebFetch
+
+    tools = build_agent_tools("anthropic", builtin={"web_fetch": {"max_uses": 3}})
+    (fetch,) = [t for t in tools if t.name == "web_fetch"]
+    assert isinstance(fetch, NativeWebFetch) and isinstance(fetch.native, WebFetchTool)
+    assert [t.name for t in tools].count(FALLBACK_TOOL_NAME) == 1
+
+    plain = build_agent_tools("anthropic")
+    assert web_fetch_tool in plain
+    assert not any(isinstance(t, NativeWebFetch) for t in plain)
+    assert not any(t.name == FALLBACK_TOOL_NAME for t in plain)
+
+
+async def test_a_native_fetch_handed_back_to_the_client_runs_ours_on_a_short_budget(monkeypatch):
+    """A proxy that forwards the model's web_fetch call verbatim never ran the
+    fetch; without the fallback the executor waited forever for a result nobody
+    owed. The wrapper answers it with our fetcher, 10 s by default, the agent's
+    `timeout` when given; a provider-executed call (BuiltinToolCallEvent) is left
+    alone, and the schema offered is the native one."""
+    import importlib
+    from contextlib import ExitStack
+
+    import httpx
+    from ag2.events import BuiltinToolCallEvent, ToolResultEvent
+    from ag2.tools import WebFetchTool
+
+    mod = importlib.import_module("assistant.tools.web_fetch")
+    seen = []
+
+    class Response:
+        headers = {"content-type": "text/plain"}
+        text = "fetched locally"
+
+        def raise_for_status(self):
+            pass
+
+    def fake_get(url, **kwargs):
+        seen.append((url, kwargs["timeout"]))
+        return Response()
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    wrapper = mod.NativeWebFetch(WebFetchTool(max_uses=2))
+    stream = MemoryStream()
+    context = ConversationContext(stream=stream)
+    (schema,) = await wrapper.schemas(context)
+    assert type(schema).__name__ == "WebFetchToolSchema" and schema.max_uses == 2
+
+    results = []
+    stream.where(ToolResultEvent).subscribe(lambda ev: results.append(ev))
+    with ExitStack() as stack:
+        wrapper.register(stack, context)
+        await context.send(
+            ToolCallEvent(id="c1", name="web_fetch", arguments='{"url": "https://x.invalid"}')
+        )
+        await context.send(
+            ToolCallEvent(
+                id="c2", name="web_fetch", arguments='{"url": "https://y.invalid", "timeout": 4}'
+            )
+        )
+        await context.send(
+            BuiltinToolCallEvent(
+                id="c3", name="web_fetch", arguments='{"url": "https://z.invalid"}'
+            )
+        )
+        await context.send(ToolCallEvent(id="c4", name="web_fetch", arguments="{}"))
+        await context.send(ToolCallEvent(id="c5", name="other_tool", arguments="{}"))
+        for _ in range(4):
+            await asyncio.sleep(0)
+
+    assert seen == [("https://x.invalid", mod.FALLBACK_TIMEOUT), ("https://y.invalid", 4.0)]
+    by_id = {r.parent_id: r for r in results}
+    assert set(by_id) == {"c1", "c2", "c4"}
+    assert "fetched locally" in by_id["c1"].result.parts[0].content
+    assert by_id["c4"].result.parts[0].content == "Error fetching: web_fetch needs a url"
+
+
 # --- custom web_fetch fallback (plain function) ---
 
 
