@@ -7,6 +7,7 @@ chat's own agent, which answers the owner there."""
 
 import asyncio
 
+from assistant.gateway.tasks_service import chat_outcome_message
 from assistant.profiles import ProfileRegistry
 from assistant.system_tools import CHAT_ORIGIN
 from tests.support.apps import make_manager
@@ -29,13 +30,16 @@ async def test_a_completed_task_lands_in_the_chat_it_was_created_from(paths):
         assert run is not None
         await asyncio.wait_for(tasks._jobs_done(), 5)
         assert (await tasks.get_run(run.id))["status"] == "completed"
-        # the chat's agent was handed the outcome as a turn on room-1 and answered
+        # the chat's agent was handed the run's full reply as a turn on room-1, told
+        # what it is and that the owner has not seen it, and answered. (A request's
+        # repr escapes newlines, so the framing is checked line by line.)
+        lines = [ln for ln in chat_outcome_message("weather", "done").splitlines() if ln]
         for _ in range(40):
-            if any("✅ weather: 78°F" in str(r) for r in models.requests):
+            if any(all(ln in str(r) for ln in lines) for r in models.requests):
                 break
             await asyncio.sleep(0.05)
-        assert any("✅ weather: 78°F" in str(r) for r in models.requests), [
-            str(r)[:200] for r in models.requests
+        assert any(all(ln in str(r) for ln in lines) for r in models.requests), [
+            str(r)[:300] for r in models.requests
         ]
     finally:
         await manager.close()

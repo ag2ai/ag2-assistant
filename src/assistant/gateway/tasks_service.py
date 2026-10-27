@@ -23,6 +23,7 @@ from ag2 import Agent
 from assistant.config import Config, load_config
 from assistant.connections import ConnectionStore
 from assistant.hitl import NullAsker
+from assistant.system_tools import CHAT_ORIGIN
 from assistant.tasks.model import (
     RECALL_ALL,
     RECALL_NONE,
@@ -134,6 +135,16 @@ def _task_folder_lines(folders, profile: str, task_id: str) -> list[str]:
         note = "" if Path(f.get("path", "")).is_dir() else " — path is missing"
         lines.append(f"Working folder: {f['path']} ({access}){note}.")
     return lines
+
+
+def chat_outcome_message(name: str, result: str) -> str:
+    """The turn a finished task hands the chat it was created in."""
+    return (
+        f'The task "{name}" you created in this chat has finished. Its result:\n\n'
+        f"{result}\n\n"
+        "Pass the result on to the user here, briefly. Nothing has been sent to them "
+        "yet: your reply is what they will see."
+    )
 
 
 def _run_view(r: Run) -> dict:
@@ -574,7 +585,12 @@ class TaskService:
             self._config, task.prompt, reply, agent_factory=self._summary_factory
         )
         await self._finish(run_id, RunStatus.COMPLETED, summary=summary)
-        await self._deliver(task, summary or (reply or "").strip()[:400])
+        outcome = summary or (reply or "").strip()[:400]
+        if task.origin_channel == CHAT_ORIGIN:
+            # The chat's own agent passes the result on, so it gets the run's reply
+            # in full, not the distilled line a channel push gets.
+            outcome = (reply or "").strip() or outcome
+        await self._deliver(task, outcome)
 
     async def _finish(self, run_id: str, status: str, **fields) -> None:
         self._stopping.discard(run_id)
@@ -624,8 +640,15 @@ class TaskService:
         from — ``origin_channel`` is that Connection's id."""
         if self._notify is None or not task.origin_channel or not task.origin_chat or not text:
             return
+        if task.origin_channel == CHAT_ORIGIN:
+            # Into the chat it came from, as a turn of that chat's agent: say what
+            # this is and what to do with it — the run's agent could not reach the
+            # owner, whatever it believed, and this reply is what the owner sees.
+            message = chat_outcome_message(task.name, text)
+        else:
+            message = f"✅ {task.name}: {text}"
         try:
-            await self._notify(task.origin_channel, task.origin_chat, f"✅ {task.name}: {text}")
+            await self._notify(task.origin_channel, task.origin_chat, message)
         except Exception as exc:
             from assistant.observability import log_suppressed
 
