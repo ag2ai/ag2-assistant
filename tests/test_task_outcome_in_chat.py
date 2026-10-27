@@ -14,6 +14,18 @@ from tests.support.apps import make_manager
 from tests.support.fakes import ScriptedModels, fake_summary_factory
 
 
+def _texts(models) -> list[str]:
+    """Every text part the scripted model was asked with, in order."""
+    out = []
+    for _, _, _, messages, _ in models.requests:
+        for message in messages:
+            for part in getattr(message, "parts", None) or []:
+                content = getattr(part, "content", None)
+                if isinstance(content, str):
+                    out.append(content)
+    return out
+
+
 async def test_a_completed_task_lands_in_the_chat_it_was_created_from(paths):
     pid = ProfileRegistry(paths).create_profile("Work", "#109e91").id
     models = ScriptedModels()
@@ -31,16 +43,13 @@ async def test_a_completed_task_lands_in_the_chat_it_was_created_from(paths):
         await asyncio.wait_for(tasks._jobs_done(), 5)
         assert (await tasks.get_run(run.id))["status"] == "completed"
         # the chat's agent was handed the run's full reply as a turn on room-1, told
-        # what it is and that the owner has not seen it, and answered. (A request's
-        # repr escapes newlines, so the framing is checked line by line.)
-        lines = [ln for ln in chat_outcome_message("weather", "done").splitlines() if ln]
+        # what it is and that the owner has not seen it, and answered
+        expected = chat_outcome_message("weather", "done")
         for _ in range(40):
-            if any(all(ln in str(r) for ln in lines) for r in models.requests):
+            if expected in "\n".join(_texts(models)):
                 break
             await asyncio.sleep(0.05)
-        assert any(all(ln in str(r) for ln in lines) for r in models.requests), [
-            str(r)[:300] for r in models.requests
-        ]
+        assert expected in "\n".join(_texts(models)), _texts(models)
     finally:
         await manager.close()
 
