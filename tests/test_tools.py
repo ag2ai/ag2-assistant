@@ -174,8 +174,8 @@ def test_web_fetch_invalid_url():
 
 def test_web_fetch_timeout_is_the_agents_to_choose_within_bounds(monkeypatch):
     """The agent passes `timeout` (seconds) straight to the fetch; absent or
-    unusable values take the 30 s default, and any value is clamped to 1-120 so a
-    fetch always comes back."""
+    unusable values take the 30 s default, and any value is clamped to 1-30 so a
+    fetch always comes back within half a minute."""
     import importlib
 
     import httpx
@@ -223,7 +223,10 @@ def test_web_fetch_reports_a_timeout_instead_of_failing_the_turn(monkeypatch):
     monkeypatch.setattr(httpx, "get", slow_get)
     result = web_fetch(url="https://slow.invalid", timeout=3)
     assert result.startswith("Error fetching https://slow.invalid: no response within 3s")
-    assert "larger timeout" in result
+    assert "larger timeout, up to 30" in result
+    assert web_fetch(url="https://slow.invalid", timeout=30) == (
+        "Error fetching https://slow.invalid: no response within 30s"
+    )
 
 
 @pytest.mark.integration

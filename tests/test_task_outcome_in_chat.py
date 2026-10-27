@@ -54,6 +54,42 @@ async def test_a_completed_task_lands_in_the_chat_it_was_created_from(paths):
         await manager.close()
 
 
+async def test_a_run_that_fails_reports_the_failure_into_the_chat_too(paths):
+    """A tool hung past the watchdog, a model call timed out, a tool raised: the
+    chat's agent hears why, instead of the owner waiting on a result that will
+    never come."""
+    pid = ProfileRegistry(paths).create_profile("Work", "#109e91").id
+    calls = []
+
+    async def first_call_explodes(messages, context):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("No activity for 900s — the turn is wedged. Halting execution.")
+
+    models = ScriptedModels(before_call=first_call_explodes)
+    manager = make_manager(paths, model_factory=models)
+    await manager.start()
+    try:
+        tasks = manager.get(pid).tasks
+        task = await tasks.create_task(
+            name="weather", prompt="report", origin_channel=CHAT_ORIGIN, origin_chat="room-1"
+        )
+        run = await tasks.start_run(task["id"])
+        assert run is not None
+        await asyncio.wait_for(tasks._jobs_done(), 5)
+        assert (await tasks.get_run(run.id))["status"] == "failed"
+        expected = chat_outcome_message(
+            "weather", "No activity for 900s — the turn is wedged. Halting execution.", failed=True
+        )
+        for _ in range(40):
+            if expected in "\n".join(_texts(models)):
+                break
+            await asyncio.sleep(0.05)
+        assert expected in "\n".join(_texts(models)), _texts(models)
+    finally:
+        await manager.close()
+
+
 async def test_a_chat_outcome_is_pushed_through_the_runtime_not_the_install_notifier(paths):
     pid = ProfileRegistry(paths).create_profile("Work", "#109e91").id
     manager = make_manager(paths, model_factory=ScriptedModels())

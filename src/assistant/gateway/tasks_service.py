@@ -137,14 +137,29 @@ def _task_folder_lines(folders, profile: str, task_id: str) -> list[str]:
     return lines
 
 
-def chat_outcome_message(name: str, result: str) -> str:
-    """The turn a finished task hands the chat it was created in."""
+def chat_outcome_message(name: str, result: str, *, failed: bool = False) -> str:
+    """The turn a finished (or failed) task hands the chat it was created in."""
+    if failed:
+        return (
+            f'The task "{name}" you created in this chat did not finish:\n\n'
+            f"{result}\n\n"
+            "Tell the user, briefly, and say what you will do about it (retry, a "
+            "different approach, or ask them). Nothing has been sent to them yet: "
+            "your reply is what they will see."
+        )
     return (
         f'The task "{name}" you created in this chat has finished. Its result:\n\n'
         f"{result}\n\n"
         "Pass the result on to the user here, briefly. Nothing has been sent to them "
         "yet: your reply is what they will see."
     )
+
+
+def _failure_text(exc: BaseException) -> str:
+    """Why a run did not finish, as the origin should hear it: the error's own words,
+    or its type when it has none."""
+    text = str(exc).strip()
+    return text[:600] if text else type(exc).__name__
 
 
 def _run_view(r: Run) -> dict:
@@ -574,7 +589,11 @@ class TaskService:
             await self._finish(run_id, RunStatus.CANCELLED)
             raise
         except Exception as exc:
+            # A failure is information too: a tool that hung past the watchdog, a
+            # model call that timed out, a tool that raised. The origin hears it the
+            # way it would hear the result, so the owner is not left waiting.
             await self._finish(run_id, RunStatus.FAILED, error=str(exc))
+            await self._deliver(task, _failure_text(exc), failed=True)
             return
         if run_id in self._stopping:  # user Stop → the turn returned "" via TurnCancelled
             await self._finish(run_id, RunStatus.CANCELLED)
@@ -635,18 +654,18 @@ class TaskService:
                 n += 1
         return n
 
-    async def _deliver(self, task: Task, text: str) -> None:
-        """Push a completed run's outcome back through the Connection the task came
-        from — ``origin_channel`` is that Connection's id."""
+    async def _deliver(self, task: Task, text: str, *, failed: bool = False) -> None:
+        """Push a run's outcome — its result, or why it did not finish — back through
+        the Connection the task came from; ``origin_channel`` is that Connection's id."""
         if self._notify is None or not task.origin_channel or not task.origin_chat or not text:
             return
         if task.origin_channel == CHAT_ORIGIN:
             # Into the chat it came from, as a turn of that chat's agent: say what
             # this is and what to do with it — the run's agent could not reach the
             # owner, whatever it believed, and this reply is what the owner sees.
-            message = chat_outcome_message(task.name, text)
+            message = chat_outcome_message(task.name, text, failed=failed)
         else:
-            message = f"✅ {task.name}: {text}"
+            message = f"{'❌' if failed else '✅'} {task.name}: {text}"
         try:
             await self._notify(task.origin_channel, task.origin_chat, message)
         except Exception as exc:
