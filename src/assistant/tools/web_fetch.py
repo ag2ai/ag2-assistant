@@ -26,6 +26,7 @@ import httpx
 from ag2 import tool
 from ag2.annotations import Context
 from ag2.events import BuiltinToolCallEvent, ToolCallEvent, ToolResultEvent
+from ag2.events.conditions import OpCondition, check_eq
 from ag2.middleware import BaseMiddleware
 from ag2.tools.tool import Tool
 from bs4 import BeautifulSoup
@@ -167,9 +168,10 @@ class NativeWebFetch(Tool):
                 return  # the provider ran it; its result rides the model's reply
             await context.send(ToolResultEvent.from_call(event, await self._fetch(event)))
 
-        stack.enter_context(
-            context.stream.where(ToolCallEvent.name == self.name).sub_scope(fallback)
-        )
+        # The `ToolCallEvent.name == self.name` descriptor form builds this exact
+        # condition, but reads to a type checker as a plain bool comparison.
+        calls_this_tool = OpCondition(check_eq, "name", self.name, ToolCallEvent)
+        stack.enter_context(context.stream.where(calls_this_tool).sub_scope(fallback))
 
     async def _fetch(self, event: ToolCallEvent) -> str:
         try:
