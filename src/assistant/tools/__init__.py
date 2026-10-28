@@ -43,7 +43,7 @@ from assistant.tools.files import list_folder, read_file, update_file, write_fil
 from assistant.tools.google import build_google_tools
 from assistant.tools.image_gen import build_image_tool, image_available
 from assistant.tools.mcp import build_mcp_tools
-from assistant.tools.web_fetch import web_fetch, web_fetch_tool
+from assistant.tools.web_fetch import native_first, web_fetch, web_fetch_tool
 
 # Commands the shell tool must never run.
 _SHELL_BLOCKED = ["rm -rf /", "sudo", "shutdown", "reboot", "mkfs"]
@@ -307,7 +307,10 @@ def build_agent_tools(
         drop = suppressed_by(active)
         if drop:
             tools = [t for t in tools if getattr(t, "name", "") not in drop]
-        tools += build_builtin_tools(active)
+        # The provider's web_fetch is tried first; a call it hands back to us runs
+        # our fetcher on a short budget, and `fetch_page` stands beside it for a
+        # retry when the provider's own fetch failed (tools/web_fetch.py).
+        tools += native_first(build_builtin_tools(active))
 
     return tools
 

@@ -9,7 +9,7 @@ from assistant.live_configs import LiveConfigStore
 from assistant.peers import PeerStore
 from assistant.secrets import SecretStore
 from assistant.settings import profile_settings
-from assistant.system_tools import _origin, _schedule_arg, build_system_tools
+from assistant.system_tools import CHAT_ORIGIN, _origin, _schedule_arg, build_system_tools
 from assistant.tasks.store import TaskStore
 from assistant.voice import voice_realtime_config
 from tests.support.apps import make_paths
@@ -124,8 +124,12 @@ def test_origin_is_the_peer_a_chat_was_started_from(paths):
     back out through that bot rather than through whichever one of its platform."""
     chat = PeerStore(paths).start_chat("cn-work", "42", platform="telegram")
     assert _origin(PeerStore(paths), _Ctx(chat)) == ("cn-work", "42")
-    assert _origin(PeerStore(paths), _Ctx("web-abc")) == (None, None)
+    # a Chat no Connection started reports back into itself; a run's own stream and
+    # a turn with no stream report nowhere
+    assert _origin(PeerStore(paths), _Ctx("web-abc")) == (CHAT_ORIGIN, "web-abc")
+    assert _origin(None, _Ctx("web-abc")) == (CHAT_ORIGIN, "web-abc")
     assert _origin(PeerStore(paths), _Ctx("task-run:run_1")) == (None, None)
+    assert _origin(PeerStore(paths), _Ctx("")) == (None, None)
 
 
 def test_origin_survives_the_peer_moving_to_another_chat(paths):
