@@ -292,3 +292,5 @@ public issue).
 ## License
 
 [Apache License 2.0](LICENSE)
+
+ACP clients can supply [transient room reference context](docs/room-context.md) separately from the user request. Marked room conversations are excluded from passive profile learning.

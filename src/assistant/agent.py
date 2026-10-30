@@ -56,6 +56,7 @@ from assistant.observability import agent_logging_middleware, log_suppressed
 from assistant.observers import build_observers
 from assistant.permissions import PermissionManager, PermissionStore
 from assistant.resources import OwnedSqliteStore, ProfileResources, SharedEnvironment, fingerprint
+from assistant.room_context import RoomContextMiddleware
 from assistant.screen_skill import ScreenSkillRuntime
 from assistant.secrets import DEFAULT_OLLAMA_BASE, KEY_ENV, OLLAMA_BASE_ENV
 from assistant.self_tools import build_self_tools
@@ -208,6 +209,7 @@ class RefreshingModelConfig:
 def _build_middleware(config: Config) -> list:
     """The per-agent LLM middleware stack for this provider."""
     middleware = [
+        Middleware(RoomContextMiddleware),
         agent_logging_middleware(),  # per-turn LLM/tool logs → ag2assistant.log
         CitationMarkerMiddleware(),
         # Retry a failed call before it kills the attempt/task. Listed BEFORE
@@ -843,8 +845,7 @@ def create_agent(
         assert knowledge is not None
         if selected_model is not None:
             selected_model = BudgetedModelConfig(selected_model)
-    agent_cls = CompactingAgent if compact else Agent
-    agent = agent_cls(
+    agent = CompactingAgent(
         config.agent.name,
         prompt=BEHAVIOR_GUIDANCE if invocation_only else config.agent.system_prompt,
         config=selected_model,

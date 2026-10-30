@@ -35,6 +35,7 @@ from ag2.policies import ConversationPolicy, WorkingMemoryPolicy
 
 from assistant.compaction import CheckpointCompact, CompactionLimits
 from assistant.config import load_config
+from assistant.room_context import RoomContextSession
 
 # Path inside the knowledge store where the rolling profile lives.
 PROFILE_PATH = "/memory/working.md"
@@ -222,6 +223,17 @@ def _default_aggregate_config() -> ModelConfig:
     return model_config(config, cheap_model(config))
 
 
+class ProfileMemoryAggregate(WorkingMemoryAggregate):
+    """Keep room-reference conversations and their derived output out of profile memory."""
+
+    async def aggregate(self, events, context, store):
+        self.last_usage = {}
+        raw = await context.stream.history.get_events()
+        if any(isinstance(event, RoomContextSession) for event in [*raw, *events]):
+            return
+        await super().aggregate(events, context, store)
+
+
 def build_knowledge_config(
     platform: str = "cli",
     store_path: Path | None = None,
@@ -258,7 +270,7 @@ def build_knowledge_config(
         # Passive only: don't hand the model a knowledge tool or dump event logs.
         expose_tool=False,
         write_event_log=False,
-        aggregate=WorkingMemoryAggregate(
+        aggregate=ProfileMemoryAggregate(
             config=aggregate_config,
             prompt=build_profile_prompt(platform),
         ),
