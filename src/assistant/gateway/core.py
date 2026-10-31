@@ -117,8 +117,6 @@ _TRANSCRIPT_PREFIX = "/transcript/"
 
 logger = logging.getLogger("ag2assistant.gateway")
 
-_NO_EARLIER_MESSAGES = "(This chat has no earlier messages.)"
-
 # Bounds for the on-demand "Mentioned in N threads" scan (ADR 0014): a huge chat
 # history can't stall the request (streams examined) nor flood the popover (rows
 # returned). Truncation is logged, never silent.
@@ -163,6 +161,7 @@ _CONVERSATION_EVENTS = _conversation_events()
 
 # What a finished turn says when the model returned no text.
 EMPTY_TURN_REPLY = "No answer came back for that message. Please try again."
+_NO_EARLIER_MESSAGES = "(This chat has no earlier messages.)"
 
 
 class EmptyTurn(Exception):
