@@ -333,7 +333,7 @@ Every model-backed call in the backend. Two model tiers: **main**
 | 4 | **Run summarizer**      | `tasks/summary.py`           | cheap | after a task run completes            | `RunSummary{summary}`        |
 | 5 | **Voice LiveAgent**     | `voice.py`                   | realtime | voice session; delegates via `ask_assistant` | — |
 | 6 | **Image generation**    | `tools/image_gen.py`         | provider | `generate_image` tool call          | — (emits `ImageGenerated`)   |
-| 7 | **Memory aggregator**   | `memory.py` (AG2 `WorkingMemoryAggregate`) | aggregate | every N turns / on end | — (markdown profile) |
+| 7 | **Memory aggregator**   | `memory.py` (`ProfileUpdate`, in the background; AG2 `WorkingMemoryAggregate` for ACP and one-shot runs) | aggregate | every N turns / on end | — (markdown profile) |
 | 8 | **CLI single-shot**     | `agent.py` (`ask`)           | main  | `ag2-assistant agent "…"`             | —                            |
 | 9 | **History compaction**  | `compaction.py` (`CheckpointCompact`) | main | estimated full input exceeds the per-profile budget before a model call; uses the current Turn's resolved model configuration | versioned task checkpoint + recent replayable events |
 

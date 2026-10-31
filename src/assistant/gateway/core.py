@@ -80,7 +80,7 @@ from assistant.gateway.wire import is_binary_event
 from assistant.hitl import Asker, build_hitl_hook
 from assistant.integrations.google_auth import GoogleAuth
 from assistant.llm_configs import LlmConfigStore
-from assistant.memory import build_profile_store
+from assistant.memory import ProfileUpdate, build_profile_prompt, build_profile_store
 from assistant.observability import (
     capture_failure,
     log_suppressed,
@@ -263,6 +263,8 @@ class Gateway:
         self._streaming: dict[str, list[ModelMessageChunk]] = {}
         self._invocations: set[asyncio.Task] = set()
         self._background: set[asyncio.Task] = set()
+        self._memory_lock = asyncio.Lock()
+        self._memory_updating: set[str] = set()
         self._closing = False
         # Per-profile daily token/cost tally for the activity HUD.
         self._usage = UsageLedger(
@@ -411,6 +413,11 @@ class Gateway:
             return lease.acquire("model", self._model_key(cfg, model), lambda: factory(cfg, model))
         return factory(cfg, model)
 
+    def _owned_model(self, cfg: Config, lease: ResourceLease, model: str | None = None):
+        if cfg.llm.auth_mode == "subscription":
+            return RefreshingModelConfig(cfg, self._model_factory or model_config, model)
+        return self._held_model(cfg, lease, model)
+
     def _constructor_key(self, cfg: Config) -> str:
         background = self._model_key(cfg, cheap_model(cfg)) if self._memory else None
         return fingerprint(
@@ -434,11 +441,8 @@ class Gateway:
                 compact=True,
                 compaction_store=self._event_store,
                 invocation_only=True,
-                model_factory=lambda config, model=None: (
-                    RefreshingModelConfig(config, self._model_factory or model_config, model)
-                    if config.llm.auth_mode == "subscription"
-                    else self._held_model(config, held, model)
-                ),
+                aggregate_in_turn=False,
+                model_factory=lambda config, model=None: self._owned_model(config, held, model),
             )
         except BaseException:
             await held.aclose()
@@ -916,7 +920,7 @@ class Gateway:
         if task is not None:
             self._invocations.add(task)
         try:
-            return await self._send_message(
+            reply = await self._send_message(
                 text,
                 chat_id,
                 asker,
@@ -930,6 +934,8 @@ class Gateway:
                 chat_model,
                 on_text,
             )
+            self._schedule_memory_update(chat_id)
+            return reply
         finally:
             if task is not None:
                 self._invocations.discard(task)
@@ -1375,6 +1381,52 @@ class Gateway:
             task = asyncio.create_task(self._title_chat(chat_id, user_text, reply_text))
             self._background.add(task)
             task.add_done_callback(self._background.discard)
+
+    def _schedule_memory_update(self, chat_id: str) -> None:
+        """Start the profile update for a finished turn; a chat has one at a time."""
+        if not self._memory or chat_id in self._memory_updating:
+            return
+        self._memory_updating.add(chat_id)
+        task = asyncio.create_task(self._update_memory(chat_id))
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
+
+    async def _update_memory(self, chat_id: str) -> None:
+        """Merge the chat into the profile on every Nth turn, one chat at a time, without
+        ever failing a turn."""
+        try:
+            config = self._config
+            every_n = config.memory.aggregate_every_n_turns
+            stream = await self.stream_for(chat_id)
+            events = list(await stream.history.get_events())
+            turns = sum(isinstance(event, ModelRequest) for event in events)
+            if every_n <= 0 or turns == 0 or turns % every_n:
+                return
+            async with self._memory_lock:
+                await asyncio.wait_for(
+                    self._merge_profile(config, events), config.memory.aggregate_timeout_s
+                )
+        except Exception as exc:
+            log_suppressed("memory update", exc, chat_id=chat_id)
+        finally:
+            self._memory_updating.discard(chat_id)
+
+    async def _merge_profile(self, config: Config, events: list) -> None:
+        assert self._knowledge_store is not None
+        async with self._resources.lease() as lease:
+            model = self._owned_model(config, lease, cheap_model(config))
+            update = ProfileUpdate(model, build_profile_prompt(self._platform))
+            try:
+                await update.run(events, self._knowledge_store)
+            finally:
+                for response in update.responses:
+                    usage = response.usage
+                    self._usage.record(
+                        response.model or model.model,
+                        usage.prompt_tokens or 0,
+                        usage.completion_tokens or 0,
+                        usage.total_tokens or None,
+                    )
 
     async def _title_chat(self, chat_id, user_text, reply_text) -> None:
         """Generate and persist a one-shot chat title (best-effort, never overwrite)."""

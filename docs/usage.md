@@ -530,6 +530,9 @@ The profile is stored locally at `~/.ag2assistant/profile.db`. See [memory.md](m
 AG2 Assistant distils the profile every few turns (an LLM call each time) rather than after
 every message, so long chats stay cheap. Single-shot `ag2-assistant agent` runs always
 distil their one turn. Tune the cadence with `AG2ASSISTANT_AGGREGATE_EVERY_N` (default 4).
+In a chat the update runs in the background after the reply, one at a time per profile,
+and `memory.aggregate_timeout_s` (default 120) limits each one. ACP listeners still update
+inside the turn.
 
 ## Permissions — control what AG2 Assistant can access
 

@@ -24,14 +24,19 @@ There are TWO memory layers:
 """
 
 import sqlite3
+from collections.abc import Sequence
 from pathlib import Path
 
 from ag2 import KnowledgeConfig
 from ag2.aggregate import AggregateTrigger, WorkingMemoryAggregate
+from ag2.annotations import Context
 from ag2.compact import CompactTrigger
 from ag2.config import ModelConfig
+from ag2.events import BaseEvent, ModelRequest, ModelResponse, render_for_prompt
 from ag2.knowledge import KnowledgeStore, MemoryKnowledgeStore, SqliteKnowledgeStore
 from ag2.policies import ConversationPolicy, WorkingMemoryPolicy
+from ag2.stream import MemoryStream
+from fast_depends.pydantic import PydanticSerializer
 
 from assistant.compaction import CheckpointCompact, CompactionLimits
 from assistant.config import load_config
@@ -199,6 +204,50 @@ New conversation:
 {{events}}
 
 Return the updated profile document only (headings and bullets, no commentary)."""
+
+
+# How many merges one update tries before leaving a profile that keeps changing alone.
+_MERGE_ATTEMPTS = 2
+
+
+class ProfileUpdate:
+    """One merge of chat events into the profile, redone when the profile changes
+    during the merge so an explicit edit is never overwritten."""
+
+    def __init__(self, config: ModelConfig, prompt: str) -> None:
+        self._config, self._prompt = config, prompt
+        self._serializer = PydanticSerializer(
+            pydantic_config={"arbitrary_types_allowed": True},
+            use_fastdepends_errors=False,
+        )
+        self.responses: list[ModelResponse] = []
+
+    async def run(self, events: Sequence[BaseEvent], store: KnowledgeStore) -> bool:
+        """Merge `events` into the stored profile; True when the profile was saved."""
+        for _ in range(_MERGE_ATTEMPTS):
+            existing = await store.read(PROFILE_PATH) or ""
+            updated = await self._merge(existing, events)
+            if (await store.read(PROFILE_PATH) or "") == existing:
+                if not updated:
+                    return False
+                await store.write(PROFILE_PATH, updated)
+                return True
+        return False
+
+    async def _merge(self, existing: str, events: Sequence[BaseEvent]) -> str:
+        prompt = self._prompt.format(
+            existing=existing or "(empty)",
+            events="\n".join(render_for_prompt(event) for event in events),
+        )
+        response = await self._config.create()(
+            [ModelRequest.ensure_request([prompt])],
+            Context(MemoryStream()),
+            tools=[],
+            response_schema=None,
+            serializer=self._serializer,
+        )
+        self.responses.append(response)
+        return response.content or ""
 
 
 def build_profile_store(store_path: Path) -> SqliteKnowledgeStore:

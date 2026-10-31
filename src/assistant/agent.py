@@ -677,6 +677,7 @@ def create_agent(
     resources: ProfileResources | None = None,
     environment_factory: Callable = docker_environment,
     compaction_store=None,
+    aggregate_in_turn: bool = True,
 ) -> Agent:
     """Construct a standalone Agent or a Profile base with invocation-supplied capabilities.
     Standalone resource ownership is available through dependencies or ``agent_session``."""
@@ -715,7 +716,7 @@ def create_agent(
             store_path=config.data_dir / "profile.db",  # this profile's learned memory
             aggregate_config=agg_config,
             store=knowledge_store,
-            every_n_turns=config.memory.aggregate_every_n_turns,
+            every_n_turns=config.memory.aggregate_every_n_turns if aggregate_in_turn else 0,
             on_end=single_shot,
             compact=compact,
             compact_max_tokens=config.memory.compact_max_tokens,
