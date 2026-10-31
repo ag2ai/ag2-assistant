@@ -168,6 +168,8 @@ class MemoryConfig(BaseModel):
 
     # Distil the profile every N conversation turns (an LLM call each time).
     aggregate_every_n_turns: int = 4
+    # Wall-clock limit for one background profile update.
+    aggregate_timeout_s: float = Field(default=120, gt=0)
     # Budget the estimated full model input; zero disables new compaction.
     compact_max_tokens: int = 50_000
     compact_max_calls: int = Field(default=8, gt=0)
