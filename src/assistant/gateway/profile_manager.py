@@ -314,7 +314,7 @@ class ProfileManager:
         self._connections = ConnectionStore(self.paths, env)
         self._memory = memory
         self._persist = persist
-        # A host's async (profile_id, task, text, *, failed) -> delivered, tried before channels.
+        # A host's async (profile_id, task, text, *, failed, run_id) -> delivered, tried first.
         self._task_outcome = task_outcome
         self._agent_factory = agent_factory
         self._channel_factory = channel_factory or channels.get_channel

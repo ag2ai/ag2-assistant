@@ -216,9 +216,10 @@ subtask tree, deliverable, or intake step — a run is one agent turn.
   irreversible.
 
 A host can take over delivery with `ProfileManager(task_outcome=...)`, an async
-`(profile_id, task, text, *, failed) -> bool`. It's tried first: True means delivered, False
-falls through to the default path above. If it raises, the error is logged and nothing else
-delivers the outcome, so a host that half-delivered doesn't post twice.
+`(profile_id, task, text, *, failed, run_id) -> bool`. It's tried first: True means delivered,
+False falls through to the default path above. If it raises, nothing else delivers the outcome,
+so a host that half-delivered doesn't post twice, and the run's `delivery_error` records why.
+Assistant doesn't retry; a host that does can use `run_id` to recognise an outcome it has seen.
 
 ### 5.6 HITL (human-in-the-loop) — `src/assistant/hitl/*`
 
