@@ -7,7 +7,13 @@ from ag2.events import ModelMessage, ModelRequest, ModelResponse, TextInput
 from ag2.knowledge import MemoryKnowledgeStore
 from ag2.stream import MemoryStream
 
-from assistant.compaction import RetainedSkillRequest, event_ref, stamp_requests
+from assistant.compaction import (
+    CompactionLimits,
+    RetainedSkillRequest,
+    event_ref,
+    request_tokens,
+    stamp_requests,
+)
 from assistant.gateway.history import ChatEventLog
 from assistant.memory import build_compaction_config
 from tests.support.apps import compacting_agent
@@ -99,3 +105,24 @@ async def test_a_stamp_survives_a_reload_through_the_chat_log():
     events = [request("one", at(23, 14, 5)), ModelResponse(ModelMessage("reply"))]
     await log.persist("chat", events)
     assert texts(stamp_requests(await log.load_current("chat"))) == texts(stamp_requests(events))
+
+
+async def test_the_request_sent_to_the_provider_fits_the_budget_with_its_stamps():
+    async def final_request(max_tokens):
+        history = []
+        for minute in range(50):
+            history.append(request(f"message {minute}", at(10, minute)))
+            history.append(ModelResponse(ModelMessage("reply")))
+        stream = MemoryStream()
+        await stream.history.replace(history)
+        config = CheckpointTestConfig("done")
+        limits = CompactionLimits(max_tokens=max_tokens, max_calls=100)
+        knowledge = build_compaction_config(limits=limits)
+        await compacting_agent(config, knowledge).ask("latest", stream=stream)
+        return config.requests[-1]
+
+    messages, prompt, options = await final_request(1_000_000)
+    budget = request_tokens(messages, prompt, options["tools"]) - 8
+
+    messages, prompt, options = await final_request(budget)
+    assert request_tokens(messages, prompt, options["tools"]) <= budget

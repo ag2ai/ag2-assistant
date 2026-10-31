@@ -201,6 +201,13 @@ def request_tokens(
     return (len(fixed) + 3) // 4 + sum(estimated_tokens(event, 4) + 8 for event in conversation)
 
 
+def stamped_tokens(
+    events: Sequence[BaseEvent], prompt: Sequence[str], tools=(), response_schema=None
+) -> int:
+    """Estimate full input as the provider receives it, with send-time stamps."""
+    return request_tokens(stamp_requests(events), prompt, tools, response_schema)
+
+
 def _replayable_cut(events: Sequence[BaseEvent], target: int) -> int:
     """Find a nonempty replayable tail around the requested conversational event count."""
     for requested in range(max(0, len(events) - max(1, target)), 0, -1):
@@ -528,7 +535,7 @@ class CheckpointCompact:
         available = budget - fixed
         projected = await self.excerpt(source, session, context, available, cached_only=True)
         if (
-            request_tokens([*protected, *projected], context.prompt, tools, response_schema)
+            stamped_tokens([*protected, *projected], context.prompt, tools, response_schema)
             <= budget
         ):
             return [*protected, *projected]
@@ -539,7 +546,7 @@ class CheckpointCompact:
                 raise ContextBudgetError("Instructions and tool schemas exceed the input budget")
             reduced = await self.excerpt(source, session, context, available)
             if (
-                request_tokens([*protected, *reduced], context.prompt, tools, response_schema)
+                stamped_tokens([*protected, *reduced], context.prompt, tools, response_schema)
                 <= budget
             ):
                 return [*protected, *reduced]
@@ -563,7 +570,7 @@ class CheckpointCompact:
             )
             protected = self.skill_events(reduced, session)
             if (
-                request_tokens([*protected, *reduced], context.prompt, tools, response_schema)
+                stamped_tokens([*protected, *reduced], context.prompt, tools, response_schema)
                 > budget
             ):
                 raise ContextBudgetError(
@@ -647,7 +654,7 @@ class CheckpointCompact:
             candidate = [summary, *tail]
             protected = self.skill_events(candidate, session, set(data.needed_skills))
             if (
-                request_tokens([*protected, *candidate], context.prompt, tools, response_schema)
+                stamped_tokens([*protected, *candidate], context.prompt, tools, response_schema)
                 <= self.limits.max_tokens
             ):
                 break
