@@ -118,6 +118,7 @@ class ProfileRuntime:
         env: Mapping[str, str] | None = None,
         memory: bool = True,
         persist: bool = True,
+        task_outcome: Callable | None = None,
         notifier: Callable | None = None,
         mirror: Callable | None = None,
         questions=None,
@@ -133,6 +134,7 @@ class ProfileRuntime:
         self._env = env
         self._memory = memory
         self._persist = persist
+        self._task_outcome = task_outcome
         # Collaborators the gateway builds rather than imports: the turn agent and the
         # two cheap-model helpers (chat titles, run summaries). None means production.
         self._agent_factory = agent_factory
@@ -259,6 +261,7 @@ class ProfileRuntime:
         self.tasks.set_emitter(self.gateway.emit_event)  # lifecycle → AG2 stream
         self.tasks.set_gateway(self.gateway)  # turns/stops/stream deletion for runs
         self.tasks.set_notifier(self.notify_channel)  # run outcomes -> the origin channel
+        self.tasks.set_outcome_handler(self._task_outcome)
         await self.tasks.start()  # task tools + scheduler (per-profile lock)
 
     async def close(self) -> None:
@@ -289,6 +292,7 @@ class ProfileManager:
         env: Mapping[str, str] | None = None,
         memory: bool = True,
         persist: bool = True,
+        task_outcome: Callable | None = None,
         agent_factory: Callable | None = None,
         channel_factory: Callable | None = None,
         title_factory: Callable | None = None,
@@ -310,6 +314,8 @@ class ProfileManager:
         self._connections = ConnectionStore(self.paths, env)
         self._memory = memory
         self._persist = persist
+        # A host's async (profile_id, task, text, *, failed) -> delivered, tried before channels.
+        self._task_outcome = task_outcome
         self._agent_factory = agent_factory
         self._channel_factory = channel_factory or channels.get_channel
         self._title_factory = title_factory
@@ -407,6 +413,7 @@ class ProfileManager:
             env=self._env,
             memory=self._memory,
             persist=self._persist,
+            task_outcome=partial(self._task_outcome, meta.id) if self._task_outcome else None,
             notifier=partial(self.push_task_outcome, meta.id),
             mirror=self.router.mirror,
             questions=self.router,

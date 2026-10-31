@@ -224,6 +224,7 @@ class TaskService:
         self._stopping: set[str] = set()  # run ids being user-stopped
         self._gateway: "Gateway | None" = None
         self._notify = None  # async (platform, chat_id, text) -> None
+        self._outcome_handler = None  # async (task, text, *, failed) -> bool
         self._emit = None  # async (chat_id, event) -> None
         self._questions = None  # the question mirror: ask(...) / retract(...)
         if self._inquiries is not None:
@@ -240,6 +241,10 @@ class TaskService:
 
     def set_notifier(self, notify) -> None:
         self._notify = notify
+
+    def set_outcome_handler(self, handler) -> None:
+        """Offer each run's outcome to ``handler`` first; True means it was delivered."""
+        self._outcome_handler = handler
 
     def set_emitter(self, emitter) -> None:
         self._emit = emitter
@@ -657,6 +662,15 @@ class TaskService:
     async def _deliver(self, task: Task, text: str, *, failed: bool = False) -> None:
         """Push a run's outcome — its result, or why it did not finish — back through
         the Connection the task came from; ``origin_channel`` is that Connection's id."""
+        if self._outcome_handler is not None and text:
+            try:
+                if await self._outcome_handler(task, text, failed=failed):
+                    return
+            except Exception as exc:
+                from assistant.observability import log_suppressed
+
+                log_suppressed("run outcome handler", exc, task_id=task.id)
+                return
         if self._notify is None or not task.origin_channel or not task.origin_chat or not text:
             return
         if task.origin_channel == CHAT_ORIGIN:

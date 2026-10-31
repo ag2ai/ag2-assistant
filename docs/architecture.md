@@ -215,6 +215,11 @@ subtask tree, deliverable, or intake step — a run is one agent turn.
   `delete_task()` stops and deletes every run and its chat stream —
   irreversible.
 
+A host can take over delivery with `ProfileManager(task_outcome=...)`, an async
+`(profile_id, task, text, *, failed) -> bool`. It's tried first: True means delivered, False
+falls through to the default path above. If it raises, the error is logged and nothing else
+delivers the outcome, so a host that half-delivered doesn't post twice.
+
 ### 5.6 HITL (human-in-the-loop) — `src/assistant/hitl/*`
 
 Two stores, two lifetimes:
