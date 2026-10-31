@@ -34,7 +34,7 @@ from assistant.config import Config, load_config, write_yaml
 from assistant.connections import ConnectionStore
 from assistant.events import Attachment, TurnCancelled, TurnFailed
 from assistant.gateway.app import _allowed_origins, _origin_ok, create_app
-from assistant.gateway.core import EMPTY_TURN_REPLY, Gateway
+from assistant.gateway.core import EMPTY_TURN_REPLY, EmptyTurn, Gateway
 from assistant.gateway.uploads import decode_attachments
 from assistant.hitl import GatewayAsker, HitlServer
 from assistant.hitl.base import Question
@@ -97,14 +97,15 @@ class SilentAgent(FakeAgent):
         return FakeReply(None)
 
 
-async def test_a_turn_with_no_text_returns_the_fallback_and_reports_a_failure(paths):
+async def test_a_turn_with_no_text_raises_and_reports_a_failure(paths):
     gw = _gateway(paths, agent=SilentAgent())
     await gw.start()
     failures = []
     stream = await gw.stream_for("s1")
     stream.where(TurnFailed).subscribe(lambda event: failures.append(event.error))
     try:
-        assert await gw.send_message("hello", chat_id="s1") == EMPTY_TURN_REPLY
+        with pytest.raises(EmptyTurn, match=EMPTY_TURN_REPLY):
+            await gw.send_message("hello", chat_id="s1")
     finally:
         await gw.close()
     assert failures == [EMPTY_TURN_REPLY]
@@ -114,11 +115,44 @@ async def test_a_turn_with_no_text_saves_the_fallback_to_the_transcript(paths):
     gw = _gateway(paths, agent=SilentAgent())
     await gw.start()
     try:
-        await gw.send_message("hello", chat_id="s1")
+        with pytest.raises(EmptyTurn):
+            await gw.send_message("hello", chat_id="s1")
         turns = await gw.transcript("s1")
     finally:
         await gw.close()
     assert turns[-1] == {"role": "agent", "text": EMPTY_TURN_REPLY}
+
+
+def test_the_message_route_answers_a_turn_with_no_text(paths):
+    app, pid = make_profile_app(paths, agent_factory=fake_agent_factory(SilentAgent()))
+    with TestClient(app) as client:
+        response = client.post(api(pid, "/message"), json={"text": "hi", "chat_id": "s1"})
+    assert response.status_code == 200
+    assert response.json()["reply"] == EMPTY_TURN_REPLY
+
+
+def test_a_run_with_no_text_ends_with_an_error(paths):
+    app, pid = make_profile_app(paths, agent_factory=fake_agent_factory(SilentAgent()))
+    with TestClient(app) as client:
+        events = run(client, pid, "s1", text="hi")
+    assert events[-1]["type"] == "RUN_ERROR"
+    assert events[-1]["message"] == EMPTY_TURN_REPLY
+
+
+async def test_a_task_run_with_no_text_is_a_failed_run(paths):
+    manager = make_manager(paths, agent_factory=fake_agent_factory(SilentAgent()))
+    pid = ProfileRegistry(paths).create_profile("Work", "#109e91").id
+    await manager.start()
+    try:
+        tasks = manager.get(pid).tasks
+        task = await tasks.create_task(name="nightly", prompt="report")
+        started = await tasks.start_run(task["id"])
+        await asyncio.wait_for(tasks._jobs_done(), 5)
+        finished = await tasks.get_run(started.id)
+    finally:
+        await manager.close()
+    assert finished["status"] == "failed"
+    assert finished["error"] == EMPTY_TURN_REPLY
 
 
 async def test_a_transcript_saved_with_a_null_reply_still_reads(paths):

@@ -155,6 +155,10 @@ _CONVERSATION_EVENTS = _conversation_events()
 EMPTY_TURN_REPLY = "No answer came back for that message. Please try again."
 
 
+class EmptyTurn(Exception):
+    """A turn finished with no text; its message is what the user is told."""
+
+
 def _failure_text(exc: BaseException) -> str:
     """A short, user-facing reason a turn ended in an error.
 
@@ -1083,9 +1087,7 @@ class Gateway:
                 else:
                     if a2ui_handle is not None:
                         await self._emit_a2ui_surfaces(stream, a2ui_handle)
-                    body = reply.body
-                    if body is None:
-                        body = EMPTY_TURN_REPLY
+                    if reply.body is None:
                         response = reply.response
                         logger.warning(
                             "turn ended with no text: chat=%s model=%s finish=%s id=%s usage=%s",
@@ -1095,12 +1097,16 @@ class Gateway:
                             response.response_id,
                             response.usage,
                         )
-                        await self.emit_event(chat_id, TurnFailed(chat_id, error=body))
-                    else:
-                        await self.emit_event(chat_id, TurnCompleted(chat_id, turn_id=turn_id))
-                    await self._persist_turn(chat_id, stream, text, body)
-                    await self._mirror_turn(chat_id, text, body, origin, attachment_names)
-                    return body
+                        await self.emit_event(chat_id, TurnFailed(chat_id, error=EMPTY_TURN_REPLY))
+                        await self._persist_turn(chat_id, stream, text, EMPTY_TURN_REPLY)
+                        await self._mirror_turn(
+                            chat_id, text, EMPTY_TURN_REPLY, origin, attachment_names
+                        )
+                        raise EmptyTurn(EMPTY_TURN_REPLY)
+                    await self.emit_event(chat_id, TurnCompleted(chat_id, turn_id=turn_id))
+                    await self._persist_turn(chat_id, stream, text, reply.body)
+                    await self._mirror_turn(chat_id, text, reply.body, origin, attachment_names)
+                    return reply.body
                 finally:
                     self._active.pop(chat_id, None)
                     self._streaming.pop(chat_id, None)

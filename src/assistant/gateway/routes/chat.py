@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from assistant.acp.chats import LIVE_SESSIONS
 from assistant.connections import ConnectionStore
 from assistant.gateway.agui.projection import project
+from assistant.gateway.core import EmptyTurn
 from assistant.gateway.history import event_page
 from assistant.gateway.profile_manager import ProfileRuntime
 from assistant.gateway.routes.common import chat_asker
@@ -203,9 +204,12 @@ def build_profile_router(d: GatewayDeps, get_runtime) -> APIRouter:
         # Durable, inline HITL bound to this chat (answerable from the
         # thread or the strip); the request blocks until answered (or times out).
         asker = chat_asker(runtime, req.chat_id)
-        reply = await runtime.require_gateway().send_message(
-            req.text, chat_id=req.chat_id, asker=asker
-        )
+        try:
+            reply = await runtime.require_gateway().send_message(
+                req.text, chat_id=req.chat_id, asker=asker
+            )
+        except EmptyTurn as exc:
+            reply = str(exc)
         return MessageResponse(reply=reply, chat_id=req.chat_id)
 
     return r
