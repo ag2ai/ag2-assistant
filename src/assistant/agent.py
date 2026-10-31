@@ -533,6 +533,23 @@ def environment_context(config: Config) -> str:
     return "Environment (live):\n" + "\n".join(lines)
 
 
+def stable_environment(config: Config) -> str:
+    """Environment text that stays the same between turns; user messages carry the time."""
+    now = datetime.now().astimezone()
+    offset = now.strftime("%z")
+    lines = [
+        "- A user message may end with [Sent: <date, time> UTC]. The most recent stamp is "
+        "the current UTC time, to the minute. Convert times to the user's time zone when "
+        "you show them; ask if you don't know it. Don't repeat stamps in replies.",
+        f"- Tasks fire on this clock: {now:%Z} (UTC{offset[:3]}:{offset[3:]}).",
+    ]
+    if config.agent.location:
+        lines.append(f"- User location: {config.agent.location}")
+    if config.tz_unset_in_container:
+        lines.append("- Say the timezone when confirming a task's time.")
+    return "Environment:\n" + "\n".join(lines)
+
+
 def universal_memory_guidance(config: Config) -> str:
     """The shared "who the user is" document as a system-prompt part, or "" when it's
     empty. Read FRESH each turn from ``config.root_dir / "user.db"`` (mirroring
@@ -627,7 +644,7 @@ def universal_turn_prompt(
     config: Config, surface: str = "", *, google: bool | None = None
 ) -> list[str]:
     """Per-turn prompt for the universal agent: behaviour + capability map + (Google
-    when signed in) + the SURFACE it's being addressed on + live env. It follows the
+    when signed in) + the SURFACE it's being addressed on + stable env. It follows the
     agent's own system prompt (persona + plugins), which the caller puts first.
 
     `surface` is a short paragraph the caller builds describing where the user is
@@ -654,7 +671,7 @@ def universal_turn_prompt(
         log_suppressed("google token check for universal prompt", exc)
     if surface:
         parts.append(surface)
-    parts.append(environment_context(config))
+    parts.append(stable_environment(config))
     return parts
 
 

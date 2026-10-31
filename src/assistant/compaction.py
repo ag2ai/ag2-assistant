@@ -7,6 +7,7 @@ import re
 from collections.abc import Sequence
 from copy import copy
 from dataclasses import asdict, dataclass, field, is_dataclass
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from ag2 import Agent, tool
@@ -53,6 +54,31 @@ def event_ref(event: BaseEvent) -> str:
 def checkpoint_root(stream_id: object) -> str:
     key = hashlib.sha256(str(stream_id).encode()).hexdigest()
     return f"/compaction/{key}/"
+
+
+class RetainedSkillRequest(ModelRequest):
+    """Skill text the guard adds to one request; it has no send time of its own."""
+
+
+def _sent_at(event: ModelRequest) -> str:
+    sent = datetime.fromtimestamp(event.created_at, timezone.utc)
+    return f"{sent:%a} {sent.day} {sent:%b %Y %H:%M} UTC"
+
+
+def stamp_requests(events: Sequence[BaseEvent]) -> list[BaseEvent]:
+    """Copy of `events` with `[Sent: ...]` on each user message whose minute differs
+    from the previous one's, derived only from `created_at` so every request matches."""
+    stamped: list[BaseEvent] = []
+    previous = ""
+    for event in events:
+        if isinstance(event, ModelRequest) and not isinstance(event, RetainedSkillRequest):
+            sent = _sent_at(event)
+            if sent != previous:
+                request = copy(event)
+                request.parts = [*event.parts, TextInput(content=f"[Sent: {sent}]")]
+                event, previous = request, sent
+        stamped.append(event)
+    return stamped
 
 
 class SkillTextLoaded(BaseEvent):
@@ -173,6 +199,13 @@ def request_tokens(
     )
     conversation = [event for event in events if is_conversational(event)]
     return (len(fixed) + 3) // 4 + sum(estimated_tokens(event, 4) + 8 for event in conversation)
+
+
+def stamped_tokens(
+    events: Sequence[BaseEvent], prompt: Sequence[str], tools=(), response_schema=None
+) -> int:
+    """Estimate full input as the provider receives it, with send-time stamps."""
+    return request_tokens(stamp_requests(events), prompt, tools, response_schema)
 
 
 def _replayable_cut(events: Sequence[BaseEvent], target: int) -> int:
@@ -417,7 +450,7 @@ class CheckpointCompact:
             ):
                 continue
             protected.append(
-                ModelRequest.ensure_request(
+                RetainedSkillRequest.ensure_request(
                     [
                         f'<retained_skill name="{name}" resource="SKILL.md">\n'
                         f"{loaded.text}\n</retained_skill>"
@@ -502,7 +535,7 @@ class CheckpointCompact:
         available = budget - fixed
         projected = await self.excerpt(source, session, context, available, cached_only=True)
         if (
-            request_tokens([*protected, *projected], context.prompt, tools, response_schema)
+            stamped_tokens([*protected, *projected], context.prompt, tools, response_schema)
             <= budget
         ):
             return [*protected, *projected]
@@ -513,7 +546,7 @@ class CheckpointCompact:
                 raise ContextBudgetError("Instructions and tool schemas exceed the input budget")
             reduced = await self.excerpt(source, session, context, available)
             if (
-                request_tokens([*protected, *reduced], context.prompt, tools, response_schema)
+                stamped_tokens([*protected, *reduced], context.prompt, tools, response_schema)
                 <= budget
             ):
                 return [*protected, *reduced]
@@ -537,7 +570,7 @@ class CheckpointCompact:
             )
             protected = self.skill_events(reduced, session)
             if (
-                request_tokens([*protected, *reduced], context.prompt, tools, response_schema)
+                stamped_tokens([*protected, *reduced], context.prompt, tools, response_schema)
                 > budget
             ):
                 raise ContextBudgetError(
@@ -621,7 +654,7 @@ class CheckpointCompact:
             candidate = [summary, *tail]
             protected = self.skill_events(candidate, session, set(data.needed_skills))
             if (
-                request_tokens([*protected, *candidate], context.prompt, tools, response_schema)
+                stamped_tokens([*protected, *candidate], context.prompt, tools, response_schema)
                 <= self.limits.max_tokens
             ):
                 break
@@ -926,7 +959,7 @@ class BudgetedClient:
                 tools=options["tools"],
                 response_schema=options.get("response_schema"),
             )
-        return await self.client(messages, context, **options)
+        return await self.client(stamp_requests(messages), context, **options)
 
 
 class CompactingAgent(Agent):

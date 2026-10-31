@@ -22,7 +22,7 @@ from assistant.config import Config, load_config, tz_unset_in_container
 from assistant.connections import ConnectionStore
 from assistant.folders import DuplicatePath, FolderStore
 from assistant.gateway.app import create_app
-from assistant.gateway.core import Gateway, build_gateway
+from assistant.gateway.core import EmptyTurn, Gateway, build_gateway
 from assistant.gateway.profile_manager import (
     ArchivedProfile,
     ProfileManager,
@@ -239,7 +239,10 @@ def chat(
                     break
                 if not user.strip():
                     continue
-                reply = await gateway.send_message(user, chat_id="cli-chat", asker=asker)
+                try:
+                    reply = await gateway.send_message(user, chat_id="cli-chat", asker=asker)
+                except EmptyTurn as exc:
+                    reply = str(exc)
                 typer.echo(f"ag2-assistant> {reply}\n")
         finally:
             if asker is not None:

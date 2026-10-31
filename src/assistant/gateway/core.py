@@ -158,6 +158,13 @@ def _conversation_events() -> tuple:
 
 _CONVERSATION_EVENTS = _conversation_events()
 
+# What a finished turn says when the model returned no text.
+EMPTY_TURN_REPLY = "No answer came back for that message. Please try again."
+
+
+class EmptyTurn(Exception):
+    """A turn finished with no text; its message is what the user is told."""
+
 
 def _failure_text(exc: BaseException) -> str:
     """A short, user-facing reason a turn ended in an error.
@@ -357,7 +364,7 @@ class Gateway:
                         memory=self._memory,
                         platform=self._platform,
                         knowledge_store=self._knowledge_store,
-                        compact=self._memory,
+                        compact=True,
                         invocation_only=True,
                         extra_tools=extra["tools"],
                         extra_plugins=[*extra["plugins"], Plugin(middleware=middleware)],
@@ -1093,6 +1100,22 @@ class Gateway:
                 else:
                     if a2ui_handle is not None:
                         await self._emit_a2ui_surfaces(stream, a2ui_handle)
+                    if reply.body is None:
+                        response = reply.response
+                        logger.warning(
+                            "turn ended with no text: chat=%s model=%s finish=%s id=%s usage=%s",
+                            chat_id,
+                            response.model,
+                            response.finish_reason,
+                            response.response_id,
+                            response.usage,
+                        )
+                        await self.emit_event(chat_id, TurnFailed(chat_id, error=EMPTY_TURN_REPLY))
+                        await self._persist_turn(chat_id, stream, text, EMPTY_TURN_REPLY)
+                        await self._mirror_turn(
+                            chat_id, text, EMPTY_TURN_REPLY, origin, attachment_names
+                        )
+                        raise EmptyTurn(EMPTY_TURN_REPLY)
                     await self.emit_event(chat_id, TurnCompleted(chat_id, turn_id=turn_id))
                     await self._persist_turn(chat_id, stream, text, reply.body)
                     await self._mirror_turn(chat_id, text, reply.body, origin, attachment_names)
@@ -1496,8 +1519,12 @@ class Gateway:
             return {}
 
     async def transcript(self, chat_id: str) -> list[dict]:
-        """The display transcript (role/text turns) for a chat."""
-        return (await self._read_chat_doc(chat_id, "transcript read")).get("messages", [])
+        """The display transcript (role/text turns) for a chat; a reply saved as null
+        reads as the empty-turn text."""
+        messages = (await self._read_chat_doc(chat_id, "transcript read")).get("messages", [])
+        return [
+            m if m.get("text") is not None else {**m, "text": EMPTY_TURN_REPLY} for m in messages
+        ]
 
     async def list_chats(self) -> list[dict]:
         """List persisted chats (id, last update, preview), newest first."""
