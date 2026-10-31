@@ -113,10 +113,9 @@ from assistant.usage import UsageLedger
 from assistant.voice import build_voice_agent
 
 _TRANSCRIPT_PREFIX = "/transcript/"
+_OPEN_QUESTION_TOOLS = {"list_open_questions", "answer_question"}
 
 logger = logging.getLogger("ag2assistant.gateway")
-
-_OPEN_QUESTION_TOOLS = {"list_open_questions", "answer_question"}
 
 # Bounds for the on-demand "Mentioned in N threads" scan (ADR 0014): a huge chat
 # history can't stall the request (streams examined) nor flood the popover (rows
@@ -236,7 +235,6 @@ class Gateway:
         # How the turn agent and the one-shot chat titler are built. Injected so a
         # caller (or a test) decides what an agent is; both default to production.
         self._agent_factory = agent_factory or create_agent
-        self._unmatched_native_only: set[str] = set()
         self._model_factory = model_factory
         self._environment_factory = environment_factory or docker_environment
         self._history_factory = history_factory or (lambda path: SqliteKnowledgeStore(str(path)))
@@ -262,6 +260,7 @@ class Gateway:
         # async (chat_id, user_text, reply, origin=…) -> None, called once a turn
         # completes: the router pushes it to the Peer Attached to that chat.
         self._mirror: Callable | None = None
+        self._unmatched_native_only: set[str] = set()
         # chat_id -> live Stream; plus the log text each one was last read from or written as
         self._streams: dict[str, MemoryStream] = {}
         self._chat_activity: dict[str, ChatActivity] = {}
