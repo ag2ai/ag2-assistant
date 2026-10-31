@@ -73,12 +73,12 @@ def make_manager(
     memory=False,
     agent_factory=None,
     channel_factory=None,
+    stream_observers=(),
     title_factory=None,
     summary_factory=None,
     made=None,
     model_factory=None,
     environment_factory=None,
-    stream_observers=(),
 ):
     """A ProfileManager over ``paths`` (or the HOME-isolated layout) whose every
     network-touching collaborator is a fake unless the caller injects its own.
@@ -90,9 +90,9 @@ def make_manager(
         persist=persist,
         agent_factory=agent_factory
         or (create_agent if model_factory is not None else fake_agent_factory()),
+        stream_observers=stream_observers,
         model_factory=model_factory,
         environment_factory=environment_factory,
-        stream_observers=stream_observers,
         channel_factory=channel_factory or fake_channel_factory(made),
         title_factory=title_factory or fake_title_factory(),
         summary_factory=summary_factory or fake_summary_factory(),

@@ -19,7 +19,7 @@ import copy
 import json
 import logging
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from urllib.parse import quote
@@ -218,8 +218,8 @@ class Gateway:
         task_service=None,
         config_factory: Callable[[], Config] | None = None,
         agent_factory: Callable | None = None,
-        stream_observers: Iterable[Callable] = (),
         title_factory: Callable | None = None,
+        stream_observers: tuple[Callable, ...] = (),
         model_factory: Callable | None = None,
         environment_factory: Callable | None = None,
         history_factory: Callable | None = None,
@@ -235,7 +235,6 @@ class Gateway:
         # How the turn agent and the one-shot chat titler are built. Injected so a
         # caller (or a test) decides what an agent is; both default to production.
         self._agent_factory = agent_factory or create_agent
-        self._stream_observers = tuple(stream_observers)
         self._model_factory = model_factory
         self._environment_factory = environment_factory or docker_environment
         self._history_factory = history_factory or (lambda path: SqliteKnowledgeStore(str(path)))
@@ -264,6 +263,7 @@ class Gateway:
         # chat_id -> live Stream; plus the log text each one was last read from or written as
         self._streams: dict[str, MemoryStream] = {}
         self._chat_activity: dict[str, ChatActivity] = {}
+        self._stream_observers = stream_observers
         self._stream_locks: dict[str, asyncio.Lock] = {}
         self._synced: dict[str, str | None] = {}
         self._locks: dict[str, asyncio.Lock] = {}
@@ -1897,7 +1897,7 @@ def build_gateway(
     persist: bool = True,
     config_factory: Callable[[], Config] | None = None,
     agent_factory: Callable | None = None,
-    stream_observers: Iterable[Callable] = (),
+    stream_observers: tuple[Callable, ...] = (),
     title_factory: Callable | None = None,
     summary_factory: Callable | None = None,
     model_factory: Callable | None = None,
@@ -1916,8 +1916,8 @@ def build_gateway(
         task_service=tasks,
         config_factory=config_factory,
         agent_factory=agent_factory,
-        stream_observers=stream_observers,
         title_factory=title_factory,
+        stream_observers=stream_observers,
         model_factory=model_factory,
         environment_factory=environment_factory,
     )
