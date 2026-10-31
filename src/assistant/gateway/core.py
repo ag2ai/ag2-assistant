@@ -19,7 +19,7 @@ import copy
 import json
 import logging
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from urllib.parse import quote
@@ -224,6 +224,7 @@ class Gateway:
         history_factory: Callable | None = None,
         subscription_auth: CodexAuth | None = None,
         google: GoogleAuth | None = None,
+        plugins: Iterable[Plugin] = (),
     ) -> None:
         self._config = config or load_config()
         self._memory = memory
@@ -234,6 +235,7 @@ class Gateway:
         # How the turn agent and the one-shot chat titler are built. Injected so a
         # caller (or a test) decides what an agent is; both default to production.
         self._agent_factory = agent_factory or create_agent
+        self._plugins = tuple(plugins)
         self._model_factory = model_factory
         self._environment_factory = environment_factory or docker_environment
         self._history_factory = history_factory or (lambda path: SqliteKnowledgeStore(str(path)))
@@ -888,7 +890,8 @@ class Gateway:
         plugins = [
             build_skills_plugin(
                 effective, skill_runtime, catalog=held_cards, snapshot=True, drafts=self.card_drafts
-            )
+            ),
+            *self._plugins,
         ]
         guidance = [
             effective.agent.system_prompt,
@@ -1889,6 +1892,7 @@ def build_gateway(
     summary_factory: Callable | None = None,
     model_factory: Callable | None = None,
     environment_factory: Callable | None = None,
+    plugins: Iterable[Plugin] = (),
 ) -> "tuple[Gateway, TaskService]":
     """Build a Gateway and TaskService sharing a Profile configuration resolver."""
     config = config or load_config()
@@ -1906,5 +1910,6 @@ def build_gateway(
         title_factory=title_factory,
         model_factory=model_factory,
         environment_factory=environment_factory,
+        plugins=plugins,
     )
     return gateway, tasks

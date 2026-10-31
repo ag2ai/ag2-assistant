@@ -126,6 +126,11 @@ memory, voice, HITL, and the persistent stores hanging off the event-stream spin
 
 No background loop lives here; the only long-running loop is the scheduler (§5.5).
 
+A host embedding the assistant passes `ProfileManager(plugins=[...])`. These are AG2 `Plugin`s
+added to every turn of every profile, on chat, task runs and the ACP listener. A plugin can carry
+tools, prompt text, middleware, observers and dependencies, so host-specific behaviour stays in
+the host.
+
 ### 5.2 Universal agent — `src/assistant/agent.py`
 
 One shared `ag2` `Agent`, built by `create_agent()` (`agent.py:320`).

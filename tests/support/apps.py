@@ -78,6 +78,7 @@ def make_manager(
     made=None,
     model_factory=None,
     environment_factory=None,
+    plugins=(),
 ):
     """A ProfileManager over ``paths`` (or the HOME-isolated layout) whose every
     network-touching collaborator is a fake unless the caller injects its own.
@@ -94,6 +95,7 @@ def make_manager(
         channel_factory=channel_factory or fake_channel_factory(made),
         title_factory=title_factory or fake_title_factory(),
         summary_factory=summary_factory or fake_summary_factory(),
+        plugins=plugins,
     )
 
 
