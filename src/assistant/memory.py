@@ -23,6 +23,8 @@ There are TWO memory layers:
     manual edits. See ``read_universal`` / ``write_universal`` at the bottom.
 """
 
+import asyncio
+import contextlib
 import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
@@ -210,6 +212,25 @@ Return the updated profile document only (headings and bullets, no commentary)."
 _MERGE_ATTEMPTS = 2
 
 
+def swap_profile(store_path: Path, expected: str, updated: str) -> bool:
+    """Replace the profile with `updated` only if it still equals `expected`, as one
+    SQLite statement, so a write from any connection between the two cannot be lost."""
+    next_version = "(SELECT COALESCE(MAX(version), 0) + 1 FROM entries)"
+    with contextlib.closing(sqlite3.connect(str(store_path), timeout=5)) as conn, conn:
+        cursor = conn.execute(
+            f"UPDATE entries SET content = ?, version = {next_version} "
+            "WHERE path = ? AND content = ?",
+            (updated.encode(), PROFILE_PATH, expected.encode()),
+        )
+        if cursor.rowcount == 0 and not expected:
+            cursor = conn.execute(
+                "INSERT OR IGNORE INTO entries (path, content, version) "
+                f"VALUES (?, ?, {next_version})",
+                (PROFILE_PATH, updated.encode()),
+            )
+        return cursor.rowcount > 0
+
+
 class ProfileUpdate:
     """One merge of chat events into the profile, redone when the profile changes
     during the merge so an explicit edit is never overwritten."""
@@ -222,15 +243,16 @@ class ProfileUpdate:
         )
         self.responses: list[ModelResponse] = []
 
-    async def run(self, events: Sequence[BaseEvent], store: KnowledgeStore) -> bool:
+    async def run(
+        self, events: Sequence[BaseEvent], store: KnowledgeStore, store_path: Path
+    ) -> bool:
         """Merge `events` into the stored profile; True when the profile was saved."""
         for _ in range(_MERGE_ATTEMPTS):
             existing = await store.read(PROFILE_PATH) or ""
             updated = await self._merge(existing, events)
-            if (await store.read(PROFILE_PATH) or "") == existing:
-                if not updated:
-                    return False
-                await store.write(PROFILE_PATH, updated)
+            if not updated:
+                return False
+            if await asyncio.to_thread(swap_profile, store_path, existing, updated):
                 return True
         return False
 

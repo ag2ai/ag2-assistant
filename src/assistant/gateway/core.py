@@ -1417,7 +1417,7 @@ class Gateway:
             model = self._owned_model(config, lease, cheap_model(config))
             update = ProfileUpdate(model, build_profile_prompt(self._platform))
             try:
-                await update.run(events, self._knowledge_store)
+                await update.run(events, self._knowledge_store, config.data_dir / "profile.db")
             finally:
                 for response in update.responses:
                     usage = response.usage

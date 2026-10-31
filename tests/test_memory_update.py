@@ -7,7 +7,7 @@ from ag2.events import ModelMessage, ModelRequest, ModelResponse, Usage
 
 from assistant.config import Config
 from assistant.gateway.core import Gateway
-from assistant.memory import PROFILE_PATH
+from assistant.memory import PROFILE_PATH, build_profile_store, swap_profile
 from tests.support.fakes import FakeAgent, fake_agent_factory
 
 
@@ -214,3 +214,29 @@ async def test_the_update_is_recorded_as_usage(paths, tmp_path):
         await gw.close()
     assert usage["prompt"] == 100
     assert usage["completion"] == 10
+
+
+async def test_a_save_loses_to_a_write_from_another_connection(tmp_path):
+    path = tmp_path / "profile.db"
+    edited_elsewhere = build_profile_store(path)
+    await edited_elsewhere.write(PROFILE_PATH, "before")
+    await edited_elsewhere.write(PROFILE_PATH, "saved in Settings")
+    assert swap_profile(path, "before", "stale merge") is False
+    assert await build_profile_store(path).read(PROFILE_PATH) == "saved in Settings"
+
+
+async def test_a_save_lands_when_the_profile_is_unchanged(tmp_path):
+    path = tmp_path / "profile.db"
+    store = build_profile_store(path)
+    await store.write(PROFILE_PATH, "before")
+    assert swap_profile(path, "before", "merged") is True
+    assert await store.read(PROFILE_PATH) == "merged"
+
+
+async def test_a_first_save_loses_to_a_profile_written_first(tmp_path):
+    path = tmp_path / "profile.db"
+    store = build_profile_store(path)
+    await store.read(PROFILE_PATH)
+    assert swap_profile(path, "", "merged") is True
+    assert swap_profile(path, "", "second") is False
+    assert await store.read(PROFILE_PATH) == "merged"
