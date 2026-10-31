@@ -235,9 +235,9 @@ class Gateway:
         # How the turn agent and the one-shot chat titler are built. Injected so a
         # caller (or a test) decides what an agent is; both default to production.
         self._agent_factory = agent_factory or create_agent
-        self._plugins = tuple(plugins)
         self._model_factory = model_factory
         self._environment_factory = environment_factory or docker_environment
+        self._plugins = tuple(plugins)
         self._history_factory = history_factory or (lambda path: SqliteKnowledgeStore(str(path)))
         self._subscription_auth = subscription_auth or CodexAuth(self._config.paths)
         self._google = google or GoogleAuth(self._config.paths)
