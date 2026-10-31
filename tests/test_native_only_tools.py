@@ -1,7 +1,6 @@
-"""Tools named in ``tools.native_only`` are gone from what the model receives."""
+"""With ``tools.disable_native`` on, native-only tools are gone from what the model receives."""
 
 import asyncio
-import logging
 
 from assistant.config import Config
 from assistant.gateway.core import build_gateway
@@ -24,9 +23,9 @@ NATIVE_ONLY = [
 OPEN_QUESTIONS = "list/answer open questions"
 
 
-def _gateway(paths, native_only=()):
+def _gateway(paths, disable_native=False):
     config = Config.for_paths(paths)
-    config.tools.native_only = list(native_only)
+    config.tools.disable_native = disable_native
     models = ScriptedModels()
     gateway, tasks = build_gateway(
         config,
@@ -45,7 +44,7 @@ def _sent(models):
     return {schema.function.name for schema in schemas}, "\n".join(prompt)
 
 
-async def test_every_listed_tool_exists_without_the_setting(paths):
+async def test_every_native_only_tool_is_on_by_default(paths):
     gateway, _, models = _gateway(paths)
     await gateway.start()
     try:
@@ -58,7 +57,7 @@ async def test_every_listed_tool_exists_without_the_setting(paths):
 
 
 async def test_a_chat_turn_never_sends_a_native_only_tool(paths):
-    gateway, _, models = _gateway(paths, NATIVE_ONLY)
+    gateway, _, models = _gateway(paths, disable_native=True)
     await gateway.start()
     try:
         await gateway.send_message("hi", chat_id="chat")
@@ -76,7 +75,7 @@ async def test_a_task_run_never_sends_a_native_only_tool(paths):
     models = ScriptedModels()
     manager = make_manager(
         paths,
-        env={"AG2ASSISTANT_NATIVE_ONLY_TOOLS": ",".join(NATIVE_ONLY)},
+        env={"AG2ASSISTANT_DISABLE_NATIVE_TOOLS": "true"},
         model_factory=models,
         summary_factory=fake_summary_factory(),
     )
@@ -97,7 +96,7 @@ async def test_a_task_run_never_sends_a_native_only_tool(paths):
 
 
 async def test_the_acp_agent_never_holds_a_native_only_tool(paths):
-    gateway, _, _ = _gateway(paths, NATIVE_ONLY)
+    gateway, _, _ = _gateway(paths, disable_native=True)
     await gateway.start()
     try:
         agent = await gateway.acp_agent()
@@ -106,29 +105,3 @@ async def test_the_acp_agent_never_holds_a_native_only_tool(paths):
         await gateway.close()
     assert not names & set(NATIVE_ONLY)
     assert "list_tasks" in names
-
-
-async def test_the_prompt_drops_open_questions_when_either_tool_goes(paths):
-    gateway, _, models = _gateway(paths, ["answer_question"])
-    await gateway.start()
-    try:
-        await gateway.send_message("hi", chat_id="chat")
-    finally:
-        await gateway.close()
-    names, prompt = _sent(models)
-    assert "list_open_questions" in names
-    assert OPEN_QUESTIONS not in prompt
-
-
-async def test_an_unmatched_name_warns_once_and_changes_nothing_else(paths, caplog):
-    gateway, _, models = _gateway(paths, ["no_such_tool"])
-    await gateway.start()
-    try:
-        with caplog.at_level(logging.WARNING, logger="ag2assistant.gateway"):
-            await gateway.send_message("one", chat_id="chat")
-            await gateway.send_message("two", chat_id="chat")
-    finally:
-        await gateway.close()
-    warned = [r for r in caplog.records if "no_such_tool" in r.getMessage()]
-    assert len(warned) == 1
-    assert set(NATIVE_ONLY) <= _sent(models)[0]

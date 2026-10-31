@@ -113,7 +113,18 @@ from assistant.usage import UsageLedger
 from assistant.voice import build_voice_agent
 
 _TRANSCRIPT_PREFIX = "/transcript/"
-_OPEN_QUESTION_TOOLS = {"list_open_questions", "answer_question"}
+_NATIVE_ONLY_TOOLS = {
+    "ask_user",
+    "answer_question",
+    "list_open_questions",
+    "describe_settings",
+    "describe_integrations",
+    "list_coding_agents",
+    "install_skill",
+    "remove_skill",
+    "search_skills",
+    "list_folders",
+}
 
 logger = logging.getLogger("ag2assistant.gateway")
 
@@ -260,7 +271,6 @@ class Gateway:
         # async (chat_id, user_text, reply, origin=…) -> None, called once a turn
         # completes: the router pushes it to the Peer Attached to that chat.
         self._mirror: Callable | None = None
-        self._unmatched_native_only: set[str] = set()
         # chat_id -> live Stream; plus the log text each one was last read from or written as
         self._streams: dict[str, MemoryStream] = {}
         self._chat_activity: dict[str, ChatActivity] = {}
@@ -378,14 +388,6 @@ class Gateway:
                 await lease.aclose()
                 raise
         return self._acp_generation.agent
-
-    def _without_native_only(self, tools: list, names: list[str]) -> list:
-        """``tools`` minus ``names``, warning once for each name that matches no tool."""
-        unmatched = set(names) - {tool.name for tool in tools} - self._unmatched_native_only
-        for name in sorted(unmatched):
-            logger.warning("native-only tool %r matches no tool on this turn", name)
-        self._unmatched_native_only |= unmatched
-        return [tool for tool in tools if tool.name not in names]
 
     def _system_tools(self, cfg: Config) -> list:
         if self._tasks is None:
@@ -894,7 +896,8 @@ class Gateway:
         tools.extend(self._system_tools(effective))
         skill_runtime = build_skills_runtime(effective)
         tools.extend(build_skills_install_tools(effective, build_skills_runtime(effective)))
-        tools = self._without_native_only(tools, effective.tools.native_only)
+        if effective.tools.disable_native:
+            tools = [tool for tool in tools if tool.name not in _NATIVE_ONLY_TOOLS]
         held_cards = self._catalog.hold()
         plugins = [
             build_skills_plugin(
@@ -910,7 +913,7 @@ class Gateway:
                     tool.name in {"gmail_search", "calendar_list_events", "drive_search"}
                     for tool in tools
                 ),
-                open_questions=_OPEN_QUESTION_TOOLS <= {tool.name for tool in tools},
+                open_questions=not effective.tools.disable_native,
             ),
         ]
         if BEHAVIOR_GUIDANCE in agent.system_prompt:
