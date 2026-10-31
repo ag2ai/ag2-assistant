@@ -1425,12 +1425,14 @@ class Gateway:
         store = self._knowledge_store
         assert store is not None
         path = bookmark_path(chat_id)
-        snapshot = await stream.history.get_events()
-        unread = unread_events(
-            snapshot, await store.read(path), config.memory.aggregate_every_n_turns
+        bookmark = await store.read(path)
+        unread, start = unread_events(
+            await stream.history.get_events(), bookmark, config.memory.aggregate_every_n_turns
         )
         if not unread:
             return
+        if start and start != bookmark:
+            await store.write(path, start)
         async with self._resources.lease() as lease:
             model = self._owned_model(config, lease, cheap_model(config))
             update = ProfileUpdate(
@@ -1439,7 +1441,7 @@ class Gateway:
                 config.memory.aggregate_tool_result_chars,
             )
             try:
-                if await update.run(unread, store):
+                if await update.run(unread, store, config.data_dir / "profile.db"):
                     await store.write(path, event_ref(unread[-1]))
             finally:
                 for response in update.responses:

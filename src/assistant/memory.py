@@ -23,6 +23,8 @@ There are TWO memory layers:
     manual edits. See ``read_universal`` / ``write_universal`` at the bottom.
 """
 
+import asyncio
+import contextlib
 import hashlib
 import sqlite3
 from collections.abc import Sequence
@@ -215,6 +217,10 @@ New conversation:
 Return the updated profile document only (headings and bullets, no commentary)."""
 
 
+# The bookmark of a chat with nothing read and nothing before its unread turns.
+CHAT_START = "start"
+
+
 def bookmark_path(chat_id: str) -> str:
     """Where a chat's bookmark lives: the ref of the last event a profile update read."""
     return f"/bookmarks/{hashlib.sha256(chat_id.encode()).hexdigest()}"
@@ -232,15 +238,21 @@ def _finished_turns(events: Sequence[BaseEvent]) -> list[BaseEvent]:
 
 def unread_events(
     events: Sequence[BaseEvent], bookmark: str | None, every_n: int
-) -> list[BaseEvent]:
-    """The finished events after `bookmark`. With no bookmark in reach, the last `every_n`
-    turns: earlier updates covered what came before them."""
+) -> tuple[list[BaseEvent], str | None]:
+    """The finished events after `bookmark`, and the bookmark they start from. With no
+    bookmark in reach they are the last `every_n` turns; saving that start before the
+    merge keeps them unread if the update fails."""
     finished = _finished_turns(events)
+    if bookmark == CHAT_START:
+        return finished, CHAT_START
     refs = [event_ref(event) for event in finished]
     if bookmark in refs:
-        return finished[refs.index(bookmark) + 1 :]
+        return finished[refs.index(bookmark) + 1 :], bookmark
     requests = [i for i, event in enumerate(finished) if isinstance(event, ModelRequest)]
-    return finished[requests[-min(every_n, len(requests))] :] if requests else []
+    if not requests:
+        return [], bookmark
+    start = requests[-min(every_n, len(requests))]
+    return finished[start:], refs[start - 1] if start else CHAT_START
 
 
 def _capped(text: str, limit: int) -> str:
@@ -265,6 +277,25 @@ def _render(event: BaseEvent, tool_result_chars: int) -> str:
 _MERGE_ATTEMPTS = 2
 
 
+def swap_profile(store_path: Path, expected: str, updated: str) -> bool:
+    """Replace the profile with `updated` only if it still equals `expected`, as one
+    SQLite statement, so a write from any connection between the two cannot be lost."""
+    next_version = "(SELECT COALESCE(MAX(version), 0) + 1 FROM entries)"
+    with contextlib.closing(sqlite3.connect(str(store_path), timeout=5)) as conn, conn:
+        cursor = conn.execute(
+            f"UPDATE entries SET content = ?, version = {next_version} "
+            "WHERE path = ? AND content = ?",
+            (updated.encode(), PROFILE_PATH, expected.encode()),
+        )
+        if cursor.rowcount == 0 and not expected:
+            cursor = conn.execute(
+                "INSERT OR IGNORE INTO entries (path, content, version) "
+                f"VALUES (?, ?, {next_version})",
+                (PROFILE_PATH, updated.encode()),
+            )
+        return cursor.rowcount > 0
+
+
 class ProfileUpdate:
     """One merge of chat events into the profile, redone when the profile changes
     during the merge so an explicit edit is never overwritten."""
@@ -277,15 +308,16 @@ class ProfileUpdate:
         )
         self.responses: list[ModelResponse] = []
 
-    async def run(self, events: Sequence[BaseEvent], store: KnowledgeStore) -> bool:
+    async def run(
+        self, events: Sequence[BaseEvent], store: KnowledgeStore, store_path: Path
+    ) -> bool:
         """Merge `events` into the stored profile; True when the profile was saved."""
         for _ in range(_MERGE_ATTEMPTS):
             existing = await store.read(PROFILE_PATH) or ""
             updated = await self._merge(existing, events)
-            if (await store.read(PROFILE_PATH) or "") == existing:
-                if not updated:
-                    return False
-                await store.write(PROFILE_PATH, updated)
+            if not updated:
+                return False
+            if await asyncio.to_thread(swap_profile, store_path, existing, updated):
                 return True
         return False
 

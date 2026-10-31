@@ -18,7 +18,7 @@ from ag2.events import (
 
 from assistant.config import Config
 from assistant.gateway.core import Gateway
-from assistant.memory import PROFILE_PATH
+from assistant.memory import PROFILE_PATH, bookmark_path, build_profile_store, swap_profile
 from tests.support.fakes import FakeAgent, fake_agent_factory
 
 
@@ -407,3 +407,69 @@ async def test_a_chat_shorter_than_n_turns_reads_all_of_them(paths, tmp_path):
     finally:
         await gw.close()
     assert "chat ask 0" in model.prompts[0]
+
+
+async def test_a_save_loses_to_a_write_from_another_connection(tmp_path):
+    path = tmp_path / "profile.db"
+    edited_elsewhere = build_profile_store(path)
+    await edited_elsewhere.write(PROFILE_PATH, "before")
+    await edited_elsewhere.write(PROFILE_PATH, "saved in Settings")
+    assert swap_profile(path, "before", "stale merge") is False
+    assert await build_profile_store(path).read(PROFILE_PATH) == "saved in Settings"
+
+
+async def test_a_save_lands_when_the_profile_is_unchanged(tmp_path):
+    path = tmp_path / "profile.db"
+    store = build_profile_store(path)
+    await store.write(PROFILE_PATH, "before")
+    assert swap_profile(path, "before", "merged") is True
+    assert await store.read(PROFILE_PATH) == "merged"
+
+
+async def test_a_first_save_loses_to_a_profile_written_first(tmp_path):
+    path = tmp_path / "profile.db"
+    store = build_profile_store(path)
+    await store.read(PROFILE_PATH)
+    assert swap_profile(path, "", "merged") is True
+    assert swap_profile(path, "", "second") is False
+    assert await store.read(PROFILE_PATH) == "merged"
+
+
+async def test_a_failed_first_update_keeps_its_turns_for_the_next_one(paths, tmp_path):
+    model = MergeModel(RuntimeError("model down"), "merged")
+    gw = await memory_gateway(paths, tmp_path, model)
+    history = exchanges("chat", 0, 4)
+    try:
+        await update(gw, "s1", history)
+        await update(gw, "s1", history + exchanges("chat", 4, 8))
+    finally:
+        await gw.close()
+    assert "chat ask 0" in model.prompts[1]
+    assert "chat ask 7" in model.prompts[1]
+
+
+async def test_a_failed_first_update_on_a_long_chat_keeps_only_its_last_n_turns(paths, tmp_path):
+    model = MergeModel(RuntimeError("model down"), "merged")
+    gw = await memory_gateway(paths, tmp_path, model)
+    history = exchanges("chat", 0, 8)
+    try:
+        await update(gw, "s1", history)
+        await update(gw, "s1", history + exchanges("chat", 8, 12))
+    finally:
+        await gw.close()
+    assert "chat ask 3" not in model.prompts[1]
+    assert "chat ask 4" in model.prompts[1]
+    assert "chat ask 11" in model.prompts[1]
+
+
+async def test_a_chat_with_nothing_finished_saves_no_bookmark(paths, tmp_path):
+    model = MergeModel()
+    gw = await memory_gateway(paths, tmp_path, model)
+    unfinished = [ModelRequest.ensure_request([f"ask {n}"]) for n in range(4)]
+    try:
+        await update(gw, "s1", unfinished)
+        saved = await gw._knowledge_store.read(bookmark_path("s1"))
+    finally:
+        await gw.close()
+    assert saved is None
+    assert model.prompts == []
