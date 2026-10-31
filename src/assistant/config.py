@@ -170,6 +170,8 @@ class MemoryConfig(BaseModel):
     aggregate_every_n_turns: int = 4
     # Wall-clock limit for one background profile update.
     aggregate_timeout_s: float = Field(default=120, gt=0)
+    # Longest text one tool result adds to a profile update.
+    aggregate_tool_result_chars: int = Field(default=1_000, gt=0)
     # Budget the estimated full model input; zero disables new compaction.
     compact_max_tokens: int = 50_000
     compact_max_calls: int = Field(default=8, gt=0)
