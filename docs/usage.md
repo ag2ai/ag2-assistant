@@ -531,8 +531,10 @@ AG2 Assistant distils the profile every few turns (an LLM call each time) rather
 every message, so long chats stay cheap. Single-shot `ag2-assistant agent` runs always
 distil their one turn. Tune the cadence with `AG2ASSISTANT_AGGREGATE_EVERY_N` (default 4).
 In a chat the update runs in the background after the reply, one at a time per profile,
-and `memory.aggregate_timeout_s` (default 120) limits each one. ACP listeners still update
-inside the turn.
+and `memory.aggregate_timeout_s` (default 120) limits each one. It reads only what is new
+since that chat's last update, with each tool result cut to
+`memory.aggregate_tool_result_chars` (default 1,000). ACP listeners still update inside the
+turn and read the whole chat.
 
 ## Permissions — control what AG2 Assistant can access
 

@@ -69,6 +69,7 @@ from assistant.card_instances import CardInstances
 from assistant.card_sources.service import CardSources
 from assistant.codex_auth import CodexAuth, CodexAuthError
 from assistant.coding.detect import parse_bridge
+from assistant.compaction import event_ref
 from assistant.config import Config, load_config
 from assistant.events import ChatSeen, TurnCancelled, TurnCompleted, TurnFailed, TurnStarted
 from assistant.folders import FolderStore
@@ -80,7 +81,13 @@ from assistant.gateway.wire import is_binary_event
 from assistant.hitl import Asker, build_hitl_hook
 from assistant.integrations.google_auth import GoogleAuth
 from assistant.llm_configs import LlmConfigStore
-from assistant.memory import ProfileUpdate, build_profile_prompt, build_profile_store
+from assistant.memory import (
+    ProfileUpdate,
+    bookmark_path,
+    build_profile_prompt,
+    build_profile_store,
+    unread_events,
+)
 from assistant.observability import (
     capture_failure,
     log_suppressed,
@@ -1398,26 +1405,44 @@ class Gateway:
             config = self._config
             every_n = config.memory.aggregate_every_n_turns
             stream = await self.stream_for(chat_id)
-            events = list(await stream.history.get_events())
+            events = await stream.history.get_events()
             turns = sum(isinstance(event, ModelRequest) for event in events)
             if every_n <= 0 or turns == 0 or turns % every_n:
                 return
             async with self._memory_lock:
                 await asyncio.wait_for(
-                    self._merge_profile(config, events), config.memory.aggregate_timeout_s
+                    self._merge_profile(config, chat_id, stream),
+                    config.memory.aggregate_timeout_s,
                 )
         except Exception as exc:
             log_suppressed("memory update", exc, chat_id=chat_id)
         finally:
             self._memory_updating.discard(chat_id)
 
-    async def _merge_profile(self, config: Config, events: list) -> None:
-        assert self._knowledge_store is not None
+    async def _merge_profile(self, config: Config, chat_id: str, stream) -> None:
+        """Merge the chat's finished, unread events, moving its bookmark only once the
+        profile is saved."""
+        store = self._knowledge_store
+        assert store is not None
+        path = bookmark_path(chat_id)
+        bookmark = await store.read(path)
+        unread, start = unread_events(
+            await stream.history.get_events(), bookmark, config.memory.aggregate_every_n_turns
+        )
+        if not unread:
+            return
+        if start and start != bookmark:
+            await store.write(path, start)
         async with self._resources.lease() as lease:
             model = self._owned_model(config, lease, cheap_model(config))
-            update = ProfileUpdate(model, build_profile_prompt(self._platform))
+            update = ProfileUpdate(
+                model,
+                build_profile_prompt(self._platform),
+                config.memory.aggregate_tool_result_chars,
+            )
             try:
-                await update.run(events, self._knowledge_store, config.data_dir / "profile.db")
+                if await update.run(unread, store, config.data_dir / "profile.db"):
+                    await store.write(path, event_ref(unread[-1]))
             finally:
                 for response in update.responses:
                     usage = response.usage

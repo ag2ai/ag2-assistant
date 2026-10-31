@@ -25,6 +25,7 @@ There are TWO memory layers:
 
 import asyncio
 import contextlib
+import hashlib
 import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
@@ -34,13 +35,21 @@ from ag2.aggregate import AggregateTrigger, WorkingMemoryAggregate
 from ag2.annotations import Context
 from ag2.compact import CompactTrigger
 from ag2.config import ModelConfig
-from ag2.events import BaseEvent, ModelRequest, ModelResponse, render_for_prompt
+from ag2.events import (
+    BaseEvent,
+    ModelRequest,
+    ModelResponse,
+    ToolResultEvent,
+    ToolResultsEvent,
+    is_conversational,
+    render_for_prompt,
+)
 from ag2.knowledge import KnowledgeStore, MemoryKnowledgeStore, SqliteKnowledgeStore
 from ag2.policies import ConversationPolicy, WorkingMemoryPolicy
 from ag2.stream import MemoryStream
 from fast_depends.pydantic import PydanticSerializer
 
-from assistant.compaction import CheckpointCompact, CompactionLimits
+from assistant.compaction import CheckpointCompact, CompactionLimits, event_ref
 from assistant.config import load_config
 
 # Path inside the knowledge store where the rolling profile lives.
@@ -208,6 +217,62 @@ New conversation:
 Return the updated profile document only (headings and bullets, no commentary)."""
 
 
+# The bookmark of a chat with nothing read and nothing before its unread turns.
+CHAT_START = "start"
+
+
+def bookmark_path(chat_id: str) -> str:
+    """Where a chat's bookmark lives: the ref of the last event a profile update read."""
+    return f"/bookmarks/{hashlib.sha256(chat_id.encode()).hexdigest()}"
+
+
+def _finished_turns(events: Sequence[BaseEvent]) -> list[BaseEvent]:
+    """The conversation up to its last final response, leaving out a turn still running."""
+    conversation = [event for event in events if is_conversational(event)]
+    for index in range(len(conversation) - 1, -1, -1):
+        event = conversation[index]
+        if isinstance(event, ModelResponse) and (not event.tool_calls or event.response_force):
+            return conversation[: index + 1]
+    return []
+
+
+def unread_events(
+    events: Sequence[BaseEvent], bookmark: str | None, every_n: int
+) -> tuple[list[BaseEvent], str | None]:
+    """The finished events after `bookmark`, and the bookmark they start from. With no
+    bookmark in reach they are the last `every_n` turns; saving that start before the
+    merge keeps them unread if the update fails."""
+    finished = _finished_turns(events)
+    if bookmark == CHAT_START:
+        return finished, CHAT_START
+    refs = [event_ref(event) for event in finished]
+    if bookmark in refs:
+        return finished[refs.index(bookmark) + 1 :], bookmark
+    requests = [i for i, event in enumerate(finished) if isinstance(event, ModelRequest)]
+    if not requests:
+        return [], bookmark
+    start = requests[-min(every_n, len(requests))]
+    return finished[start:], refs[start - 1] if start else CHAT_START
+
+
+def _capped(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}\n[{len(text) - limit} more characters cut]"
+
+
+def _render(event: BaseEvent, tool_result_chars: int) -> str:
+    """An event as profile-update text, each tool result within `tool_result_chars`."""
+    if isinstance(event, ToolResultEvent):
+        event = ToolResultsEvent([event])
+    if isinstance(event, ToolResultsEvent):
+        return "\n".join(
+            _capped(render_for_prompt(ToolResultsEvent([result])), tool_result_chars)
+            for result in event.results
+        )
+    return render_for_prompt(event)
+
+
 # How many merges one update tries before leaving a profile that keeps changing alone.
 _MERGE_ATTEMPTS = 2
 
@@ -235,8 +300,8 @@ class ProfileUpdate:
     """One merge of chat events into the profile, redone when the profile changes
     during the merge so an explicit edit is never overwritten."""
 
-    def __init__(self, config: ModelConfig, prompt: str) -> None:
-        self._config, self._prompt = config, prompt
+    def __init__(self, config: ModelConfig, prompt: str, tool_result_chars: int) -> None:
+        self._config, self._prompt, self._tool_result_chars = config, prompt, tool_result_chars
         self._serializer = PydanticSerializer(
             pydantic_config={"arbitrary_types_allowed": True},
             use_fastdepends_errors=False,
@@ -259,7 +324,7 @@ class ProfileUpdate:
     async def _merge(self, existing: str, events: Sequence[BaseEvent]) -> str:
         prompt = self._prompt.format(
             existing=existing or "(empty)",
-            events="\n".join(render_for_prompt(event) for event in events),
+            events="\n".join(_render(event, self._tool_result_chars) for event in events),
         )
         response = await self._config.create()(
             [ModelRequest.ensure_request([prompt])],

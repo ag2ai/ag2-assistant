@@ -3,11 +3,22 @@
 import asyncio
 
 import pytest
-from ag2.events import ModelMessage, ModelRequest, ModelResponse, Usage
+from ag2.compact import CompactionSummary
+from ag2.events import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    ToolCallEvent,
+    ToolCallsEvent,
+    ToolResult,
+    ToolResultEvent,
+    ToolResultsEvent,
+    Usage,
+)
 
 from assistant.config import Config
 from assistant.gateway.core import Gateway
-from assistant.memory import PROFILE_PATH, build_profile_store, swap_profile
+from assistant.memory import PROFILE_PATH, bookmark_path, build_profile_store, swap_profile
 from tests.support.fakes import FakeAgent, fake_agent_factory
 
 
@@ -38,6 +49,15 @@ class MergeModel:
         return ModelResponse(ModelMessage(answer), usage=usage, model=self.model)
 
 
+def exchanges(label, first, last) -> list:
+    """Finished turns numbered first..last-1: a request and its final response."""
+    events = []
+    for n in range(first, last):
+        events.append(ModelRequest.ensure_request([f"{label} ask {n}"]))
+        events.append(ModelResponse(ModelMessage(f"{label} answer {n}")))
+    return events
+
+
 async def memory_gateway(paths, tmp_path, model, **memory):
     config = Config.for_paths(paths, data_dir=tmp_path)
     for field, value in memory.items():
@@ -55,8 +75,7 @@ async def memory_gateway(paths, tmp_path, model, **memory):
 async def turn(gw, chat_id="s1", earlier=3):
     """One turn on a chat whose history already holds `earlier` requests plus this one."""
     stream = await gw.stream_for(chat_id)
-    requests = [ModelRequest.ensure_request([f"{chat_id} ask {n}"]) for n in range(earlier + 1)]
-    await stream.history.replace(requests)
+    await stream.history.replace(exchanges(chat_id, 0, earlier + 1))
     return await gw.send_message("hello", chat_id=chat_id)
 
 
@@ -216,6 +235,180 @@ async def test_the_update_is_recorded_as_usage(paths, tmp_path):
     assert usage["completion"] == 10
 
 
+async def update(gw, chat_id, events):
+    """Replace the chat's history with `events` and run one profile update over it."""
+    stream = await gw.stream_for(chat_id)
+    await stream.history.replace(events)
+    await gw._update_memory(chat_id)
+
+
+async def test_a_second_update_reads_only_what_is_new(paths, tmp_path):
+    model = MergeModel()
+    gw = await memory_gateway(paths, tmp_path, model)
+    history = exchanges("chat", 0, 4)
+    try:
+        await update(gw, "s1", history)
+        await update(gw, "s1", history + exchanges("chat", 4, 8))
+    finally:
+        await gw.close()
+    assert "chat ask 3" in model.prompts[0]
+    assert "chat ask 3" not in model.prompts[1]
+    assert "chat ask 4" in model.prompts[1]
+    assert "chat ask 7" in model.prompts[1]
+
+
+async def test_a_chat_with_no_bookmark_reads_its_last_n_turns(paths, tmp_path):
+    model = MergeModel()
+    gw = await memory_gateway(paths, tmp_path, model)
+    try:
+        await update(gw, "s1", exchanges("chat", 0, 8))
+    finally:
+        await gw.close()
+    assert "chat ask 3" not in model.prompts[0]
+    assert "chat ask 4" in model.prompts[0]
+
+
+async def test_a_bookmark_lost_to_compaction_falls_back_to_the_last_n_turns(paths, tmp_path):
+    model = MergeModel()
+    gw = await memory_gateway(paths, tmp_path, model)
+    summary = CompactionSummary(summary="{}", event_count=8)
+    try:
+        await update(gw, "s1", exchanges("old", 0, 4))
+        await update(gw, "s1", [summary, *exchanges("new", 0, 8)])
+    finally:
+        await gw.close()
+    assert "new ask 3" not in model.prompts[1]
+    assert "new ask 4" in model.prompts[1]
+
+
+async def test_a_turn_still_running_is_left_for_the_next_update(paths, tmp_path):
+    model = MergeModel()
+    gw = await memory_gateway(paths, tmp_path, model)
+    history = exchanges("chat", 0, 3)
+    running = [
+        ModelRequest.ensure_request(["chat ask running"]),
+        ModelResponse(
+            ModelMessage("calling"),
+            tool_calls=ToolCallsEvent([ToolCallEvent(id="c1", name="lookup", arguments="{}")]),
+        ),
+    ]
+    try:
+        await update(gw, "s1", [*history, *running])
+        finished = [
+            *running,
+            ToolResultsEvent(
+                [ToolResultEvent(parent_id="c1", name="lookup", result=ToolResult("found"))]
+            ),
+            ModelResponse(ModelMessage("chat answer running")),
+        ]
+        await update(gw, "s1", [*history, *finished, *exchanges("chat", 4, 8)])
+    finally:
+        await gw.close()
+    assert "chat ask running" not in model.prompts[0]
+    assert "chat ask running" in model.prompts[1]
+    assert "chat answer running" in model.prompts[1]
+
+
+async def test_nothing_finished_since_the_bookmark_makes_no_call(paths, tmp_path):
+    model = MergeModel()
+    gw = await memory_gateway(paths, tmp_path, model)
+    history = exchanges("chat", 0, 4)
+    try:
+        await update(gw, "s1", history)
+        await update(gw, "s1", history)
+    finally:
+        await gw.close()
+    assert len(model.prompts) == 1
+
+
+async def test_a_failed_update_leaves_the_bookmark_so_the_events_are_read_again(paths, tmp_path):
+    model = MergeModel("merged", RuntimeError("model down"), "merged again")
+    gw = await memory_gateway(paths, tmp_path, model)
+    history = exchanges("chat", 0, 4)
+    try:
+        await update(gw, "s1", history)
+        await update(gw, "s1", history + exchanges("chat", 4, 8))
+        await update(gw, "s1", history + exchanges("chat", 4, 12))
+    finally:
+        await gw.close()
+    assert "chat ask 3" not in model.prompts[2]
+    assert "chat ask 4" in model.prompts[2]
+
+
+async def test_a_declined_update_leaves_the_bookmark_too(paths, tmp_path):
+    gateway = {}
+
+    async def edit_on_the_second_update(call):
+        if call in (2, 3):
+            await gateway["gw"]._knowledge_store.write(PROFILE_PATH, f"edit {call}")
+
+    model = MergeModel(before=edit_on_the_second_update)
+    gateway["gw"] = gw = await memory_gateway(paths, tmp_path, model)
+    history = exchanges("chat", 0, 4)
+    try:
+        await update(gw, "s1", history)
+        await update(gw, "s1", history + exchanges("chat", 4, 8))
+        await update(gw, "s1", history + exchanges("chat", 4, 12))
+    finally:
+        await gw.close()
+    assert "chat ask 4" in model.prompts[3]
+
+
+async def test_chats_keep_separate_bookmarks(paths, tmp_path):
+    model = MergeModel()
+    gw = await memory_gateway(paths, tmp_path, model)
+    history = exchanges("a", 0, 4)
+    try:
+        await update(gw, "a", history)
+        await update(gw, "b", exchanges("b", 0, 4))
+        await update(gw, "a", history + exchanges("a", 4, 12))
+    finally:
+        await gw.close()
+    assert "a ask 4" in model.prompts[2]
+
+
+async def test_a_large_tool_result_is_capped_and_conversation_text_is_not(paths, tmp_path):
+    model = MergeModel()
+    gw = await memory_gateway(paths, tmp_path, model, aggregate_tool_result_chars=30)
+    question = "q" * 200
+    events = exchanges("chat", 0, 3)
+    events.append(ModelRequest.ensure_request([question]))
+    events.append(
+        ModelResponse(
+            ModelMessage("calling"),
+            tool_calls=ToolCallsEvent([ToolCallEvent(id="c1", name="lookup", arguments="{}")]),
+        )
+    )
+    events.append(
+        ToolResultsEvent(
+            [
+                ToolResultEvent(parent_id="c1", name="lookup", result=ToolResult("a" * 50)),
+                ToolResultEvent(parent_id="c1", name="lookup", result=ToolResult("short")),
+            ]
+        )
+    )
+    events.append(ModelResponse(ModelMessage("done")))
+    try:
+        await update(gw, "s1", events)
+    finally:
+        await gw.close()
+    assert "a" * 31 not in model.prompts[0]
+    assert "a" * 15 in model.prompts[0]
+    assert "more characters cut]" in model.prompts[0]
+    assert "short" in model.prompts[0]
+    assert question in model.prompts[0]
+
+
+async def test_a_chat_shorter_than_n_turns_reads_all_of_them(paths, tmp_path):
+    model = MergeModel()
+    gw = await memory_gateway(paths, tmp_path, model, aggregate_every_n_turns=2)
+    try:
+        await update(gw, "s1", exchanges("chat", 0, 2))
+    finally:
+        await gw.close()
+    assert "chat ask 0" in model.prompts[0]
+
+
 async def test_a_save_loses_to_a_write_from_another_connection(tmp_path):
     path = tmp_path / "profile.db"
     edited_elsewhere = build_profile_store(path)
@@ -240,3 +433,43 @@ async def test_a_first_save_loses_to_a_profile_written_first(tmp_path):
     assert swap_profile(path, "", "merged") is True
     assert swap_profile(path, "", "second") is False
     assert await store.read(PROFILE_PATH) == "merged"
+
+
+async def test_a_failed_first_update_keeps_its_turns_for_the_next_one(paths, tmp_path):
+    model = MergeModel(RuntimeError("model down"), "merged")
+    gw = await memory_gateway(paths, tmp_path, model)
+    history = exchanges("chat", 0, 4)
+    try:
+        await update(gw, "s1", history)
+        await update(gw, "s1", history + exchanges("chat", 4, 8))
+    finally:
+        await gw.close()
+    assert "chat ask 0" in model.prompts[1]
+    assert "chat ask 7" in model.prompts[1]
+
+
+async def test_a_failed_first_update_on_a_long_chat_keeps_only_its_last_n_turns(paths, tmp_path):
+    model = MergeModel(RuntimeError("model down"), "merged")
+    gw = await memory_gateway(paths, tmp_path, model)
+    history = exchanges("chat", 0, 8)
+    try:
+        await update(gw, "s1", history)
+        await update(gw, "s1", history + exchanges("chat", 8, 12))
+    finally:
+        await gw.close()
+    assert "chat ask 3" not in model.prompts[1]
+    assert "chat ask 4" in model.prompts[1]
+    assert "chat ask 11" in model.prompts[1]
+
+
+async def test_a_chat_with_nothing_finished_saves_no_bookmark(paths, tmp_path):
+    model = MergeModel()
+    gw = await memory_gateway(paths, tmp_path, model)
+    unfinished = [ModelRequest.ensure_request([f"ask {n}"]) for n in range(4)]
+    try:
+        await update(gw, "s1", unfinished)
+        saved = await gw._knowledge_store.read(bookmark_path("s1"))
+    finally:
+        await gw.close()
+    assert saved is None
+    assert model.prompts == []
