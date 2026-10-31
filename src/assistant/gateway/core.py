@@ -1371,7 +1371,8 @@ class Gateway:
         await store.write(path, json.dumps(doc))
         # After the FIRST complete exchange, name the chat once (async, non-blocking —
         # like ChatGPT/Claude). A single revision: only when there's no title yet.
-        if len(doc["messages"]) == 2 and not doc.get("title"):
+        titled = self._config.gateway.chat_titles
+        if titled and len(doc["messages"]) == 2 and not doc.get("title"):
             task = asyncio.create_task(self._title_chat(chat_id, user_text, reply_text))
             self._background.add(task)
             task.add_done_callback(self._background.discard)

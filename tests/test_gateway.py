@@ -316,6 +316,47 @@ async def _persistent_gateway(paths, tmp_path, agent, **kwargs):
     return gw
 
 
+async def _title_calls(paths, tmp_path, chat_id, *, chat_titles):
+    """Run one exchange; returns how many titlers were built, the transcript, the listing."""
+    built = []
+    config = Config.for_paths(paths, data_dir=tmp_path)
+    config.gateway.chat_titles = chat_titles
+    gw = Gateway(
+        config=config,
+        memory=False,
+        agent_factory=fake_agent_factory(FakeAgent()),
+        title_factory=fake_title_factory("Named Chat", built=built),
+    )
+    await gw.start()
+    try:
+        await gw.send_message("first question", chat_id=chat_id)
+        await asyncio.gather(*list(gw._background))
+        return len(built), await gw.transcript(chat_id), await gw.list_chats()
+    finally:
+        await gw.close()
+
+
+@pytest.mark.parametrize("chat_id", ["s1", "task-run:r1"])
+async def test_chat_titles_on_makes_one_title_call(paths, tmp_path, chat_id):
+    calls, _, _ = await _title_calls(paths, tmp_path, chat_id, chat_titles=True)
+    assert calls == 1
+
+
+@pytest.mark.parametrize("chat_id", ["s1", "task-run:r1"])
+async def test_chat_titles_off_makes_no_title_call(paths, tmp_path, chat_id):
+    calls, transcript, _ = await _title_calls(paths, tmp_path, chat_id, chat_titles=False)
+    assert calls == 0
+    assert transcript[0] == {"role": "user", "text": "first question"}
+    assert len(transcript) == 2
+
+
+async def test_an_untitled_chat_still_lists_with_its_preview(paths, tmp_path):
+    _, _, listed = await _title_calls(paths, tmp_path, "s1", chat_titles=False)
+    chat = next(entry for entry in listed if entry["chat_id"] == "s1")
+    assert chat["title"] == ""
+    assert chat["preview"] == "first question"
+
+
 async def test_inflight_chat_listed_before_completion(paths, tmp_path):
     """(a) A chat is listed with the user-message preview *while* its (slow) turn
     is still running — the stub is written the instant the message is accepted."""

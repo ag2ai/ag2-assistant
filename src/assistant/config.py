@@ -149,6 +149,8 @@ class GatewayConfig(BaseModel):
     # Wall-clock limit for one chat turn, including clarification waits, model calls,
     # and tool execution. Long-running work belongs in a background task instead.
     reply_timeout_s: float = 600.0
+    # Name a chat with one LLM call after its first exchange (env: AG2ASSISTANT_CHAT_TITLES).
+    chat_titles: bool = True
 
 
 class ToolsConfig(BaseModel):
@@ -336,6 +338,8 @@ def apply_env_overrides(cfg: Config, env: Mapping[str, str]) -> None:
         cfg.llm.auth_mode = v.strip().lower()
     if v := get("AG2ASSISTANT_STREAMING"):
         cfg.llm.streaming = v.strip().lower() not in {"0", "false", "no", "off"}
+    if v := get("AG2ASSISTANT_CHAT_TITLES"):
+        cfg.gateway.chat_titles = v.strip().lower() not in {"0", "false", "no", "off"}
     if v := get("AG2ASSISTANT_AGGREGATE_MODEL"):
         cfg.llm.aggregate_model = v
     if v := get("AG2ASSISTANT_LLM_TIMEOUT"):
