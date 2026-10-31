@@ -122,6 +122,7 @@ class ProfileRuntime:
         mirror: Callable | None = None,
         questions=None,
         agent_factory: Callable | None = None,
+        stream_observers: Iterable[Callable] = (),
         title_factory: Callable | None = None,
         summary_factory: Callable | None = None,
         model_factory: Callable | None = None,
@@ -136,6 +137,7 @@ class ProfileRuntime:
         # Collaborators the gateway builds rather than imports: the turn agent and the
         # two cheap-model helpers (chat titles, run summaries). None means production.
         self._agent_factory = agent_factory
+        self._stream_observers = tuple(stream_observers)
         self._title_factory = title_factory
         self._summary_factory = summary_factory
         self._model_factory = model_factory
@@ -248,6 +250,7 @@ class ProfileRuntime:
             persist=self._persist,
             config_factory=factory,
             agent_factory=self._agent_factory,
+            stream_observers=self._stream_observers,
             title_factory=self._title_factory,
             summary_factory=self._summary_factory,
             model_factory=self._model_factory,
@@ -290,6 +293,7 @@ class ProfileManager:
         memory: bool = True,
         persist: bool = True,
         agent_factory: Callable | None = None,
+        stream_observers: Iterable[Callable] = (),
         channel_factory: Callable | None = None,
         title_factory: Callable | None = None,
         summary_factory: Callable | None = None,
@@ -311,6 +315,8 @@ class ProfileManager:
         self._memory = memory
         self._persist = persist
         self._agent_factory = agent_factory
+        # A host's async (chat_id, event) callbacks, told every event on every chat stream.
+        self._stream_observers = tuple(stream_observers)
         self._channel_factory = channel_factory or channels.get_channel
         self._title_factory = title_factory
         self._summary_factory = summary_factory
@@ -411,6 +417,7 @@ class ProfileManager:
             mirror=self.router.mirror,
             questions=self.router,
             agent_factory=self._agent_factory,
+            stream_observers=self._stream_observers,
             title_factory=self._title_factory,
             summary_factory=self._summary_factory,
             model_factory=self._model_factory,

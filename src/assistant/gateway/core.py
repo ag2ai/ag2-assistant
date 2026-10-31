@@ -19,7 +19,7 @@ import copy
 import json
 import logging
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from urllib.parse import quote
@@ -218,6 +218,7 @@ class Gateway:
         task_service=None,
         config_factory: Callable[[], Config] | None = None,
         agent_factory: Callable | None = None,
+        stream_observers: Iterable[Callable] = (),
         title_factory: Callable | None = None,
         model_factory: Callable | None = None,
         environment_factory: Callable | None = None,
@@ -234,6 +235,7 @@ class Gateway:
         # How the turn agent and the one-shot chat titler are built. Injected so a
         # caller (or a test) decides what an agent is; both default to production.
         self._agent_factory = agent_factory or create_agent
+        self._stream_observers = tuple(stream_observers)
         self._model_factory = model_factory
         self._environment_factory = environment_factory or docker_environment
         self._history_factory = history_factory or (lambda path: SqliteKnowledgeStore(str(path)))
@@ -702,6 +704,16 @@ class Gateway:
                     self._streaming.pop(chat_id, None)
 
             stream.subscribe(collect_chunks, condition=ModelMessageChunk | ModelResponse)
+
+            async def tell_observers(event):
+                for stream_observer in self._stream_observers:
+                    try:
+                        await stream_observer(chat_id, event)
+                    except Exception as exc:
+                        log_suppressed("stream observer", exc, chat_id=chat_id)
+
+            if self._stream_observers:
+                stream.subscribe(tell_observers)
         if self._writer is not None and chat_id not in self._active:
             raw = None
             try:
@@ -1885,6 +1897,7 @@ def build_gateway(
     persist: bool = True,
     config_factory: Callable[[], Config] | None = None,
     agent_factory: Callable | None = None,
+    stream_observers: Iterable[Callable] = (),
     title_factory: Callable | None = None,
     summary_factory: Callable | None = None,
     model_factory: Callable | None = None,
@@ -1903,6 +1916,7 @@ def build_gateway(
         task_service=tasks,
         config_factory=config_factory,
         agent_factory=agent_factory,
+        stream_observers=stream_observers,
         title_factory=title_factory,
         model_factory=model_factory,
         environment_factory=environment_factory,
