@@ -116,6 +116,8 @@ _TRANSCRIPT_PREFIX = "/transcript/"
 
 logger = logging.getLogger("ag2assistant.gateway")
 
+_OPEN_QUESTION_TOOLS = {"list_open_questions", "answer_question"}
+
 # Bounds for the on-demand "Mentioned in N threads" scan (ADR 0014): a huge chat
 # history can't stall the request (streams examined) nor flood the popover (rows
 # returned). Truncation is logged, never silent.
@@ -234,6 +236,7 @@ class Gateway:
         # How the turn agent and the one-shot chat titler are built. Injected so a
         # caller (or a test) decides what an agent is; both default to production.
         self._agent_factory = agent_factory or create_agent
+        self._unmatched_native_only: set[str] = set()
         self._model_factory = model_factory
         self._environment_factory = environment_factory or docker_environment
         self._history_factory = history_factory or (lambda path: SqliteKnowledgeStore(str(path)))
@@ -376,6 +379,14 @@ class Gateway:
                 await lease.aclose()
                 raise
         return self._acp_generation.agent
+
+    def _without_native_only(self, tools: list, names: list[str]) -> list:
+        """``tools`` minus ``names``, warning once for each name that matches no tool."""
+        unmatched = set(names) - {tool.name for tool in tools} - self._unmatched_native_only
+        for name in sorted(unmatched):
+            logger.warning("native-only tool %r matches no tool on this turn", name)
+        self._unmatched_native_only |= unmatched
+        return [tool for tool in tools if tool.name not in names]
 
     def _system_tools(self, cfg: Config) -> list:
         if self._tasks is None:
@@ -884,6 +895,7 @@ class Gateway:
         tools.extend(self._system_tools(effective))
         skill_runtime = build_skills_runtime(effective)
         tools.extend(build_skills_install_tools(effective, build_skills_runtime(effective)))
+        tools = self._without_native_only(tools, effective.tools.native_only)
         held_cards = self._catalog.hold()
         plugins = [
             build_skills_plugin(
@@ -899,6 +911,7 @@ class Gateway:
                     tool.name in {"gmail_search", "calendar_list_events", "drive_search"}
                     for tool in tools
                 ),
+                open_questions=_OPEN_QUESTION_TOOLS <= {tool.name for tool in tools},
             ),
         ]
         if BEHAVIOR_GUIDANCE in agent.system_prompt:

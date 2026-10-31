@@ -427,6 +427,7 @@ Every key above also has an env override (these win over `config.yaml`):
 | `AG2ASSISTANT_REPLY_TIMEOUT` | `gateway.reply_timeout_s` |
 | `AG2ASSISTANT_CHAT_TITLES` | `gateway.chat_titles` (`0` turns off the LLM call that names a chat) |
 | `AG2ASSISTANT_SANDBOX` | `tools.sandbox` (`local` / `docker`) |
+| `AG2ASSISTANT_NATIVE_ONLY_TOOLS` | `tools.native_only` (comma-separated tool names to remove from chat, task and ACP turns; for hosted deployments where they can't work. MCP tools use each server's `allowed_tools`; `remember`, `read_compaction_source` and the skill loaders can't be removed this way) |
 | `AG2ASSISTANT_DOCKER_IMAGE` / `AG2ASSISTANT_DOCKER_NETWORK` | Docker sandbox |
 | `AG2ASSISTANT_AGGREGATE_EVERY_N` | `memory.aggregate_every_n_turns` |
 

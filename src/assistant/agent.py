@@ -423,7 +423,7 @@ CAPABILITY_GUIDANCE = (
     "edit them (add subtasks or deliverables, change the objective), reschedule, run "
     "now, cancel, or archive.\n"
     "- Look things up with your system tools instead of needing them in context: list/"
-    "get tasks, list/read past conversations, and list/answer open questions.\n"
+    "get tasks, list/read past conversations{open_questions}.\n"
     "- Answer with a rich information experience where possible: a rich view when a "
     "skill offers one that fits, otherwise well-structured markdown (headings, lists, "
     "tables, links).\n"
@@ -641,7 +641,7 @@ def turn_prompt(
 
 
 def universal_turn_prompt(
-    config: Config, surface: str = "", *, google: bool | None = None
+    config: Config, surface: str = "", *, google: bool | None = None, open_questions: bool = True
 ) -> list[str]:
     """Per-turn prompt for the universal agent: behaviour + capability map + (Google
     when signed in) + the SURFACE it's being addressed on + stable env. It follows the
@@ -653,7 +653,9 @@ def universal_turn_prompt(
     """
     parts = [
         BEHAVIOR_GUIDANCE,
-        CAPABILITY_GUIDANCE,
+        CAPABILITY_GUIDANCE.format(
+            open_questions=", and list/answer open questions" if open_questions else ""
+        ),
         chat_turn_timeout_guidance(config),
         MEMORY_GUIDANCE,
         workspace_guidance(config),  # the universal agent always has the file tools

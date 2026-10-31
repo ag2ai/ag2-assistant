@@ -236,6 +236,15 @@ def test_chat_titles_default_on_and_turn_off_by_file_or_env(paths):
     assert resolve_config({"AG2ASSISTANT_CHAT_TITLES": "1"}, paths).gateway.chat_titles is True
 
 
+def test_native_only_tools_come_from_file_or_env(paths):
+    assert resolve_config({}, paths).tools.native_only == []
+    env = {"AG2ASSISTANT_NATIVE_ONLY_TOOLS": " ask_user, ,list_folders,"}
+    assert resolve_config(env, paths).tools.native_only == ["ask_user", "list_folders"]
+    write_yaml(paths.config_yaml, {"tools": {"native_only": ["describe_settings"]}})
+    assert resolve_config({}, paths).tools.native_only == ["describe_settings"]
+    assert resolve_config(env, paths).tools.native_only == ["ask_user", "list_folders"]
+
+
 def test_malformed_config_yaml_reads_as_empty(paths):
     paths.config_yaml.parent.mkdir(parents=True, exist_ok=True)
     paths.config_yaml.write_text("{{{ not yaml")

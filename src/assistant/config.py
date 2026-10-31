@@ -163,6 +163,8 @@ class ToolsConfig(BaseModel):
     docker_image: str = "python:3.12-slim"
     # "bridge" allows outbound network (pip, fetches); "none" is strictest.
     docker_network: str = "bridge"
+    # Tool names removed from every turn (env: AG2ASSISTANT_NATIVE_ONLY_TOOLS, comma-separated).
+    native_only: list[str] = Field(default_factory=list)
 
 
 class MemoryConfig(BaseModel):
@@ -379,6 +381,8 @@ def apply_env_overrides(cfg: Config, env: Mapping[str, str]) -> None:
         cfg.tools.docker_image = v
     if v := get("AG2ASSISTANT_DOCKER_NETWORK"):
         cfg.tools.docker_network = v
+    if v := get("AG2ASSISTANT_NATIVE_ONLY_TOOLS"):
+        cfg.tools.native_only = [name.strip() for name in v.split(",") if name.strip()]
     if v := get("AG2ASSISTANT_AGGREGATE_EVERY_N"):
         try:
             cfg.memory.aggregate_every_n_turns = int(v)
