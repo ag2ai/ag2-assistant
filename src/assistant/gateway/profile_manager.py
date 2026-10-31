@@ -315,7 +315,7 @@ class ProfileManager:
         self._memory = memory
         self._persist = persist
         self._agent_factory = agent_factory
-        # A host's async (chat_id, event) callbacks, told every event on every chat stream.
+        # A host's async (profile_id, chat_id, event) callbacks, told every event on every chat stream.
         self._stream_observers = tuple(stream_observers)
         self._channel_factory = channel_factory or channels.get_channel
         self._title_factory = title_factory
@@ -417,7 +417,7 @@ class ProfileManager:
             mirror=self.router.mirror,
             questions=self.router,
             agent_factory=self._agent_factory,
-            stream_observers=self._stream_observers,
+            stream_observers=[partial(observer, meta.id) for observer in self._stream_observers],
             title_factory=self._title_factory,
             summary_factory=self._summary_factory,
             model_factory=self._model_factory,

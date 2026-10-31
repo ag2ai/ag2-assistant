@@ -22,11 +22,11 @@ class Seen:
     def __init__(self):
         self.events = []
 
-    async def __call__(self, chat_id, event):
-        self.events.append((chat_id, event))
+    async def __call__(self, profile_id, chat_id, event):
+        self.events.append((profile_id, chat_id, event))
 
     def of(self, chat_id):
-        return [event for seen, event in self.events if seen == chat_id]
+        return [event for _, seen, event in self.events if seen == chat_id]
 
 
 async def test_an_observer_sees_a_turn_on_its_chat(paths):
@@ -54,11 +54,27 @@ async def test_a_chat_is_observed_once_across_turns(paths):
     assert sum(isinstance(event, TurnStarted) for event in seen.of("room")) == 2
 
 
+async def test_two_profiles_sharing_a_chat_id_stay_apart(paths):
+    seen = Seen()
+    manager, work = _manager(paths, seen)
+    home = ProfileRegistry(paths).create_profile("Home", "#109e91").id
+    await manager.start()
+    try:
+        await manager.get(work).gateway.send_message("one", chat_id="default")
+        await manager.get(home).gateway.send_message("two", chat_id="default")
+    finally:
+        await manager.close()
+    turns = [
+        (profile, chat) for profile, chat, event in seen.events if isinstance(event, TurnStarted)
+    ]
+    assert turns == [(work, "default"), (home, "default")]
+
+
 async def test_an_observer_can_answer_a_question_it_sees(paths):
     runtimes = []
     answers = []
 
-    async def auto_answer(_chat_id, event):
+    async def auto_answer(_profile_id, _chat_id, event):
         if isinstance(event, InquiryRaised):
             gateway = runtimes[0].gateway
             answers.append(
@@ -90,7 +106,7 @@ async def test_an_event_outside_a_turn_reaches_the_observer(paths):
 
 
 async def test_a_failing_observer_leaves_the_turn_and_the_next_observer_alone(paths):
-    async def broken(_chat_id, _event):
+    async def broken(_profile_id, _chat_id, _event):
         raise RuntimeError("log is down")
 
     seen = Seen()
