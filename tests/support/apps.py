@@ -69,6 +69,7 @@ def make_manager(
     paths=None,
     *,
     env=None,
+    task_outcome=None,
     persist=False,
     memory=False,
     agent_factory=None,
@@ -78,7 +79,6 @@ def make_manager(
     made=None,
     model_factory=None,
     environment_factory=None,
-    task_outcome=None,
 ):
     """A ProfileManager over ``paths`` (or the HOME-isolated layout) whose every
     network-touching collaborator is a fake unless the caller injects its own.
