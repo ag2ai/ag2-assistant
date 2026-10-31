@@ -538,10 +538,9 @@ def stable_environment(config: Config) -> str:
     now = datetime.now().astimezone()
     offset = now.strftime("%z")
     lines = [
-        "- A user message may end with [Sent: <date, time> UTC]. A message with no stamp "
-        "was sent in the same minute as the one before it. The most recent stamp is the "
-        "current UTC time, to the minute. Convert times to the user's time zone when you "
-        "show them; ask if you don't know it. Don't repeat stamps in replies.",
+        "- A user message may end with [Sent: <date, time> UTC]. The most recent stamp is "
+        "the current UTC time, to the minute. Convert times to the user's time zone when "
+        "you show them; ask if you don't know it. Don't repeat stamps in replies.",
         f"- Tasks fire on this clock: {now:%Z} (UTC{offset[:3]}:{offset[3:]}).",
     ]
     if config.agent.location:
