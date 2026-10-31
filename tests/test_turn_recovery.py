@@ -104,6 +104,31 @@ def test_repair_inserts_result_directly_after_its_response():
     assert repaired[2] is later
 
 
+def test_repair_wraps_a_loose_result_instead_of_calling_it_interrupted():
+    loose = ToolResultEvent(parent_id="call_1", name="read_file", result=ToolResult("sent"))
+    later = _response_with_calls()
+    repaired = repair_dangling_tool_calls([_response_with_calls("call_1"), loose, later])
+
+    assert repaired is not None
+    assert isinstance(repaired[1], ToolResultsEvent)
+    assert repaired[1].results == [loose]
+
+
+def test_repair_keeps_the_note_for_the_unfinished_call_of_a_batch():
+    loose = ToolResultEvent(parent_id="call_a", name="read_file", result=ToolResult("done"))
+    repaired = repair_dangling_tool_calls([_response_with_calls("call_a", "call_b"), loose])
+
+    finished, unfinished = repaired[1].results
+    assert finished is loose
+    assert "interrupted" in unfinished.result.parts[0].content
+
+
+def test_repair_leaves_a_repaired_final_turn_alone():
+    loose = ToolResultEvent(parent_id="call_1", name="read_file", result=ToolResult("sent"))
+    repaired = repair_dangling_tool_calls([_response_with_calls("call_1"), loose])
+    assert repair_dangling_tool_calls(repaired) is None
+
+
 def test_repair_marks_synthetic_result_as_interrupted():
     """The synthetic result tells the model the call was interrupted (not a real output)."""
     repaired = repair_dangling_tool_calls([_response_with_calls("call_1")])
