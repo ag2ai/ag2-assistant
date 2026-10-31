@@ -136,6 +136,10 @@ are assembled by `turn_prompt()` (chat) and `universal_turn_prompt()` (gateway/t
 `environment_context()` (date/time/location). Tools, memory policies, observers, and
 the HITL hook are attached at construction. See §6 for the full agent inventory.
 
+`Gateway.record_in_chat(chat_id, text)` adds a message to a Chat with no model call: an agent
+message on the stream and in the display transcript, so the next turn reads it. It waits for a
+running turn on that Chat, so it can't be called from inside one.
+
 ### 5.3 Tools & capabilities — `src/assistant/tools/`
 
 `build_agent_tools()` selects tools by **capability** (`web`, `code`, `files`,

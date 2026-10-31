@@ -32,6 +32,7 @@ from ag2.events import (
     CompactionCompleted,
     CompactionFailed,
     CompactionStarted,
+    ModelMessage,
     ModelMessageChunk,
     ModelRequest,
     ModelResponse,
@@ -115,6 +116,8 @@ from assistant.voice import build_voice_agent
 _TRANSCRIPT_PREFIX = "/transcript/"
 
 logger = logging.getLogger("ag2assistant.gateway")
+
+_NO_EARLIER_MESSAGES = "(This chat has no earlier messages.)"
 
 # Bounds for the on-demand "Mentioned in N threads" scan (ADR 0014): a huge chat
 # history can't stall the request (streams examined) nor flood the popover (rows
@@ -1347,6 +1350,30 @@ class Gateway:
 
     def _transcript_path(self, chat_id: str) -> str:
         return f"{_TRANSCRIPT_PREFIX}{quote(chat_id, safe='')}.json"
+
+    async def record_in_chat(self, chat_id: str, text: str) -> None:
+        """Add ``text`` to a Chat as the agent's message, with no model call. Waits for a
+        running turn, so never call it from inside a turn of the same Chat."""
+        async with self._chat_lock(chat_id), self.event_transaction() as emit:
+            stream = await self.stream_for(chat_id)
+            if not any(isinstance(e, ModelRequest) for e in await stream.history.get_events()):
+                await emit(chat_id, ModelRequest.ensure_request([_NO_EARLIER_MESSAGES]))
+            await emit(chat_id, ModelResponse(ModelMessage(text)))
+            try:
+                await self._append_recorded_message(chat_id, text)
+            except Exception as exc:
+                log_suppressed("recorded message transcript", exc, chat_id=chat_id)
+
+    async def _append_recorded_message(self, chat_id: str, text: str) -> None:
+        if self._writer is None or self._event_store is None:
+            return
+        path = self._transcript_path(chat_id)
+        doc: dict = {"chat_id": chat_id, "messages": [], "title": None}
+        if await self._event_store.exists(path):
+            doc = json.loads(await self._event_store.read(path) or "")
+        doc["messages"] = [*doc.get("messages", []), {"role": "agent", "text": text}]
+        doc["updated"] = datetime.now().astimezone().isoformat()
+        await self._event_store.write(path, json.dumps(doc))
 
     async def _ensure_transcript_stub(self, chat_id, user_text, chat_model: str = "") -> None:
         """Write a minimal transcript doc as soon as a user message is accepted, so
