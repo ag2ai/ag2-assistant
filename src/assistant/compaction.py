@@ -7,6 +7,7 @@ import re
 from collections.abc import Sequence
 from copy import copy
 from dataclasses import asdict, dataclass, field, is_dataclass
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from ag2 import Agent, tool
@@ -53,6 +54,31 @@ def event_ref(event: BaseEvent) -> str:
 def checkpoint_root(stream_id: object) -> str:
     key = hashlib.sha256(str(stream_id).encode()).hexdigest()
     return f"/compaction/{key}/"
+
+
+class RetainedSkillRequest(ModelRequest):
+    """Skill text the guard adds to one request; it has no send time of its own."""
+
+
+def _sent_at(event: ModelRequest) -> str:
+    sent = datetime.fromtimestamp(event.created_at, timezone.utc)
+    return f"{sent:%a} {sent.day} {sent:%b %Y %H:%M} UTC"
+
+
+def stamp_requests(events: Sequence[BaseEvent]) -> list[BaseEvent]:
+    """Copy of `events` with `[Sent: ...]` on each user message whose minute differs
+    from the previous one's, derived only from `created_at` so every request matches."""
+    stamped: list[BaseEvent] = []
+    previous = ""
+    for event in events:
+        if isinstance(event, ModelRequest) and not isinstance(event, RetainedSkillRequest):
+            sent = _sent_at(event)
+            if sent != previous:
+                request = copy(event)
+                request.parts = [*event.parts, TextInput(content=f"[Sent: {sent}]")]
+                event, previous = request, sent
+        stamped.append(event)
+    return stamped
 
 
 class SkillTextLoaded(BaseEvent):
@@ -417,7 +443,7 @@ class CheckpointCompact:
             ):
                 continue
             protected.append(
-                ModelRequest.ensure_request(
+                RetainedSkillRequest.ensure_request(
                     [
                         f'<retained_skill name="{name}" resource="SKILL.md">\n'
                         f"{loaded.text}\n</retained_skill>"
@@ -926,7 +952,7 @@ class BudgetedClient:
                 tools=options["tools"],
                 response_schema=options.get("response_schema"),
             )
-        return await self.client(messages, context, **options)
+        return await self.client(stamp_requests(messages), context, **options)
 
 
 class CompactingAgent(Agent):

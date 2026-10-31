@@ -69,8 +69,9 @@ class CheckpointTestClient:
 class FakeReply:
     """Minimal stand-in for AgentReply."""
 
-    def __init__(self, body: str):
+    def __init__(self, body: str | None):
         self.body = body
+        self.response = ModelResponse(None if body is None else ModelMessage(body))
 
 
 class FakeRun:

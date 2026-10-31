@@ -6,6 +6,7 @@ from assistant.agent import (
     chat_turn_timeout_guidance,
     environment_context,
     focuses_guidance,
+    stable_environment,
     turn_prompt,
     universal_memory_guidance,
     universal_turn_prompt,
@@ -33,6 +34,21 @@ def test_environment_context_omits_location_when_unset(paths):
     config.agent.location = None  # independent of any AG2ASSISTANT_LOCATION env var
     ctx = environment_context(config)
     assert "User location" not in ctx
+
+
+def test_stable_environment_names_no_time_and_stays_the_same(paths):
+    config = Config.for_paths(paths)
+    config.agent.location = "Sydney, Australia"
+    note = stable_environment(config)
+    assert "Current date and time" not in note
+    assert "Sydney, Australia" in note
+    assert "UTC" in note
+
+
+def test_universal_turn_prompt_carries_no_clock(paths):
+    prompt = "\n".join(universal_turn_prompt(Config.for_paths(paths), google=False))
+    assert "Current date and time" not in prompt
+    assert "[Sent:" in prompt
 
 
 def test_chat_turn_timeout_guidance_uses_configured_budget(paths):

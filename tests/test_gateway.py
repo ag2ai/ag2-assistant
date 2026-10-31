@@ -8,6 +8,7 @@ around a ``ProfileManager`` with one profile and routes live under
 
 import asyncio
 import base64
+import json
 from concurrent.futures import ThreadPoolExecutor
 
 import ag2.testing
@@ -31,9 +32,9 @@ from assistant.agent import model_config
 from assistant.codex_auth import CodexAuth
 from assistant.config import Config, load_config, write_yaml
 from assistant.connections import ConnectionStore
-from assistant.events import Attachment, TurnCancelled
+from assistant.events import Attachment, TurnCancelled, TurnFailed
 from assistant.gateway.app import _allowed_origins, _origin_ok, create_app
-from assistant.gateway.core import Gateway
+from assistant.gateway.core import EMPTY_TURN_REPLY, Gateway
 from assistant.gateway.uploads import decode_attachments
 from assistant.hitl import GatewayAsker, HitlServer
 from assistant.hitl.base import Question
@@ -87,6 +88,62 @@ async def fake_gateway(paths):
     await gw.start()
     yield gw
     await gw.close()
+
+
+class SilentAgent(FakeAgent):
+    """A turn that finishes with no text, as a thinking-only model response does."""
+
+    async def ask(self, *msg, stream=None, **kwargs) -> FakeReply:
+        return FakeReply(None)
+
+
+async def test_a_turn_with_no_text_returns_the_fallback_and_reports_a_failure(paths):
+    gw = _gateway(paths, agent=SilentAgent())
+    await gw.start()
+    failures = []
+    stream = await gw.stream_for("s1")
+    stream.where(TurnFailed).subscribe(lambda event: failures.append(event.error))
+    try:
+        assert await gw.send_message("hello", chat_id="s1") == EMPTY_TURN_REPLY
+    finally:
+        await gw.close()
+    assert failures == [EMPTY_TURN_REPLY]
+
+
+async def test_a_turn_with_no_text_saves_the_fallback_to_the_transcript(paths):
+    gw = _gateway(paths, agent=SilentAgent())
+    await gw.start()
+    try:
+        await gw.send_message("hello", chat_id="s1")
+        turns = await gw.transcript("s1")
+    finally:
+        await gw.close()
+    assert turns[-1] == {"role": "agent", "text": EMPTY_TURN_REPLY}
+
+
+async def test_a_transcript_saved_with_a_null_reply_still_reads(paths):
+    gw = _gateway(paths)
+    await gw.start()
+    try:
+        await gw._event_store.write(
+            gw._transcript_path("s1"),
+            json.dumps(
+                {
+                    "chat_id": "s1",
+                    "messages": [
+                        {"role": "user", "text": "hello"},
+                        {"role": "agent", "text": None},
+                    ],
+                }
+            ),
+        )
+        turns = await gw.transcript("s1")
+    finally:
+        await gw.close()
+    assert turns == [
+        {"role": "user", "text": "hello"},
+        {"role": "agent", "text": EMPTY_TURN_REPLY},
+    ]
 
 
 async def test_send_message_returns_reply(fake_gateway):

@@ -24,6 +24,11 @@ from tests.support.apps import compacting_agent
 from tests.support.fakes import CheckpointTestConfig, checkpoint_json
 
 
+def test_the_profile_prompt_puts_the_growing_conversation_before_the_profile():
+    prompt = build_profile_prompt("cli")
+    assert prompt.index("{events}") < prompt.index("{existing}")
+
+
 def test_profile_prompt_includes_platform():
     prompt = build_profile_prompt("telegram")
     assert "telegram" in prompt

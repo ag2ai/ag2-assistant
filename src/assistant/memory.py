@@ -192,11 +192,11 @@ OUTPUT FORMAT — this is strict:
   (no "An analysis of the conversation shows…", no "The profile remains
   unchanged."). Return the document only — nothing before the first heading.
 
-Existing profile:
-{{existing}}
-
 New conversation:
 {{events}}
+
+Existing profile:
+{{existing}}
 
 Return the updated profile document only (headings and bullets, no commentary)."""
 
