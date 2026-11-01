@@ -9,8 +9,8 @@ interrupted turn would poison the session forever.
 Two counterparts here:
 
 - :func:`repair_dangling_tool_calls` (and the stream-level
-  :func:`repair_stream_history`) heal a broken history by inserting a synthetic
-  "interrupted" result after every unanswered call.
+  :func:`repair_stream_history`) heal a broken history by wrapping each unanswered
+  call's real result, or a synthetic "interrupted" result when it has none.
 - :func:`wait_reply` bounds a turn like ``asyncio.wait_for``, but its clock
   pauses while a human-in-the-loop prompt is open, and restarts once the human
   answers — waiting on the user must not burn the turn budget (the old fixed
@@ -40,7 +40,10 @@ _INTERRUPTED_NOTE = (
 
 
 def repair_dangling_tool_calls(events):
-    """Insert synthetic results after tool calls that never got one.
+    """Give every tool call a wrapped result, right after the call.
+
+    A call with a loose ``ToolResultEvent`` keeps that real result: a ``final=True`` tool
+    leaves one, and most mappers read only the wrapper. Any other call gets the note.
 
     Returns the repaired list, or ``None`` when the history is already valid
     (so callers can skip a no-op ``history.replace``; the input is never
@@ -50,9 +53,12 @@ def repair_dangling_tool_calls(events):
     """
     events = events if isinstance(events, list) else list(events)
     answered: set[str] = set()
+    loose: dict[str, ToolResultEvent] = {}
     for event in events:
         if isinstance(event, ToolResultsEvent):
             answered.update(r.parent_id for r in event.results)
+        elif isinstance(event, ToolResultEvent):
+            loose[event.parent_id] = event
 
     insertions = []  # (index of the dangling response, synthetic results event)
     for i, event in enumerate(events):
@@ -65,7 +71,8 @@ def repair_dangling_tool_calls(events):
                     i,
                     ToolResultsEvent(
                         [
-                            ToolResultEvent(
+                            loose.get(c.id)
+                            or ToolResultEvent(
                                 parent_id=c.id, name=c.name, result=ToolResult(_INTERRUPTED_NOTE)
                             )
                             for c in dangling
