@@ -22,6 +22,8 @@ import socket
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from functools import partial
 
+from ag2.plugin import Plugin
+
 from assistant import channels, profiles
 from assistant.acp.approvals import install_owner_side_approvals
 from assistant.acp.auth import choose_auth
@@ -126,6 +128,7 @@ class ProfileRuntime:
         summary_factory: Callable | None = None,
         model_factory: Callable | None = None,
         environment_factory: Callable | None = None,
+        plugins: Iterable[Plugin] = (),
     ) -> None:
         self.meta = meta
         self.paths = paths
@@ -140,6 +143,7 @@ class ProfileRuntime:
         self._summary_factory = summary_factory
         self._model_factory = model_factory
         self._environment_factory = environment_factory
+        self._plugins = tuple(plugins)  # AG2 plugins added to every turn of every profile
         self._config: Config | None = None
         self.gateway: Gateway | None = None
         self.tasks: TaskService | None = None
@@ -252,6 +256,7 @@ class ProfileRuntime:
             summary_factory=self._summary_factory,
             model_factory=self._model_factory,
             environment_factory=self._environment_factory,
+            plugins=self._plugins,
         )
         await self.gateway.start()
         self.gateway.set_mirror(self._mirror)  # completed turns -> the Attached Peer
@@ -295,6 +300,7 @@ class ProfileManager:
         summary_factory: Callable | None = None,
         model_factory: Callable | None = None,
         environment_factory: Callable | None = None,
+        plugins: Iterable[Plugin] = (),
     ) -> None:
         # Install-level layout + config; the pair always agrees. Given neither, both come
         # from the entry-point boundary so ``serve`` needs no wiring; given ``paths``, the
@@ -316,6 +322,7 @@ class ProfileManager:
         self._summary_factory = summary_factory
         self._model_factory = model_factory
         self._environment_factory = environment_factory
+        self._plugins = tuple(plugins)  # AG2 plugins added to every turn of every profile
         self._runtimes: dict[str, ProfileRuntime] = {}
         # Connection id → the live install-level adapter (ADR 0022). One per registered
         # Connection, so two bots of one platform run side by side.
@@ -415,6 +422,7 @@ class ProfileManager:
             summary_factory=self._summary_factory,
             model_factory=self._model_factory,
             environment_factory=self._environment_factory,
+            plugins=self._plugins,
         )
         await runtime.start()
         self.boot_errors.pop(meta.id, None)

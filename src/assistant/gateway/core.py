@@ -19,7 +19,7 @@ import copy
 import json
 import logging
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from urllib.parse import quote
@@ -236,6 +236,7 @@ class Gateway:
         history_factory: Callable | None = None,
         subscription_auth: CodexAuth | None = None,
         google: GoogleAuth | None = None,
+        plugins: Iterable[Plugin] = (),
     ) -> None:
         self._config = config or load_config()
         self._memory = memory
@@ -248,6 +249,7 @@ class Gateway:
         self._agent_factory = agent_factory or create_agent
         self._model_factory = model_factory
         self._environment_factory = environment_factory or docker_environment
+        self._plugins = tuple(plugins)
         self._history_factory = history_factory or (lambda path: SqliteKnowledgeStore(str(path)))
         self._subscription_auth = subscription_auth or CodexAuth(self._config.paths)
         self._google = google or GoogleAuth(self._config.paths)
@@ -902,7 +904,8 @@ class Gateway:
         plugins = [
             build_skills_plugin(
                 effective, skill_runtime, catalog=held_cards, snapshot=True, drafts=self.card_drafts
-            )
+            ),
+            *self._plugins,
         ]
         guidance = [
             effective.agent.system_prompt,
@@ -1904,6 +1907,7 @@ def build_gateway(
     summary_factory: Callable | None = None,
     model_factory: Callable | None = None,
     environment_factory: Callable | None = None,
+    plugins: Iterable[Plugin] = (),
 ) -> "tuple[Gateway, TaskService]":
     """Build a Gateway and TaskService sharing a Profile configuration resolver."""
     config = config or load_config()
@@ -1921,5 +1925,6 @@ def build_gateway(
         title_factory=title_factory,
         model_factory=model_factory,
         environment_factory=environment_factory,
+        plugins=plugins,
     )
     return gateway, tasks
