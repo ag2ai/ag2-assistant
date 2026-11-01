@@ -163,6 +163,8 @@ class ToolsConfig(BaseModel):
     docker_image: str = "python:3.12-slim"
     # "bridge" allows outbound network (pip, fetches); "none" is strictest.
     docker_network: str = "bridge"
+    # Remove the tools that only work in the native app (env: AG2ASSISTANT_DISABLE_NATIVE_TOOLS).
+    disable_native: bool = False
 
 
 class MemoryConfig(BaseModel):
@@ -379,6 +381,8 @@ def apply_env_overrides(cfg: Config, env: Mapping[str, str]) -> None:
         cfg.tools.docker_image = v
     if v := get("AG2ASSISTANT_DOCKER_NETWORK"):
         cfg.tools.docker_network = v
+    if v := get("AG2ASSISTANT_DISABLE_NATIVE_TOOLS"):
+        cfg.tools.disable_native = v.strip().lower() not in {"0", "false", "no", "off"}
     if v := get("AG2ASSISTANT_AGGREGATE_EVERY_N"):
         try:
             cfg.memory.aggregate_every_n_turns = int(v)

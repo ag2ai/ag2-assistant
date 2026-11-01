@@ -427,6 +427,7 @@ Every key above also has an env override (these win over `config.yaml`):
 | `AG2ASSISTANT_REPLY_TIMEOUT` | `gateway.reply_timeout_s` |
 | `AG2ASSISTANT_CHAT_TITLES` | `gateway.chat_titles` (`0` turns off the LLM call that names a chat) |
 | `AG2ASSISTANT_SANDBOX` | `tools.sandbox` (`local` / `docker`) |
+| `AG2ASSISTANT_DISABLE_NATIVE_TOOLS` | `tools.disable_native` (default `false`; `true` removes the tools that only work in the native app from chat, task and ACP turns: `ask_user`, `answer_question`, `list_open_questions`, `describe_settings`, `describe_integrations`, `list_coding_agents`, `install_skill`, `remove_skill`, `search_skills`, `list_folders`) |
 | `AG2ASSISTANT_DOCKER_IMAGE` / `AG2ASSISTANT_DOCKER_NETWORK` | Docker sandbox |
 | `AG2ASSISTANT_AGGREGATE_EVERY_N` | `memory.aggregate_every_n_turns` |
 

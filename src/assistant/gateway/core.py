@@ -113,6 +113,18 @@ from assistant.usage import UsageLedger
 from assistant.voice import build_voice_agent
 
 _TRANSCRIPT_PREFIX = "/transcript/"
+_NATIVE_ONLY_TOOLS = {
+    "ask_user",
+    "answer_question",
+    "list_open_questions",
+    "describe_settings",
+    "describe_integrations",
+    "list_coding_agents",
+    "install_skill",
+    "remove_skill",
+    "search_skills",
+    "list_folders",
+}
 
 logger = logging.getLogger("ag2assistant.gateway")
 
@@ -884,6 +896,8 @@ class Gateway:
         tools.extend(self._system_tools(effective))
         skill_runtime = build_skills_runtime(effective)
         tools.extend(build_skills_install_tools(effective, build_skills_runtime(effective)))
+        if effective.tools.disable_native:
+            tools = [tool for tool in tools if tool.name not in _NATIVE_ONLY_TOOLS]
         held_cards = self._catalog.hold()
         plugins = [
             build_skills_plugin(
@@ -899,6 +913,7 @@ class Gateway:
                     tool.name in {"gmail_search", "calendar_list_events", "drive_search"}
                     for tool in tools
                 ),
+                open_questions=not effective.tools.disable_native,
             ),
         ]
         if BEHAVIOR_GUIDANCE in agent.system_prompt:
