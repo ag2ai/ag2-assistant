@@ -130,6 +130,7 @@ class Run:
     summary: str = ""  # one-line outcome (cheap-model distilled)
     error: str | None = None
     seen_at: str | None = None  # drives the unread highlight
+    delivery_error: str | None = None  # why the outcome never reached its destination
 
     @property
     def stream_id(self) -> str:

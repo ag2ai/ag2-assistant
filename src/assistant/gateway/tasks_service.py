@@ -224,6 +224,7 @@ class TaskService:
         self._stopping: set[str] = set()  # run ids being user-stopped
         self._gateway: "Gateway | None" = None
         self._notify = None  # async (platform, chat_id, text) -> None
+        self._outcome_handler = None  # async (task, text, *, failed, run_id) -> bool
         self._emit = None  # async (chat_id, event) -> None
         self._questions = None  # the question mirror: ask(...) / retract(...)
         if self._inquiries is not None:
@@ -240,6 +241,10 @@ class TaskService:
 
     def set_notifier(self, notify) -> None:
         self._notify = notify
+
+    def set_outcome_handler(self, handler) -> None:
+        """Offer each run's outcome to ``handler`` first; True means it was delivered."""
+        self._outcome_handler = handler
 
     def set_emitter(self, emitter) -> None:
         self._emit = emitter
@@ -593,7 +598,7 @@ class TaskService:
             # model call that timed out, a tool that raised. The origin hears it the
             # way it would hear the result, so the owner is not left waiting.
             await self._finish(run_id, RunStatus.FAILED, error=str(exc))
-            await self._deliver(task, _failure_text(exc), failed=True)
+            await self._deliver(task, run_id, _failure_text(exc), failed=True)
             return
         if run_id in self._stopping:  # user Stop → the turn returned "" via TurnCancelled
             await self._finish(run_id, RunStatus.CANCELLED)
@@ -609,7 +614,7 @@ class TaskService:
             # The chat's own agent passes the result on, so it gets the run's reply
             # in full, not the distilled line a channel push gets.
             outcome = (reply or "").strip() or outcome
-        await self._deliver(task, outcome)
+        await self._deliver(task, run_id, outcome)
 
     async def _finish(self, run_id: str, status: str, **fields) -> None:
         self._stopping.discard(run_id)
@@ -654,9 +659,16 @@ class TaskService:
                 n += 1
         return n
 
-    async def _deliver(self, task: Task, text: str, *, failed: bool = False) -> None:
+    async def _deliver(self, task: Task, run_id: str, text: str, *, failed: bool = False) -> None:
         """Push a run's outcome — its result, or why it did not finish — back through
         the Connection the task came from; ``origin_channel`` is that Connection's id."""
+        if self._outcome_handler is not None and text:
+            try:
+                if await self._outcome_handler(task, text, failed=failed, run_id=run_id):
+                    return
+            except Exception as exc:
+                await self._delivery_failed("run outcome handler", task, run_id, exc)
+                return
         if self._notify is None or not task.origin_channel or not task.origin_chat or not text:
             return
         if task.origin_channel == CHAT_ORIGIN:
@@ -669,9 +681,17 @@ class TaskService:
         try:
             await self._notify(task.origin_channel, task.origin_chat, message)
         except Exception as exc:
-            from assistant.observability import log_suppressed
+            await self._delivery_failed("run outcome channel delivery", task, run_id, exc)
 
-            log_suppressed("run outcome channel delivery", exc, task_id=task.id)
+    async def _delivery_failed(self, what: str, task: Task, run_id: str, exc: Exception) -> None:
+        """Log an undelivered outcome and record why on its run."""
+        from assistant.observability import log_suppressed
+
+        log_suppressed(what, exc, task_id=task.id)
+        run = await self._store.get_run(run_id)
+        if run is not None:
+            run.delivery_error = _failure_text(exc)
+            await self._store.save_run(run)
 
     # ---- durable inquiries (HITL) ----
 

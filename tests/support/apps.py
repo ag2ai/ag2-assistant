@@ -69,6 +69,7 @@ def make_manager(
     paths=None,
     *,
     env=None,
+    task_outcome=None,
     persist=False,
     memory=False,
     agent_factory=None,
@@ -88,6 +89,7 @@ def make_manager(
         env=env,
         memory=memory,
         persist=persist,
+        task_outcome=task_outcome,
         agent_factory=agent_factory
         or (create_agent if model_factory is not None else fake_agent_factory()),
         model_factory=model_factory,
