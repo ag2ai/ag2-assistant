@@ -55,6 +55,12 @@ thin renderer that maps event `type` → Svelte component. Custom
 `ag2assistant.events.*` classes round-trip because deserialization resolves the class
 by its fully-qualified name.
 
+A host can watch this stream with `ProfileManager(stream_observers=[...])`. Each is an async
+`(profile_id, chat_id, event)` told every event on every Chat's stream, inside and outside turns.
+Chat ids are per profile, so two profiles can share one. An observer that raises is logged and doesn't affect the turn or the other observers. An observer runs while
+the event is being published, so one that calls back into the Gateway, such as `answer_inquiry`,
+must do so in its own task or it deadlocks.
+
 ---
 
 ## 3. Process & deployment topology

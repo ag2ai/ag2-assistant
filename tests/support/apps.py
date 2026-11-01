@@ -74,6 +74,7 @@ def make_manager(
     memory=False,
     agent_factory=None,
     channel_factory=None,
+    stream_observers=(),
     title_factory=None,
     summary_factory=None,
     made=None,
@@ -92,6 +93,7 @@ def make_manager(
         task_outcome=task_outcome,
         agent_factory=agent_factory
         or (create_agent if model_factory is not None else fake_agent_factory()),
+        stream_observers=stream_observers,
         model_factory=model_factory,
         environment_factory=environment_factory,
         channel_factory=channel_factory or fake_channel_factory(made),

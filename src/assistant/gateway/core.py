@@ -233,6 +233,7 @@ class Gateway:
         config_factory: Callable[[], Config] | None = None,
         agent_factory: Callable | None = None,
         title_factory: Callable | None = None,
+        stream_observers: tuple[Callable, ...] = (),
         model_factory: Callable | None = None,
         environment_factory: Callable | None = None,
         history_factory: Callable | None = None,
@@ -278,6 +279,7 @@ class Gateway:
         # chat_id -> live Stream; plus the log text each one was last read from or written as
         self._streams: dict[str, MemoryStream] = {}
         self._chat_activity: dict[str, ChatActivity] = {}
+        self._stream_observers = stream_observers
         self._stream_locks: dict[str, asyncio.Lock] = {}
         self._synced: dict[str, str | None] = {}
         self._locks: dict[str, asyncio.Lock] = {}
@@ -718,6 +720,16 @@ class Gateway:
                     self._streaming.pop(chat_id, None)
 
             stream.subscribe(collect_chunks, condition=ModelMessageChunk | ModelResponse)
+
+            async def tell_observers(event):
+                for stream_observer in self._stream_observers:
+                    try:
+                        await stream_observer(chat_id, event)
+                    except Exception as exc:
+                        log_suppressed("stream observer", exc, chat_id=chat_id)
+
+            if self._stream_observers:
+                stream.subscribe(tell_observers)
         if self._writer is not None and chat_id not in self._active:
             raw = None
             try:
@@ -1929,6 +1941,7 @@ def build_gateway(
     persist: bool = True,
     config_factory: Callable[[], Config] | None = None,
     agent_factory: Callable | None = None,
+    stream_observers: tuple[Callable, ...] = (),
     title_factory: Callable | None = None,
     summary_factory: Callable | None = None,
     model_factory: Callable | None = None,
@@ -1949,6 +1962,7 @@ def build_gateway(
         config_factory=config_factory,
         agent_factory=agent_factory,
         title_factory=title_factory,
+        stream_observers=stream_observers,
         model_factory=model_factory,
         environment_factory=environment_factory,
         plugins=plugins,
