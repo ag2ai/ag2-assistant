@@ -225,7 +225,7 @@ def _capture_code(state: str, timeout_s: float = 300.0) -> str:
     captured: dict[str, str] = {}
 
     class Handler(http.server.BaseHTTPRequestHandler):
-        def log_message(self, *_):  # silence default stderr logging
+        def log_message(self, format: str, *args: object) -> None:  # silence stderr logging
             pass
 
         def do_GET(self):

@@ -23,10 +23,11 @@ from collections import deque
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 from urllib.parse import quote
 
 from ag2 import Agent
-from ag2.a2ui import A2UIMessageEvent
+from ag2.a2ui.events import A2UIMessageEvent
 from ag2.agent import AgentRun
 from ag2.context import ConversationContext
 from ag2.events import (
@@ -39,6 +40,7 @@ from ag2.events import (
     ModelResponse,
     UsageEvent,
 )
+from ag2.events.conditions import TypeCondition
 from ag2.knowledge import SqliteKnowledgeStore
 from ag2.knowledge.constants import LOG_PREFIX
 from ag2.plugin import Plugin
@@ -365,15 +367,21 @@ class Gateway:
         return self._catalog
 
     @property
-    def folders(self):
+    def folders(self) -> FolderStore | None:
         """This install's Folder/Grant store (the same instance the turn-level
         ``PermissionManager`` resolves against) — so the ``@``-picker's search can
         honor exactly the access the agent's own reads would (ADR 0006/0012)."""
         return self._folders
 
     @property
-    def permissions(self):
+    def permissions(self) -> PermissionStore | None:
         """Install-wide PermissionStore — task routes/service read task-scoped rules."""
+        return self._permissions
+
+    def require_permissions(self) -> PermissionStore:
+        """The install-wide PermissionStore, set between ``start()`` and ``close()``."""
+        if self._permissions is None:
+            raise RuntimeError("Gateway not started")
         return self._permissions
 
     def usage_today(self) -> dict:
@@ -636,7 +644,7 @@ class Gateway:
         current = list(await stream.history.get_events())
         if self._writer is None:
             return current
-        return await self._writer.replay(chat_id, current, self._chat_archive())  # type: ignore[arg-type]
+        return await self._writer.replay(chat_id, current, self._chat_archive())  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
     def streaming_chunks(self, chat_id: str) -> list[ModelMessageChunk]:
         """The chunks of the model message being written now, which the log never keeps."""
@@ -722,11 +730,11 @@ class Gateway:
         # our ids are strings that name those files, so the ignores below have no fix here.
         stream = self._streams.get(chat_id)
         if stream is None:
-            stream = MemoryStream(id=chat_id)  # type: ignore[arg-type]
+            stream = MemoryStream(id=chat_id)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
             # Retain compaction lifecycle events for reconnects and persisted replay.
             stream.subscribe(
                 stream.history.storage.save_event,
-                condition=CompactionStarted | CompactionCompleted | CompactionFailed,
+                condition=TypeCondition(CompactionStarted) | CompactionCompleted | CompactionFailed,
             )
             self._streams[chat_id] = stream
             self._chat_activity[chat_id] = ChatActivity()
@@ -742,7 +750,9 @@ class Gateway:
                 else:
                     self._streaming.pop(chat_id, None)
 
-            stream.subscribe(collect_chunks, condition=ModelMessageChunk | ModelResponse)
+            stream.subscribe(
+                collect_chunks, condition=TypeCondition(ModelMessageChunk) | ModelResponse
+            )
 
             async def tell_observers(event):
                 for stream_observer in self._stream_observers:
@@ -758,11 +768,11 @@ class Gateway:
             try:
                 raw = await self._read_log(chat_id)
                 if chat_id not in self._synced or self._synced[chat_id] != raw:
-                    events = await self._writer.load_current(chat_id)  # type: ignore[arg-type]
+                    events = await self._writer.load_current(chat_id)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
                     await stream.history.replace(events)
                     activity = ChatActivity()
                     for event in await self._writer.replay(
-                        chat_id,  # type: ignore[arg-type]
+                        chat_id,  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
                         events,
                         self._chat_archive(),
                     ):
@@ -798,7 +808,7 @@ class Gateway:
         """Write the stream's events as the chat's log and remember the stored text."""
         assert self._writer is not None
         async with self._log_locks.setdefault(chat_id, asyncio.Lock()):
-            await self._writer.persist(chat_id, list(await stream.history.get_events()))  # type: ignore[arg-type]
+            await self._writer.persist(chat_id, list(await stream.history.get_events()))  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
             self._synced[chat_id] = await self._read_log(chat_id)
 
     async def _draft_history(self, context: ConversationContext) -> list:
@@ -1358,10 +1368,11 @@ class Gateway:
         agent with a short recent-conversation snapshot for immediate grounding."""
         if self._tasks is None:
             raise RuntimeError("Voice needs the task service")
+        tasks = self._tasks
 
         task_context = ""
         if task_id:
-            node = await self._tasks.get_task(task_id)
+            node = await tasks.get_task(task_id)
             if node:
                 task_context = (
                     "You are currently on a task's page. When the user says "
@@ -1392,7 +1403,7 @@ class Gateway:
 
         async def delegate(request: str) -> str:
             if task_id:
-                node = await self._tasks.get_task(task_id)  # fresh each call
+                node = await tasks.get_task(task_id)  # fresh each call
                 snap = _task_summary(node) if node else f"(task {task_id})"
                 return await _send_capturing(
                     request,
@@ -1419,7 +1430,7 @@ class Gateway:
         return build_voice_agent(
             self._config,
             profile_settings(self._config.data_dir, voice_provider=self._config.voice_provider),
-            self._tasks,
+            tasks,
             delegate,
             voice=voice,
             task_context=task_context,
@@ -1526,7 +1537,7 @@ class Gateway:
         if store is None:
             return
         path = self._transcript_path(chat_id)
-        doc = {"chat_id": chat_id, "messages": [], "updated": ""}
+        doc: dict[str, Any] = {"chat_id": chat_id, "messages": [], "updated": ""}
         if await store.exists(path):
             try:
                 doc = json.loads(await store.read(path) or "")
@@ -1851,7 +1862,7 @@ class Gateway:
                 removed = True
             if self._writer is not None:
                 removed = (
-                    await self._writer.delete(chat_id, self._chat_archive()) or removed  # type: ignore[arg-type]
+                    await self._writer.delete(chat_id, self._chat_archive()) or removed  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
                 )
             self._streams.pop(chat_id, None)
             self._chat_activity.pop(chat_id, None)

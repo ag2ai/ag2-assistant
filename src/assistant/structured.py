@@ -15,7 +15,7 @@ optional feature, never a turn.
 
 import json
 
-from ag2.acp import ACPConfig
+from ag2.acp.config import ACPConfig
 
 
 def _extract_json(text: str) -> str:

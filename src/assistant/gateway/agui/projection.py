@@ -57,7 +57,11 @@ _RENDERED = (CompactionStarted, CompactionCompleted, CompactionFailed, ObserverA
 _ANCHORS = (ModelRequest, ToolResultsEvent, ModelResponse)
 
 _TASK_ENDED = (TaskFailed, TaskCancelled, TaskExpired)
-_ENDED_STATUS = {TaskFailed: "failed", TaskCancelled: "cancelled", TaskExpired: "failed"}
+_ENDED_STATUS: dict[type, str] = {
+    TaskFailed: "failed",
+    TaskCancelled: "cancelled",
+    TaskExpired: "failed",
+}
 
 
 def _ms(event: BaseEvent) -> int:

@@ -14,7 +14,7 @@ process environment. A Config's path fields have no defaults — build one with
 import os
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, model_validator
@@ -272,9 +272,9 @@ class Config(BaseModel):
     tz_unset_in_container: bool = False
 
     @classmethod
-    def for_paths(cls, paths: Paths, **overrides) -> "Config":
+    def for_paths(cls, paths: Paths, **overrides: Any) -> "Config":
         """A Config whose layout comes from ``paths``, every other field defaulted."""
-        base = {
+        base: dict[str, Any] = {
             "paths": paths,
             "root_dir": paths.root,
             "data_dir": paths.root,

@@ -8,6 +8,7 @@ bounded walk skips heavy directories.
 """
 
 import difflib
+import enum
 import os
 import shutil
 import subprocess
@@ -31,8 +32,14 @@ _SKIP_DIRS = {
     ".turbo",
 }
 
-# Sentinel: the file exists but is binary/oversized (no text hunks).
-_BINARY = object()
+
+class _Binary(enum.Enum):
+    """Sentinel: the file exists but is binary/oversized (no text hunks)."""
+
+    BINARY = "binary"
+
+
+_BINARY = _Binary.BINARY
 
 
 @dataclass(frozen=True)
@@ -47,7 +54,7 @@ class FileDiff:
 
 
 # A snapshot maps a directory-relative path to its text content, or `_BINARY`.
-Snapshot = dict[str, "str | object"]
+Snapshot = dict[str, "str | _Binary"]
 
 
 def _git_available() -> bool:
@@ -95,7 +102,7 @@ def _candidate_files(directory: str) -> list[str]:
     return rels
 
 
-def _read(directory: str, rel: str, max_file_bytes: int) -> "str | object | None":
+def _read(directory: str, rel: str, max_file_bytes: int) -> "str | _Binary | None":
     """Return text content, ``_BINARY``, or ``None`` if the file is absent."""
     full = os.path.join(directory, rel)
     try:
@@ -147,23 +154,23 @@ def compute_diff(
         # current content (None if now absent)
         new = _read(directory, rel, max_file_bytes)
 
-        if old is None and new is None:
+        if new is None:
+            if old is None:
+                continue
+            # deleted
+            if old is _BINARY:
+                diffs.append(FileDiff(rel, "deleted", "", 0, 0))
+            else:
+                hunks, added, removed = _unified(rel, old, "")
+                diffs.append(FileDiff(rel, "deleted", hunks, added, removed))
             continue
         if old is None:
             # added
             if new is _BINARY:
                 diffs.append(FileDiff(rel, "added", "", 0, 0))
             else:
-                hunks, added, removed = _unified(rel, "", new)  # type: ignore[arg-type]
+                hunks, added, removed = _unified(rel, "", new)
                 diffs.append(FileDiff(rel, "added", hunks, added, removed))
-            continue
-        if new is None:
-            # deleted
-            if old is _BINARY:
-                diffs.append(FileDiff(rel, "deleted", "", 0, 0))
-            else:
-                hunks, added, removed = _unified(rel, old, "")  # type: ignore[arg-type]
-                diffs.append(FileDiff(rel, "deleted", hunks, added, removed))
             continue
         # both present
         if old is _BINARY or new is _BINARY:
@@ -172,6 +179,6 @@ def compute_diff(
             continue
         if old == new:
             continue
-        hunks, added, removed = _unified(rel, old, new)  # type: ignore[arg-type]
+        hunks, added, removed = _unified(rel, old, new)
         diffs.append(FileDiff(rel, "modified", hunks, added, removed))
     return diffs

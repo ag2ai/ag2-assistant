@@ -11,8 +11,9 @@ logic is unit-testable apart from the typer command.
 """
 
 from ag2 import Agent
-from ag2.acp import ACPAgent, SessionConfig
+from ag2.acp.agent import ACPAgent
 from ag2.acp.auth import AuthProvider
+from ag2.acp.sessions import SessionConfig
 
 from assistant.acp.chats import ChatBackedStorage, ChatTrackingACPAgent
 from assistant.acp.outbound import Outbound

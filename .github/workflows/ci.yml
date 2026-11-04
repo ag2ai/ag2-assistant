@@ -50,6 +50,13 @@ jobs:
         run: uv sync --frozen --extra dev --extra google
       - name: Mypy
         run: uv run mypy
+      # Every step runs even when one before it fails, so one run reports all three.
+      - name: ty
+        if: ${{ !cancelled() }}
+        run: uv run ty check --output-format github
+      - name: Pyrefly
+        if: ${{ !cancelled() }}
+        run: uv run pyrefly check --output-format github
 
   test:
     name: Python tests (${{ matrix.python-version }})

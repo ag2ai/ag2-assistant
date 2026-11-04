@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 from ag2.live import OpenAITTSConfig, gemini
 from ag2.live import openai as oai
+from ag2.live.realtime import RealtimeConfig
 from openai import AsyncOpenAI
 
 from assistant.config import Config
@@ -52,7 +53,7 @@ class VoiceProvider:
     # (config, voice, model, api_key) -> RealtimeConfig. api_key is the resolved key for
     # the active live config (its own per-config key, or the shared provider key); the
     # builders fall back to the provider's env key when it is empty.
-    build_realtime: Callable[[Config, str, str, str], object]
+    build_realtime: Callable[[Config, str, str, str], RealtimeConfig]
     synthesize: Callable[
         [Config, str, str, str], Awaitable[bytes]
     ]  # (config, voice, text, api_key)

@@ -286,7 +286,7 @@ async def recover_checkpoint_history(store, stream_id, current: list[BaseEvent])
     keys = {event_ref(event) for event in current}
     if event_ref(summary) in keys:
         return current
-    source = await EventLogWriter(store).load(record.source_log)  # type: ignore[arg-type]
+    source = await EventLogWriter(store).load(record.source_log)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
     unique = {event_ref(event): event for event in [*source, *current]}
     return sorted(unique.values(), key=lambda event: event.created_at)
 
@@ -304,6 +304,11 @@ class CompactionSession:
     required_skills: set[str] = field(default_factory=set)
     excerpt_sources: set[str] = field(default_factory=set)
     excerpts: dict[str, tuple[int, ToolResultEvent]] = field(default_factory=dict)
+
+
+def _tool_results(events: list[BaseEvent]) -> list[ToolResultEvent]:
+    """The tool results among ``events``; projecting a result always yields a result."""
+    return [event for event in events if isinstance(event, ToolResultEvent)]
 
 
 class CheckpointCompact:
@@ -406,7 +411,7 @@ class CheckpointCompact:
         for event in events:
             if isinstance(event, ToolResultsEvent):
                 group = copy(event)
-                group.results = self.deduplicate(event.results, session)
+                group.results = _tool_results(self.deduplicate(event.results, session))
                 projected.append(group)
             elif isinstance(event, ToolResultEvent):
                 key = session.loads.get(event.parent_id)
@@ -465,8 +470,10 @@ class CheckpointCompact:
         for event in events:
             if isinstance(event, ToolResultsEvent):
                 group = copy(event)
-                group.results = await self.excerpt(
-                    event.results, session, context, available, cached_only=cached_only
+                group.results = _tool_results(
+                    await self.excerpt(
+                        event.results, session, context, available, cached_only=cached_only
+                    )
                 )
                 projected.append(group)
                 continue
@@ -712,7 +719,7 @@ class CheckpointCompact:
             skills=manifests,
             evidence_refs=sorted(references),
         )
-        await EventLogWriter(session.store).persist(source_log, raw)  # type: ignore[arg-type]
+        await EventLogWriter(session.store).persist(source_log, raw)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         root = checkpoint_root(context.stream.id)
         await session.store.write(root + f"checkpoints/{revision}.json", record.model_dump_json())
         await session.store.write(root + "active.json", record.model_dump_json())

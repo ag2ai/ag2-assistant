@@ -4,7 +4,7 @@ from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from ag2 import Agent, tool
 from ag2.assembly import AssemblerMiddleware
@@ -16,6 +16,7 @@ from ag2.config import (
 )
 from ag2.config.gemini import GeminiConfig
 from ag2.middleware import HaltCheckMiddleware, Middleware
+from ag2.middleware.base import MiddlewareFactory
 from ag2.policies import AlertPolicy, ConversationPolicy, WorkingMemoryPolicy
 from ag2.tools import LocalEnvironment, SkillSearchToolkit
 from ag2.tools.skills import LocalRuntime, SkillPlugin
@@ -104,16 +105,20 @@ def model_config(config: Config, model: str | None = None):
     model = model or config.llm.model
     provider = config.llm.provider.lower()
     api_key = config.secret_env.get(KEY_ENV.get(provider, config.llm.api_key_env), "")
-    opts = dict(config.llm.provider_options.get(provider) or {})
+    opts: dict[str, Any] = dict(config.llm.provider_options.get(provider) or {})
     if provider in ACP_PROVIDERS:
         # Coding CLI over ACP: the CLI's own disk login is the auth (no key),
         # and the entry's Advanced options are ACPConfig constructor overrides.
         return acp_provider.BUILDERS[provider](config, model=model, options=opts)
     if provider == "anthropic":
         validate_anthropic_options(opts)
-        return AnthropicConfig(
-            **{"model": model, "api_key": api_key, "streaming": config.llm.streaming, **opts}
-        )
+        anthropic_kwargs: dict[str, Any] = {
+            "model": model,
+            "api_key": api_key,
+            "streaming": config.llm.streaming,
+            **opts,
+        }
+        return AnthropicConfig(**anthropic_kwargs)
     if provider == "openai":
         if config.llm.auth_mode == "subscription":
             # "Sign in with ChatGPT": route requests through the ChatGPT backend on
@@ -132,18 +137,16 @@ def model_config(config: Config, model: str | None = None):
             # set to true") and response storage rejected ("Store must be set to
             # false") — both found live; the Codex CLI sends the same. "api" is our
             # own surface switch and meaningless here.
-            sub_opts = {k: v for k, v in opts.items() if k != "api"}
-            return OpenAIResponsesConfig(
-                **{
-                    **sub_opts,
-                    "model": model,
-                    "api_key": creds.access_token,
-                    "base_url": BACKEND_BASE,
-                    "default_headers": default_headers(creds),
-                    "streaming": True,
-                    "store": False,
-                }
-            )
+            sub_kwargs: dict[str, Any] = {
+                **{k: v for k, v in opts.items() if k != "api"},
+                "model": model,
+                "api_key": creds.access_token,
+                "base_url": BACKEND_BASE,
+                "default_headers": default_headers(creds),
+                "streaming": True,
+                "store": False,
+            }
+            return OpenAIResponsesConfig(**sub_kwargs)
         # OpenAI's Responses API (their preferred surface; also enables the native
         # image_generation tool). A custom base_url flips the default to the Chat
         # Completions API instead: OpenAI-compatible servers (llama.cpp, vLLM,
@@ -154,32 +157,35 @@ def model_config(config: Config, model: str | None = None):
             api = "chat" if opts.get("base_url") else "responses"
         if api not in ("responses", "chat", "chat_completions"):
             raise ValueError(f'openai option "api" must be "responses" or "chat", not {api!r}')
-        kwargs = {"model": model, "api_key": api_key, "streaming": config.llm.streaming, **opts}
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "api_key": api_key,
+            "streaming": config.llm.streaming,
+            **opts,
+        }
         if api == "responses":
             return OpenAIResponsesConfig(**kwargs)
         return OpenAICompletionsConfig(**kwargs)
     if provider == "ollama":
         # Ollama config for the local host; mypy flags AG2's unimplemented Files API protocol.
-        return OllamaConfig(  # type: ignore[abstract]
-            **{
-                "model": model,
-                "host": config.secret_env.get(OLLAMA_BASE_ENV, DEFAULT_OLLAMA_BASE),
-                "streaming": config.llm.streaming,
-                **opts,
-            }
-        )
-    # Generous output budget so long research notes / briefings aren't truncated
-    # mid-sentence. Gemini counts thinking tokens against max_output_tokens, so
-    # this must cover reasoning plus the full report text.
-    return GeminiConfig(
-        **{
+        ollama_kwargs: dict[str, Any] = {
             "model": model,
-            "api_key": api_key,
-            "max_output_tokens": 32768,
+            "host": config.secret_env.get(OLLAMA_BASE_ENV, DEFAULT_OLLAMA_BASE),
             "streaming": config.llm.streaming,
             **opts,
         }
-    )
+        return OllamaConfig(**ollama_kwargs)  # type: ignore[abstract]
+    # Generous output budget so long research notes / briefings aren't truncated
+    # mid-sentence. Gemini counts thinking tokens against max_output_tokens, so
+    # this must cover reasoning plus the full report text.
+    gemini_kwargs: dict[str, Any] = {
+        "model": model,
+        "api_key": api_key,
+        "max_output_tokens": 32768,
+        "streaming": config.llm.streaming,
+        **opts,
+    }
+    return GeminiConfig(**gemini_kwargs)
 
 
 class RefreshingModelConfig:
@@ -209,9 +215,9 @@ class RefreshingModelConfig:
         return self._factory(self._config, self._model).create_files_client()
 
 
-def _build_middleware(config: Config) -> list:
+def _build_middleware(config: Config) -> list[MiddlewareFactory]:
     """The per-agent LLM middleware stack for this provider."""
-    middleware = [
+    middleware: list[MiddlewareFactory] = [
         agent_logging_middleware(),  # per-turn LLM/tool logs → ag2assistant.log
         CitationMarkerMiddleware(),
         # Retry a failed call before it kills the attempt/task. Listed BEFORE

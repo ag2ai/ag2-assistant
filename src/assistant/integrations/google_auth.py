@@ -14,6 +14,7 @@ import json
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from assistant.paths import Paths
 
@@ -96,12 +97,8 @@ def _email_for(creds) -> str:
     try:
         from googleapiclient.discovery import build  # local: optional [google] extra
 
-        profile = (
-            build("gmail", "v1", credentials=creds, cache_discovery=False)
-            .users()
-            .getProfile(userId="me")
-            .execute()
-        )
+        gmail: Any = build("gmail", "v1", credentials=creds, cache_discovery=False)
+        profile = gmail.users().getProfile(userId="me").execute()
         return profile.get("emailAddress", "(unknown)")
     except Exception:
         return "(signed in)"
@@ -268,8 +265,9 @@ class GoogleAuth:
             return True
         return False
 
-    def build_service(self, api: str, version: str):
-        """Build a Google API client (e.g. ('gmail','v1')), or raise if not usable."""
+    def build_service(self, api: str, version: str) -> Any:
+        """Build a Google API client (e.g. ('gmail','v1')), or raise if not usable.
+        ``Any``: a discovery Resource creates its API methods at runtime."""
         try:
             from googleapiclient.discovery import build  # local: optional [google] extra
         except ImportError as exc:

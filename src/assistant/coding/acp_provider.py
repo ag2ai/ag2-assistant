@@ -16,7 +16,7 @@ import json
 import re
 from typing import TYPE_CHECKING
 
-from ag2.acp import ACPConfig, ClaudeCodeConfig, CodexConfig
+from ag2.acp.config import ACPConfig, ClaudeCodeConfig, CodexConfig
 
 from assistant.coding import detect
 from assistant.coding.bridge_client import BridgeClient

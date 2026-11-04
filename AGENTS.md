@@ -36,6 +36,8 @@ require the single `CI status` check — it stays one name as the test matrix gr
 ruff check .                       # lint
 ruff format .                      # auto-format (use --check to verify only)
 mypy                               # typecheck src/assistant (target is configured; pass no path)
+ty check                           # second typecheck over the same target
+pyrefly check                      # third typecheck over the same target
 pytest -m "not integration" -q     # unit tests — no API key needed
 npm --prefix web run check         # typecheck the SPA (svelte-check, strict)
 npm --prefix web test              # SPA unit tests (node:test over web/src/**/*.test.ts)
