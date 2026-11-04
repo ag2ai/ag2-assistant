@@ -13,7 +13,13 @@ from assistant.config import Config, resolve_config
 from assistant.events import TurnStarted, TurnSummarized
 from assistant.gateway.agui.session import ChatRuns, TurnRequest
 from assistant.gateway.core import SUMMARY_QUEUE_MAX, Gateway
-from assistant.turn_summary import parent_of
+from assistant.turn_summary import (
+    OUTCOME_AIM,
+    OUTCOME_MAX,
+    TurnSummary,
+    build_prompt,
+    parent_of,
+)
 from assistant.yamlio import write_yaml
 from tests.support.fakes import FakeReply, FakeRunMixin, fake_agent_factory
 
@@ -361,3 +367,13 @@ def test_the_setting_comes_from_the_file_or_the_env(paths):
     for off in ("0", "false", "no", "off"):
         env = {"AG2ASSISTANT_TURN_SUMMARIES": off}
         assert resolve_config(env, paths).gateway.turn_summaries is False
+
+
+def test_the_prompt_and_schema_aim_the_outcome_below_its_cap():
+    prompt = build_prompt("ask", "answer", [])
+    assert f"at most {OUTCOME_AIM} characters" in prompt
+    assert (
+        f"at most {OUTCOME_AIM}"
+        in TurnSummary.model_json_schema()["properties"]["outcome"]["description"]
+    )
+    assert OUTCOME_AIM < OUTCOME_MAX

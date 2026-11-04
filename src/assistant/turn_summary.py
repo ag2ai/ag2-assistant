@@ -13,6 +13,7 @@ from assistant.structured import aclose_config, ask_structured_reply
 
 TITLE_MAX = 60
 OUTCOME_MAX = 120
+OUTCOME_AIM = 100
 RECENT = 5
 _TEXT_MAX = 2000
 
@@ -25,7 +26,8 @@ class TurnSummary(BaseModel):
         "characters, no quotes, no trailing punctuation)."
     )
     outcome: str = Field(
-        description=f"What was done, in the past tense (at most {OUTCOME_MAX} characters)."
+        description=f"What was done, in the past tense, in one sentence of at most {OUTCOME_AIM} "
+        "characters."
     )
     parent_turn_id: str | None = Field(
         default=None,
@@ -36,7 +38,8 @@ class TurnSummary(BaseModel):
 _PROMPT = (
     "Summarise this chat turn for an activity list.\n"
     "- title: what the user asked for, as a short imperative.\n"
-    "- outcome: what was done, in the past tense.\n"
+    f"- outcome: what was done, in the past tense, in one sentence of at most {OUTCOME_AIM} "
+    "characters.\n"
     "- parent_turn_id: if this turn continues the work of one of the earlier turns "
     "below, that turn's id; otherwise null.\n\n"
     "Earlier turns, oldest first:\n{recent}\n\n"
