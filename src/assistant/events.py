@@ -239,6 +239,17 @@ class TurnCompleted(AssistantEvent):
     turn_id: str = ""
 
 
+class TurnSummarized(AssistantEvent):
+    """A finished Turn's short title and outcome; ``parent_turn_id`` is the first Turn of
+    the work it continues, or None."""
+
+    chat_id: str = Field(kw_only=False)
+    turn_id: str = ""
+    title: str = ""
+    outcome: str = ""
+    parent_turn_id: str | None = None
+
+
 class ChatSeen(AssistantEvent):
     """The user read the outcome of a particular chat Turn."""
 

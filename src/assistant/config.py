@@ -151,6 +151,11 @@ class GatewayConfig(BaseModel):
     reply_timeout_s: float = 600.0
     # Name a chat with one LLM call after its first exchange (env: AG2ASSISTANT_CHAT_TITLES).
     chat_titles: bool = True
+    # Emit a TurnSummarized event after each successful chat turn, from one cheap-model call
+    # (env: AG2ASSISTANT_TURN_SUMMARIES).
+    turn_summaries: bool = False
+    # Wall-clock limit for one turn summary call.
+    turn_summary_timeout_s: float = Field(default=30, gt=0)
 
 
 class ToolsConfig(BaseModel):
@@ -355,6 +360,8 @@ def apply_env_overrides(cfg: Config, env: Mapping[str, str]) -> None:
         cfg.llm.streaming = v.strip().lower() not in {"0", "false", "no", "off"}
     if v := get("AG2ASSISTANT_CHAT_TITLES"):
         cfg.gateway.chat_titles = v.strip().lower() not in {"0", "false", "no", "off"}
+    if v := get("AG2ASSISTANT_TURN_SUMMARIES"):
+        cfg.gateway.turn_summaries = v.strip().lower() not in {"0", "false", "no", "off"}
     if v := get("AG2ASSISTANT_AGGREGATE_MODEL"):
         cfg.llm.aggregate_model = v
     if v := get("AG2ASSISTANT_LLM_TIMEOUT"):

@@ -426,11 +426,26 @@ Every key above also has an env override (these win over `config.yaml`):
 | `AG2ASSISTANT_LOCATION` | `agent.location` |
 | `AG2ASSISTANT_REPLY_TIMEOUT` | `gateway.reply_timeout_s` |
 | `AG2ASSISTANT_CHAT_TITLES` | `gateway.chat_titles` (`0` turns off the LLM call that names a chat) |
+| `AG2ASSISTANT_TURN_SUMMARIES` | `gateway.turn_summaries` (default `false`; see [Turn summaries](#turn-summaries)) |
 | `AG2ASSISTANT_SANDBOX` | `tools.sandbox` (`local` / `docker`) |
 | `AG2ASSISTANT_DISABLE_NATIVE_TOOLS` | `tools.disable_native` (default `false`; `true` removes the tools that only work in the native app from chat, task and ACP turns: `ask_user`, `answer_question`, `list_open_questions`, `describe_settings`, `describe_integrations`, `list_coding_agents`, `install_skill`, `remove_skill`, `search_skills`, `list_folders`) |
 | `AG2ASSISTANT_WEB_FETCH_ALLOW_PRIVATE` | `tools.web_fetch_allow_private` (default `false`; `true` lets `web_fetch` and `fetch_page` reach loopback, private and link-local hosts, such as a dev server on `localhost`) |
 | `AG2ASSISTANT_DOCKER_IMAGE` / `AG2ASSISTANT_DOCKER_NETWORK` | Docker sandbox |
 | `AG2ASSISTANT_AGGREGATE_EVERY_N` | `memory.aggregate_every_n_turns` |
+
+### Turn summaries
+
+Off by default. With `gateway.turn_summaries: true` (or `AG2ASSISTANT_TURN_SUMMARIES=1`),
+each successful chat turn is followed by one call to the cheap model
+(`llm.aggregate_model`), in the background, after the reply. It emits a
+`TurnSummarized` event on the chat's stream: `turn_id` (the id `TurnStarted` carried),
+`title` (at most 60 characters), `outcome` (at most 120) and `parent_turn_id`. The
+parent is the first turn of the earlier work this turn continues, or `null`; the model
+picks it from the chat's last 5 summaries. A chat's summaries run one at a time, in turn
+order. Failed, empty and cancelled turns and task-run chats get none, and a call that
+fails or passes `gateway.turn_summary_timeout_s` (default 30) emits nothing. Stream
+observers receive the event, and AG-UI carries it as a `CUSTOM` event named
+`assistant.events.TurnSummarized`. With the setting off, nothing runs.
 
 ### Switching LLM providers
 
