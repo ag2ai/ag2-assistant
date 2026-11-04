@@ -4,9 +4,10 @@ import pytest
 
 from assistant.agent import model_config
 from assistant.config import Config, resolve_config
-from assistant.config_migrations import migrate_anthropic_sampling
+from assistant.config_migrations import migrate_anthropic_sampling, sampling_marker
 from assistant.gateway.profile_manager import resolve_active_profile
 from assistant.llm_configs import LlmConfigStore
+from assistant.model_params import validate_anthropic_options
 from assistant.profiles import ProfileRegistry
 from assistant.yamlio import read_yaml, write_yaml
 from tests.support.apps import make_manager
@@ -51,8 +52,8 @@ def test_anthropic_sampling_is_removed_once_from_all_persisted_configs(paths):
         global_stamp,
         profile_stamp,
     )
-    assert (paths.root / ".migrations" / "ag2-1.3-anthropic-sampling").exists()
-    assert (profile.parent / ".migrations" / "ag2-1.3-anthropic-sampling").exists()
+    assert sampling_marker(paths.config_yaml).exists()
+    assert sampling_marker(profile).exists()
 
 
 @pytest.mark.parametrize("nested", [False, True])
@@ -79,7 +80,9 @@ def test_migration_adopts_persisted_option_pairs_without_changing_other_models(p
         "max_tokens": 1024,
         **({"extra_body": {"metadata": {"user_id": "u"}}} if nested else {}),
     }
-    assert model_config(resolve_config({}, paths)).max_tokens == 1024
+    resolved = resolve_config({}, paths).llm.provider_options["anthropic"]
+    validate_anthropic_options(resolved)
+    assert resolved["max_tokens"] == 1024
 
 
 def test_migration_preserves_yaml_aliases_owned_by_other_providers(paths):
@@ -121,23 +124,25 @@ def test_bad_yaml_is_retryable_after_repair(paths, content):
     paths.root.mkdir(parents=True)
     paths.config_yaml.write_text(content)
     migrate_anthropic_sampling(paths.config_yaml)
-    assert not (paths.root / ".migrations" / "ag2-1.3-anthropic-sampling").exists()
+    assert not sampling_marker(paths.config_yaml).exists()
     write_yaml(
         paths.config_yaml,
         {"llm": {"provider": "anthropic", "provider_options": {"anthropic": {"temperature": 0.4}}}},
     )
     migrate_anthropic_sampling(paths.config_yaml)
-    assert model_config(resolve_config({}, paths)).provider.value == "anthropic"
+    cfg = resolve_config({}, paths)
+    assert cfg.llm.provider == "anthropic"
+    validate_anthropic_options(cfg.llm.provider_options["anthropic"])
     assert read_yaml(paths.config_yaml)["llm"]["provider_options"]["anthropic"] == {}
-    assert (paths.root / ".migrations" / "ag2-1.3-anthropic-sampling").exists()
+    assert sampling_marker(paths.config_yaml).exists()
 
 
 def test_unreadable_or_missing_config_is_not_marked_complete(paths):
     migrate_anthropic_sampling(paths.config_yaml)
-    assert not (paths.root / ".migrations" / "ag2-1.3-anthropic-sampling").exists()
+    assert not sampling_marker(paths.config_yaml).exists()
     paths.config_yaml.mkdir(parents=True)
     migrate_anthropic_sampling(paths.config_yaml)
-    assert not (paths.root / ".migrations" / "ag2-1.3-anthropic-sampling").exists()
+    assert not sampling_marker(paths.config_yaml).exists()
     paths.config_yaml.rmdir()
     write_yaml(paths.config_yaml, {"llm": {"provider_options": {"anthropic": {"top_k": 5}}}})
     migrate_anthropic_sampling(paths.config_yaml)
@@ -145,7 +150,7 @@ def test_unreadable_or_missing_config_is_not_marked_complete(paths):
 
 
 @pytest.mark.parametrize("archived", [False, True])
-async def test_failed_profile_migration_does_not_block_healthy_profiles(paths, archived):
+async def test_failed_profile_migration_boots_every_profile_and_retries(paths, archived):
     registry = ProfileRegistry(paths)
     healthy = registry.create_profile("Healthy", "#109e91")
     broken = registry.create_profile("Broken", "#ffa000")
@@ -158,14 +163,14 @@ async def test_failed_profile_migration_does_not_block_healthy_profiles(paths, a
     await manager.start()
     try:
         assert manager.gateway_for_profile(healthy.id) is not None
-        assert manager.gateway_for_profile(broken.id) is None
-        assert (broken.id in manager.boot_errors) is not archived
+        assert (manager.gateway_for_profile(broken.id) is None) is archived
+        assert broken.id not in manager.boot_errors
         assert await manager.get(healthy.id).gateway.send_message("hello", chat_id="healthy")
         _, config, _ = resolve_active_profile(healthy.id, paths=paths, env={})
         assert config.data_dir == paths.profile_dir(healthy.id)
     finally:
         await manager.close()
-    assert not (path.parent / ".migrations" / "ag2-1.3-anthropic-sampling").exists()
+    assert not sampling_marker(path).exists()
     path.with_name("config.yaml.tmp").rmdir()
     if archived:
         registry.restore_profile(broken.id)
@@ -185,10 +190,10 @@ def test_interrupted_sampling_migration_resumes_before_recording_completion(path
     write_yaml(profile, data)
     blocked_temp = profile.with_name("config.yaml.tmp")
     blocked_temp.mkdir()
-    with pytest.raises(IsADirectoryError):
-        migrate_anthropic_sampling(paths.config_yaml)
-        migrate_anthropic_sampling(profile)
-    assert not (profile.parent / ".migrations" / "ag2-1.3-anthropic-sampling").exists()
+    migrate_anthropic_sampling(paths.config_yaml)
+    migrate_anthropic_sampling(profile)
+    assert not sampling_marker(profile).exists()
+    assert read_yaml(profile) == data
     assert read_yaml(paths.config_yaml)["llm"]["provider_options"]["anthropic"] == {
         "max_tokens": 500
     }

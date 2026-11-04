@@ -12,7 +12,6 @@ import time
 
 from ag2 import Agent
 from ag2.acp import SessionConfig
-from ag2.knowledge import KnowledgePlugin
 from ag2.middleware import Middleware
 from ag2.testing import TestConfig
 
@@ -29,6 +28,7 @@ from assistant.config import load_config
 from assistant.gateway.app import create_app
 from assistant.gateway.core import Gateway
 from assistant.gateway.profile_manager import ProfileManager, resolve_active_profile
+from assistant.memory import knowledge_plugin
 from assistant.paths import Paths
 from assistant.profiles import ProfileRegistry
 from tests.support.fakes import (
@@ -43,16 +43,7 @@ def compacting_agent(config, knowledge, *, tools=(), **options):
     agent = CompactingAgent(
         "chat",
         config=BudgetedModelConfig(config),
-        plugins=[
-            KnowledgePlugin(
-                store=knowledge.store,
-                expose_tool=knowledge.expose_tool,
-                write_event_log=knowledge.write_event_log,
-                compact=knowledge.compact,
-                compact_trigger=knowledge.compact_trigger,
-            ),
-            *options.pop("plugins", ()),
-        ],
+        plugins=[knowledge_plugin(knowledge), *options.pop("plugins", ())],
         tools=[read_compaction_source, *tools],
         **options,
     )

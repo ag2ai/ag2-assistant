@@ -44,7 +44,12 @@ from ag2.events import (
     is_conversational,
     render_for_prompt,
 )
-from ag2.knowledge import KnowledgeStore, MemoryKnowledgeStore, SqliteKnowledgeStore
+from ag2.knowledge import (
+    KnowledgePlugin,
+    KnowledgeStore,
+    MemoryKnowledgeStore,
+    SqliteKnowledgeStore,
+)
 from ag2.stream import MemoryStream
 from fast_depends.pydantic import PydanticSerializer
 
@@ -416,6 +421,20 @@ def build_compaction_config(
         write_event_log=False,
         compact=CheckpointCompact(limits or CompactionLimits(max_tokens=max_tokens), store),
         compact_trigger=CompactTrigger(),
+    )
+
+
+def knowledge_plugin(knowledge: KnowledgeConfig) -> KnowledgePlugin:
+    """The plugin that registers ``knowledge``'s store, compaction and aggregation."""
+    return KnowledgePlugin(
+        store=knowledge.store,
+        expose_tool=knowledge.expose_tool,
+        write_event_log=knowledge.write_event_log,
+        bootstrap=knowledge.bootstrap,
+        compact=knowledge.compact,
+        compact_trigger=knowledge.compact_trigger,
+        aggregate=knowledge.aggregate,
+        aggregate_trigger=knowledge.aggregate_trigger,
     )
 
 

@@ -20,9 +20,14 @@ def _without_sampling(value):
     return cleaned
 
 
+def sampling_marker(config_path: Path) -> Path:
+    """The file recording that ``config_path`` has been adopted."""
+    return config_path.parent / ".migrations" / "ag2-1.3-anthropic-sampling"
+
+
 def migrate_anthropic_sampling(config_path: Path) -> None:
     """Adopt one config file, recording completion only after a successful read and write."""
-    marker = config_path.parent / ".migrations" / "ag2-1.3-anthropic-sampling"
+    marker = sampling_marker(config_path)
     if marker.exists():
         return
     try:
@@ -67,7 +72,10 @@ def migrate_anthropic_sampling(config_path: Path) -> None:
     except (OSError, ValueError, TypeError, yaml.YAMLError) as exc:
         log_suppressed("reading config for Anthropic sampling migration", exc)
         return
-    if updated != data:
-        write_yaml(config_path, updated)
-    marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text("1\n")
+    try:
+        if updated != data:
+            write_yaml(config_path, updated)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("1\n")
+    except OSError as exc:
+        log_suppressed("writing config for Anthropic sampling migration", exc)

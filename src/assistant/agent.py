@@ -15,7 +15,6 @@ from ag2.config import (
     OpenAIResponsesConfig,
 )
 from ag2.config.gemini import GeminiConfig
-from ag2.knowledge import KnowledgePlugin
 from ag2.middleware import HaltCheckMiddleware, Middleware
 from ag2.policies import AlertPolicy, ConversationPolicy, WorkingMemoryPolicy
 from ag2.tools import LocalEnvironment, SkillSearchToolkit
@@ -44,6 +43,7 @@ from assistant.memory import (
     build_compaction_config,
     build_knowledge_config,
     build_profile_store,
+    knowledge_plugin,
     read_profile_sync,
     remember_note,
 )
@@ -159,7 +159,7 @@ def model_config(config: Config, model: str | None = None):
             return OpenAIResponsesConfig(**kwargs)
         return OpenAICompletionsConfig(**kwargs)
     if provider == "ollama":
-        # AG2's OllamaConfig inherits the unsupported Files API protocol implementation.
+        # Ollama config for the local host; mypy flags AG2's unimplemented Files API protocol.
         return OllamaConfig(  # type: ignore[abstract]
             **{
                 "model": model,
@@ -894,18 +894,7 @@ def create_agent(
         ]
     )
     if knowledge is not None:
-        plugins.append(
-            KnowledgePlugin(
-                store=knowledge.store,
-                expose_tool=knowledge.expose_tool,
-                write_event_log=knowledge.write_event_log,
-                bootstrap=knowledge.bootstrap,
-                compact=knowledge.compact,
-                compact_trigger=knowledge.compact_trigger,
-                aggregate=knowledge.aggregate,
-                aggregate_trigger=knowledge.aggregate_trigger,
-            )
-        )
+        plugins.append(knowledge_plugin(knowledge))
     selected_model = default_model or llm_config
     if compact:
         assert knowledge is not None

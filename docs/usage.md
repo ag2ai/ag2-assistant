@@ -454,7 +454,7 @@ On upgrade, the CLI and gateway remove these settings from saved Global and
 Profile configs once, preserving other options. New Advanced options containing
 them are rejected; Anthropic still offers the output-token limit.
 Each file records its own completion; Profile configs are adopted when the profile
-loads, and unreadable configs remain eligible for retry after repair.
+loads, and configs that cannot be read or rewritten are retried on the next start.
 
 Set the provider; the model and the env var holding its key follow it unless you
 name them too (`openai` → `gpt-5.6-luna` / `OPENAI_API_KEY`, `anthropic` →
