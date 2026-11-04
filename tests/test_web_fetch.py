@@ -12,6 +12,8 @@ from ag2.events import BuiltinToolCallEvent, ToolCallEvent, ToolResultEvent
 from ag2.stream import MemoryStream
 from ag2.tools import WebFetchTool
 
+from assistant.config import Config
+from assistant.tools import build_agent_tools
 from assistant.tools.web_fetch import (
     DEFAULT_TIMEOUT,
     FALLBACK_TIMEOUT,
@@ -19,8 +21,15 @@ from assistant.tools.web_fetch import (
     MAX_TIMEOUT,
     NativeWebFetch,
     PinnedTransport,
+    fallback_web_fetch_tool,
+    fetch_page,
     fetch_url,
     is_public,
+    local_fetch_tools,
+    private_fallback_web_fetch_tool,
+    private_fetch_page,
+    private_web_fetch_tool,
+    web_fetch_tool,
 )
 
 LOOPBACK = "127.0.0.1"
@@ -57,6 +66,11 @@ class Site(BaseHTTPRequestHandler):
             self.send_response(302)
             self.send_header("Set-Cookie", "sid=secret; Path=/")
             self.send_header("Location", target)
+            self.end_headers()
+            return
+        if self.path == "/to-file":
+            self.send_response(302)
+            self.send_header("Location", "file:///etc/passwd")
             self.end_headers()
             return
         if self.path.startswith("/to/"):
@@ -312,3 +326,78 @@ async def test_a_native_fetch_handed_back_to_the_client_runs_ours_on_a_short_bud
 def test_the_native_wrapper_runs_the_guarded_fetcher_by_default():
     result = NativeWebFetch(WebFetchTool())._fetcher("http://127.0.0.1:8800/", timeout=1)
     assert result.startswith("Error fetching http://127.0.0.1:8800/: refused,")
+
+
+# --- tools.web_fetch_allow_private ---
+
+
+@pytest.mark.parametrize("allow_private", [False, True])
+def test_the_switch_decides_whether_a_loopback_server_is_reached(site, allow_private):
+    _, _, fetcher = local_fetch_tools(allow_private)
+    result = fetcher(f"http://127.0.0.1:{site}/page")
+    if allow_private:
+        assert "page on 127.0.0.1" in result
+        assert Site.seen == [("127.0.0.1", "/page", None)]
+    else:
+        assert result == (
+            f"Error fetching http://127.0.0.1:{site}/page: refused, 127.0.0.1 is a private or"
+            " local address (127.0.0.1)"
+        )
+        assert Site.seen == []
+
+
+def test_with_the_switch_on_a_redirect_still_opens_a_checked_connection(site):
+    """Each hop still goes through the backend: a new host is resolved and connected."""
+    resolve = resolver({"first.test": [LOOPBACK], "second.test": [LOOPBACK]})
+    transport = PinnedTransport(resolve=resolve, allow=lambda address: True)
+    result = fetch_url(f"http://first.test:{site}/to/second.test:{site}/page", transport=transport)
+    assert "page on second.test" in result
+    assert resolve.asked == ["first.test", "second.test"]
+
+
+def test_with_the_switch_on_a_redirect_off_http_is_still_refused(site):
+    _, _, fetcher = local_fetch_tools(True)
+    result = fetcher(f"http://127.0.0.1:{site}/to-file")
+    assert result.startswith(f"Error fetching http://127.0.0.1:{site}/to-file:")
+    assert "root:" not in result
+    assert Site.seen == [("127.0.0.1", "/to-file", None)]
+
+
+@pytest.mark.parametrize("allow_private", [False, True])
+def test_the_switch_keeps_the_scheme_check(allow_private):
+    _, _, fetcher = local_fetch_tools(allow_private)
+    assert fetcher("file:///etc/passwd") == (
+        "Error fetching file:///etc/passwd: refused, only http and https URLs can be fetched"
+    )
+
+
+def test_the_agent_gets_the_fetchers_the_profile_config_chooses(paths, site):
+    config = Config.for_paths(paths)
+    assert web_fetch_tool in build_agent_tools("gemini", config=config)
+    config.tools.web_fetch_allow_private = True
+    tools = build_agent_tools("gemini", config=config)
+    assert private_web_fetch_tool in tools and web_fetch_tool not in tools
+
+    native = build_agent_tools("anthropic", builtin={"web_fetch": {}}, config=config)
+    (wrapper,) = [t for t in native if isinstance(t, NativeWebFetch)]
+    assert private_fallback_web_fetch_tool in native
+    assert fallback_web_fetch_tool not in native
+    assert "page on 127.0.0.1" in wrapper._fetcher(f"http://127.0.0.1:{site}/page", timeout=5)
+
+
+async def test_the_private_tools_offer_the_model_the_same_schema():
+    context = ConversationContext(stream=MemoryStream())
+    for default, private in [
+        (web_fetch_tool, private_web_fetch_tool),
+        (fallback_web_fetch_tool, private_fallback_web_fetch_tool),
+    ]:
+        assert await private.schemas(context) == await default.schemas(context)
+
+
+@pytest.mark.parametrize(
+    ("page_fetcher", "reached"), [(fetch_page, False), (private_fetch_page, True)]
+)
+def test_the_fetch_page_fallback_follows_the_same_switch(site, page_fetcher, reached):
+    result = page_fetcher(f"http://127.0.0.1:{site}/page")
+    assert ("page on 127.0.0.1" in result) is reached
+    assert ("private or local address" in result) is not reached

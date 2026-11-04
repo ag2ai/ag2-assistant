@@ -428,6 +428,7 @@ Every key above also has an env override (these win over `config.yaml`):
 | `AG2ASSISTANT_CHAT_TITLES` | `gateway.chat_titles` (`0` turns off the LLM call that names a chat) |
 | `AG2ASSISTANT_SANDBOX` | `tools.sandbox` (`local` / `docker`) |
 | `AG2ASSISTANT_DISABLE_NATIVE_TOOLS` | `tools.disable_native` (default `false`; `true` removes the tools that only work in the native app from chat, task and ACP turns: `ask_user`, `answer_question`, `list_open_questions`, `describe_settings`, `describe_integrations`, `list_coding_agents`, `install_skill`, `remove_skill`, `search_skills`, `list_folders`) |
+| `AG2ASSISTANT_WEB_FETCH_ALLOW_PRIVATE` | `tools.web_fetch_allow_private` (default `false`; `true` lets `web_fetch` and `fetch_page` reach loopback, private and link-local hosts, such as a dev server on `localhost`) |
 | `AG2ASSISTANT_DOCKER_IMAGE` / `AG2ASSISTANT_DOCKER_NETWORK` | Docker sandbox |
 | `AG2ASSISTANT_AGGREGATE_EVERY_N` | `memory.aggregate_every_n_turns` |
 
@@ -560,8 +561,10 @@ Grants/blocks persist in `~/.ag2assistant/permissions.json`.
 fallback) resolves each URL's host, redirects included, and refuses it when any address is
 loopback, private, link-local (including cloud metadata at `169.254.169.254`), shared,
 unspecified or multicast. The request then connects to the address it checked. It does not
-use `HTTP_PROXY`/`HTTPS_PROXY`. A page on your own machine or network can still be read
-with a shell command, which asks first.
+use `HTTP_PROXY`/`HTTPS_PROXY`. To fetch a page on your own machine or network, such as a
+dev server on `localhost`, set `tools.web_fetch_allow_private: true` in `config.yaml` (or
+`AG2ASSISTANT_WEB_FETCH_ALLOW_PRIVATE=true`). It is off by default; with it on, only
+`http`/`https` URLs and the redirect limit still apply.
 
 ## Sandbox — where shell/code runs
 

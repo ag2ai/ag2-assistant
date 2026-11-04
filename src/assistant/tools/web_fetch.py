@@ -149,14 +149,15 @@ def fetch_url(
     timeout: float = DEFAULT_TIMEOUT,
     *,
     transport: httpx.BaseTransport | None = None,
+    allow: Allow = is_public,
 ) -> str:
-    """``web_fetch`` over an injectable transport, a ``PinnedTransport`` by default."""
+    """``web_fetch`` over an injectable transport, a ``PinnedTransport(allow=allow)`` by default."""
     timeout = _bounded_timeout(timeout)
     try:
         if httpx.URL(url).scheme not in ("http", "https"):
             raise RefusedAddress("only http and https URLs can be fetched")
         with httpx.Client(
-            transport=transport or PinnedTransport(),
+            transport=transport or PinnedTransport(allow=allow),
             trust_env=False,
             follow_redirects=True,
             max_redirects=MAX_REDIRECTS,
@@ -232,6 +233,32 @@ def fetch_page(url: str, max_chars: int = 10000, timeout: float = FALLBACK_TIMEO
 fallback_web_fetch_tool = tool(fetch_page)
 
 
+def allow_any_address(address: str) -> bool:
+    """Admit every address, for ``tools.web_fetch_allow_private``."""
+    return True
+
+
+def private_web_fetch(url: str, max_chars: int = 10000, timeout: float = DEFAULT_TIMEOUT) -> str:
+    return fetch_url(url, max_chars, timeout, allow=allow_any_address)
+
+
+def private_fetch_page(url: str, max_chars: int = 10000, timeout: float = FALLBACK_TIMEOUT) -> str:
+    return fetch_url(url, max_chars, timeout, allow=allow_any_address)
+
+
+private_web_fetch.__doc__ = web_fetch.__doc__
+private_fetch_page.__doc__ = fetch_page.__doc__
+private_web_fetch_tool = tool(private_web_fetch, name="web_fetch")
+private_fallback_web_fetch_tool = tool(private_fetch_page, name=FALLBACK_TOOL_NAME)
+
+
+def local_fetch_tools(allow_private: bool = False) -> tuple[Tool, Tool, Callable[..., str]]:
+    """The ``web_fetch`` tool, ``fetch_page`` tool and fetcher for the address policy."""
+    if allow_private:
+        return private_web_fetch_tool, private_fallback_web_fetch_tool, private_web_fetch
+    return web_fetch_tool, fallback_web_fetch_tool, web_fetch
+
+
 class NativeWebFetch(Tool):
     """The provider's ``web_fetch`` first; ours behind it (module docstring)."""
 
@@ -290,15 +317,18 @@ class NativeWebFetch(Tool):
         return await asyncio.to_thread(self._fetcher, url, max_chars=max_chars, timeout=timeout)
 
 
-def native_first(tools: list, *, timeout: float = FALLBACK_TIMEOUT) -> list:
+def native_first(
+    tools: list, *, timeout: float = FALLBACK_TIMEOUT, allow_private: bool = False
+) -> list:
     """Wrap a provider-native ``web_fetch`` in ``NativeWebFetch`` and offer the local
     fallback beside it; a list without one is returned unchanged."""
+    _, fallback_tool, fetcher = local_fetch_tools(allow_private)
     out, wrapped = [], False
     for t in tools:
         if getattr(t, "name", "") == "web_fetch" and not isinstance(t, NativeWebFetch):
-            t = NativeWebFetch(t, timeout=timeout)
+            t = NativeWebFetch(t, timeout=timeout, fetcher=fetcher)
         wrapped = wrapped or isinstance(t, NativeWebFetch)
         out.append(t)
     if wrapped and not any(getattr(t, "name", "") == FALLBACK_TOOL_NAME for t in out):
-        out.append(fallback_web_fetch_tool)
+        out.append(fallback_tool)
     return out
