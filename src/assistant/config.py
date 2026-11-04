@@ -165,6 +165,9 @@ class ToolsConfig(BaseModel):
     docker_network: str = "bridge"
     # Remove the tools that only work in the native app (env: AG2ASSISTANT_DISABLE_NATIVE_TOOLS).
     disable_native: bool = False
+    # Let web_fetch reach loopback, private and link-local hosts
+    # (env: AG2ASSISTANT_WEB_FETCH_ALLOW_PRIVATE).
+    web_fetch_allow_private: bool = False
 
 
 class MemoryConfig(BaseModel):
@@ -383,6 +386,8 @@ def apply_env_overrides(cfg: Config, env: Mapping[str, str]) -> None:
         cfg.tools.docker_network = v
     if v := get("AG2ASSISTANT_DISABLE_NATIVE_TOOLS"):
         cfg.tools.disable_native = v.strip().lower() not in {"0", "false", "no", "off"}
+    if v := get("AG2ASSISTANT_WEB_FETCH_ALLOW_PRIVATE"):
+        cfg.tools.web_fetch_allow_private = v.strip().lower() not in {"0", "false", "no", "off"}
     if v := get("AG2ASSISTANT_AGGREGATE_EVERY_N"):
         try:
             cfg.memory.aggregate_every_n_turns = int(v)

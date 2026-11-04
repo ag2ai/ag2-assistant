@@ -43,7 +43,7 @@ from assistant.tools.files import list_folder, read_file, update_file, write_fil
 from assistant.tools.google import build_google_tools
 from assistant.tools.image_gen import build_image_tool, image_available
 from assistant.tools.mcp import build_mcp_tools
-from assistant.tools.web_fetch import native_first, web_fetch, web_fetch_tool
+from assistant.tools.web_fetch import local_fetch_tools, native_first, web_fetch, web_fetch_tool
 
 # Commands the shell tool must never run.
 _SHELL_BLOCKED = ["rm -rf /", "sudo", "shutdown", "reboot", "mkfs"]
@@ -154,6 +154,7 @@ def build_agent_tools(
         builtin: provider-native tools switched on for this model, `{id: options}`.
     """
     want = (lambda c: True) if capabilities is None else (lambda c: c in capabilities)
+    allow_private = config is not None and config.tools.web_fetch_allow_private
     tools: list = []
     builtin = builtin or {}
 
@@ -165,7 +166,7 @@ def build_agent_tools(
 
     if want("web"):
         tools.append(DuckDuckSearchTool(max_results=5))
-        tools.append(web_fetch_tool)
+        tools.append(local_fetch_tools(allow_private)[0])
 
     if want("code"):
         use_docker = False
@@ -310,7 +311,7 @@ def build_agent_tools(
         # The provider's web_fetch is tried first; a call it hands back to us runs
         # our fetcher on a short budget, and `fetch_page` stands beside it for a
         # retry when the provider's own fetch failed (tools/web_fetch.py).
-        tools += native_first(build_builtin_tools(active))
+        tools += native_first(build_builtin_tools(active), allow_private=allow_private)
 
     return tools
 
