@@ -440,8 +440,8 @@ each successful chat turn is followed by one call to the cheap model
 (`llm.aggregate_model`), in the background, after the reply. It emits a
 `TurnSummarized` event on the chat's stream: `turn_id` (the id `TurnStarted` carried),
 `title` (at most 60 characters), `outcome` (asked for at most 120 characters, cut at
-150) and `parent_turn_id`. The parent is the first turn of the earlier work this turn continues, or `null`; the model
-picks it from the chat's last 5 summaries. A chat's summaries run one at a time, in turn
+150) and `parent_turn_id`. The parent is the first turn of the earlier work this turn
+continues, or `null`; the model picks it from the chat's last 5 summaries. A chat's summaries run one at a time, in turn
 order. Failed, empty and cancelled turns and task-run chats get none, and a call that
 fails or passes `gateway.turn_summary_timeout_s` (default 30) emits nothing. Stream
 observers receive the event, and AG-UI carries it as a `CUSTOM` event named
