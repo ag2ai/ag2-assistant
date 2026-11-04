@@ -223,8 +223,8 @@ class ChatRuns:
     async def watch(
         self, gateway: Any, chat_id: str, stop: asyncio.Event | None = None
     ) -> AsyncIterator[Event]:
-        """Events on a Chat outside any run, with each server-started Turn framed as a run.
-        Ends once ``stop`` is set."""
+        """Events on a Chat outside any run, with each server-started Turn framed as a run;
+        events while no Turn is running go out unframed. Ends once ``stop`` is set."""
         async with ChatListener(gateway, chat_id) as listener:
             run_id: str | None = None
             if gateway.is_running(chat_id):
@@ -242,7 +242,7 @@ class ChatRuns:
                         run_id = None
                     continue
                 projected = listener.feed(event)
-                if projected and run_id is None:
+                if projected and run_id is None and gateway.is_running(chat_id):
                     run_id = uuid.uuid4().hex
                     yield started(chat_id, run_id)
                 for item in projected:
