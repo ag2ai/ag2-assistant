@@ -16,10 +16,15 @@ Two shapes ride on it:
   instead. ``fallback_web_fetch_tool`` is the same fetcher under its own name,
   offered beside the native one so the model can retry locally when the
   provider's fetch itself failed (blocked domain, error result).
+
+Every hop, redirects included, resolves its host first and refuses any address
+that is not public; the request then connects to the checked address itself.
 """
 
 import asyncio
-from collections.abc import Iterable
+import ipaddress
+import socket
+from collections.abc import Callable, Iterable
 from contextlib import AsyncExitStack, ExitStack
 
 import httpx
@@ -39,6 +44,85 @@ FALLBACK_TOOL_NAME = "fetch_page"
 # The ceiling an agent-supplied timeout is clamped to: a fetch must always come
 # back within half a minute, and a slow site is better reported than waited on.
 MAX_TIMEOUT = 30.0
+MAX_REDIRECTS = 10
+_USER_AGENT = "AG2 Assistant/0.1"
+# NAT64's well-known prefix carries an IPv4 address in its last 32 bits.
+_NAT64 = ipaddress.IPv6Network("64:ff9b::/96")
+
+Resolve = Callable[[str, int], list[str]]
+
+
+class RefusedAddress(Exception):
+    """A URL whose host is not a public internet address."""
+
+
+def resolve_host(host: str, port: int) -> list[str]:
+    """The addresses ``host`` resolves to, in the system's preferred order."""
+    infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM, flags=socket.AI_ADDRCONFIG)
+    return list(dict.fromkeys(str(info[4][0]) for info in infos))
+
+
+def is_public(address: str) -> bool:
+    """Whether ``address`` is a global unicast address, judging NAT64 by its IPv4 part."""
+    ip: ipaddress.IPv4Address | ipaddress.IPv6Address = ipaddress.ip_address(address)
+    if isinstance(ip, ipaddress.IPv6Address) and ip in _NAT64:
+        ip = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+    return ip.is_global and not ip.is_multicast
+
+
+def _checked_addresses(url: httpx.URL, resolve: Resolve) -> list[str]:
+    """The public addresses to connect to for ``url``; raises when any is not public."""
+    if url.scheme not in ("http", "https"):
+        raise RefusedAddress("only http and https URLs can be fetched")
+    host = url.host
+    if not host:
+        raise RefusedAddress("the URL has no host")
+    port = url.port or (443 if url.scheme == "https" else 80)
+    try:
+        addresses = resolve(host, port)
+    except OSError as exc:
+        raise httpx.ConnectError(f"cannot resolve {host}: {exc}") from exc
+    if not addresses:
+        raise httpx.ConnectError(f"cannot resolve {host}")
+    for address in addresses:
+        if not is_public(address):
+            raise RefusedAddress(f"{host} is a private or local address ({address})")
+    return addresses
+
+
+def _send_pinned(
+    client: httpx.Client, url: httpx.URL, addresses: list[str], timeout: float
+) -> httpx.Response:
+    """GET ``url`` from the first reachable checked address, keeping its name for Host and TLS."""
+    headers = {"User-Agent": _USER_AGENT, "Host": url.netloc.decode("ascii")}
+    extensions = {"sni_hostname": url.host} if url.scheme == "https" else {}
+    error: httpx.ConnectError | None = None
+    for address in addresses:
+        request = client.build_request(
+            "GET",
+            url.copy_with(host=address),
+            headers=headers,
+            extensions=extensions,
+            timeout=timeout,
+        )
+        try:
+            return client.send(request, follow_redirects=False)
+        except httpx.ConnectError as exc:
+            error = exc
+    assert error is not None
+    raise error
+
+
+def _get(client: httpx.Client, url: str, timeout: float, resolve: Resolve) -> httpx.Response:
+    """GET ``url``, following redirects, with every hop checked and pinned."""
+    target = httpx.URL(url)
+    for _ in range(MAX_REDIRECTS + 1):
+        response = _send_pinned(client, target, _checked_addresses(target, resolve), timeout)
+        if not response.has_redirect_location:
+            return response
+        target = target.join(response.headers["location"])
+        response.close()
+    raise httpx.TooManyRedirects(f"more than {MAX_REDIRECTS} redirects")
 
 
 def _bounded_timeout(timeout) -> float:
@@ -64,20 +148,33 @@ def web_fetch(url: str, max_chars: int = 10000, timeout: float = DEFAULT_TIMEOUT
     Returns:
         The extracted text content from the page.
     """
+    return fetch_url(url, max_chars, timeout)
+
+
+def fetch_url(
+    url: str,
+    max_chars: int = 10000,
+    timeout: float = DEFAULT_TIMEOUT,
+    *,
+    client: httpx.Client | None = None,
+    resolve: Resolve = resolve_host,
+) -> str:
+    """``web_fetch`` over an injectable client and resolver."""
+    if client is None:
+        with httpx.Client(trust_env=False) as owned:
+            return fetch_url(url, max_chars, timeout, client=owned, resolve=resolve)
     timeout = _bounded_timeout(timeout)
     try:
-        response = httpx.get(
-            url,
-            follow_redirects=True,
-            timeout=timeout,
-            headers={"User-Agent": "AG2 Assistant/0.1"},
-        )
-        response.raise_for_status()
+        response = _get(client, url, timeout, resolve)
+    except RefusedAddress as e:
+        return f"Error fetching {url}: refused, {e}"
     except httpx.TimeoutException:
         hint = " (pass a larger timeout, up to 30, to wait longer)" if timeout < MAX_TIMEOUT else ""
         return f"Error fetching {url}: no response within {timeout:g}s{hint}"
-    except httpx.HTTPError as e:
+    except (httpx.HTTPError, httpx.InvalidURL) as e:
         return f"Error fetching {url}: {e}"
+    if response.is_error:
+        return f"Error fetching {url}: HTTP {response.status_code} {response.reason_phrase}"
 
     content_type = response.headers.get("content-type", "")
 
@@ -140,11 +237,18 @@ fallback_web_fetch_tool = tool(fetch_page)
 class NativeWebFetch(Tool):
     """The provider's ``web_fetch`` first; ours behind it (module docstring)."""
 
-    __slots__ = ("_native", "_timeout", "name")
+    __slots__ = ("_fetcher", "_native", "_timeout", "name")
 
-    def __init__(self, native: Tool, *, timeout: float = FALLBACK_TIMEOUT) -> None:
+    def __init__(
+        self,
+        native: Tool,
+        *,
+        timeout: float = FALLBACK_TIMEOUT,
+        fetcher: Callable[..., str] = web_fetch,
+    ) -> None:
         self._native = native
         self._timeout = timeout
+        self._fetcher = fetcher
         self.name = native.name
 
     @property
@@ -185,7 +289,7 @@ class NativeWebFetch(Tool):
         if not isinstance(max_chars, int) or max_chars < 1:
             max_chars = 10000
         timeout = args.get("timeout", self._timeout)
-        return await asyncio.to_thread(web_fetch, url, max_chars=max_chars, timeout=timeout)
+        return await asyncio.to_thread(self._fetcher, url, max_chars=max_chars, timeout=timeout)
 
 
 def native_first(tools: list, *, timeout: float = FALLBACK_TIMEOUT) -> list:

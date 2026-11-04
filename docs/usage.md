@@ -556,6 +556,13 @@ ag2-assistant permissions unblock ~/private          # remove the block
 
 Grants/blocks persist in `~/.ag2assistant/permissions.json`.
 
+**Web fetch stays on the public internet.** The local `web_fetch` (and its `fetch_page`
+fallback) resolves each URL's host, redirects included, and refuses it when any address is
+loopback, private, link-local (including cloud metadata at `169.254.169.254`), shared,
+unspecified or multicast. The request then connects to the address it checked. It does not
+use `HTTP_PROXY`/`HTTPS_PROXY`. A page on your own machine or network can still be read
+with a shell command, which asks first.
+
 ## Sandbox — where shell/code runs
 
 AG2 Assistant can run shell commands and execute code. Two backends:
