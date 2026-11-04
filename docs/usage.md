@@ -434,6 +434,11 @@ Every key above also has an env override (these win over `config.yaml`):
 
 ### Switching LLM providers
 
+AG2 1.3 no longer sends Anthropic's `temperature`, `top_p`, or `top_k` settings.
+On upgrade, the CLI and gateway remove these settings from saved Global and
+Profile configs once, preserving other options. New Advanced options containing
+them are rejected; Anthropic still offers the output-token limit.
+
 Set the provider; the model and the env var holding its key follow it unless you
 name them too (`openai` → `gpt-5.6-luna` / `OPENAI_API_KEY`, `anthropic` →
 `claude-sonnet-5` / `ANTHROPIC_API_KEY`, `ollama` → `llama3.2`, keyless). Gemini

@@ -7,15 +7,17 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from ag2 import Agent, tool
+from ag2.assembly import AssemblerMiddleware
 from ag2.config import (
     AnthropicConfig,
     OllamaConfig,
-    OpenAIConfig,
+    OpenAICompletionsConfig,
     OpenAIResponsesConfig,
 )
 from ag2.config.gemini import GeminiConfig
-from ag2.middleware import Middleware
-from ag2.policies import AlertPolicy
+from ag2.knowledge import KnowledgePlugin
+from ag2.middleware import HaltCheckMiddleware, Middleware
+from ag2.policies import AlertPolicy, ConversationPolicy, WorkingMemoryPolicy
 from ag2.tools import LocalEnvironment, SkillSearchToolkit
 from ag2.tools.skills import LocalRuntime, SkillPlugin
 from pydantic import Field
@@ -42,7 +44,6 @@ from assistant.memory import (
     build_compaction_config,
     build_knowledge_config,
     build_profile_store,
-    profile_assembly,
     read_profile_sync,
     remember_note,
 )
@@ -52,6 +53,7 @@ from assistant.middleware import (
     LLMRetryMiddleware,
     LLMTimeoutMiddleware,
 )
+from assistant.model_params import validate_anthropic_options
 from assistant.observability import agent_logging_middleware, log_suppressed
 from assistant.observers import build_observers
 from assistant.permissions import PermissionManager, PermissionStore
@@ -108,6 +110,7 @@ def model_config(config: Config, model: str | None = None):
         # and the entry's Advanced options are ACPConfig constructor overrides.
         return acp_provider.BUILDERS[provider](config, model=model, options=opts)
     if provider == "anthropic":
+        validate_anthropic_options(opts)
         return AnthropicConfig(
             **{"model": model, "api_key": api_key, "streaming": config.llm.streaming, **opts}
         )
@@ -154,9 +157,10 @@ def model_config(config: Config, model: str | None = None):
         kwargs = {"model": model, "api_key": api_key, "streaming": config.llm.streaming, **opts}
         if api == "responses":
             return OpenAIResponsesConfig(**kwargs)
-        return OpenAIConfig(**kwargs)
+        return OpenAICompletionsConfig(**kwargs)
     if provider == "ollama":
-        return OllamaConfig(
+        # AG2's OllamaConfig inherits the unsupported Files API protocol implementation.
+        return OllamaConfig(  # type: ignore[abstract]
             **{
                 "model": model,
                 "host": config.secret_env.get(OLLAMA_BASE_ENV, DEFAULT_OLLAMA_BASE),
@@ -747,7 +751,7 @@ def create_agent(
             ),
             compaction_store=compaction_store,
         )
-        assembly = profile_assembly()
+        assembly = [WorkingMemoryPolicy()]
     elif compact:
         # Memory-less agents (task subagents) still get their context bounded.
         knowledge = build_compaction_config(
@@ -849,15 +853,29 @@ def create_agent(
     if asker is not None:
         hitl_hook = build_hitl_hook(asker)
 
-    # AlertPolicy delivers observer alerts to the model and, on a FATAL alert,
-    # emits a HaltEvent that AG2's halt middleware turns into a short-circuited
-    # turn. Appending it makes `assembly` non-empty for EVERY agent (task
-    # subagents included), which is what wires that halt path in — so the
-    # SilenceWatchdog's FATAL escalation deterministically terminates a wedged
-    # turn even on the memory-less subagents that hang in the incident.
-    assembly = list(assembly) + [AlertPolicy()]
-
     middleware = [] if invocation_only else _build_middleware(config)
+    # Deliver observer alerts and halt FATAL turns, including memory-less workers.
+    middleware.extend(
+        [
+            Middleware(
+                AssemblerMiddleware, policies=[*assembly, AlertPolicy(), ConversationPolicy()]
+            ),
+            Middleware(HaltCheckMiddleware),
+        ]
+    )
+    if knowledge is not None:
+        plugins.append(
+            KnowledgePlugin(
+                store=knowledge.store,
+                expose_tool=knowledge.expose_tool,
+                write_event_log=knowledge.write_event_log,
+                bootstrap=knowledge.bootstrap,
+                compact=knowledge.compact,
+                compact_trigger=knowledge.compact_trigger,
+                aggregate=knowledge.aggregate,
+                aggregate_trigger=knowledge.aggregate_trigger,
+            )
+        )
     selected_model = default_model or llm_config
     if compact:
         assert knowledge is not None
@@ -870,8 +888,6 @@ def create_agent(
         config=selected_model,
         tools=tools,
         plugins=[*plugins, *(extra_plugins or [])],
-        knowledge=knowledge,
-        assembly=assembly,
         hitl_hook=hitl_hook,
         dependencies=dependencies,
         middleware=middleware,

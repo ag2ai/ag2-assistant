@@ -346,6 +346,11 @@ Every model-backed call in the backend. Two model tiers: **main**
 (`config.llm.model`) for quality-sensitive work, **cheap/aggregate**
 (`cheap_model(config)` / `config.llm.aggregate_model`) for background/bulk.
 
+AG2 1.3's `KnowledgePlugin` registers memory and compaction. Explicit
+`AssemblerMiddleware` injects working memory and observer alerts before
+`ConversationPolicy` filters the transcript; `HaltCheckMiddleware` stops FATAL turns.
+OpenAI configurations explicitly select Responses or Chat Completions.
+
 | # | Agent / call            | File                         | Tier  | Trigger                              | Structured output            |
 | - | ----------------------- | ---------------------------- | ----- | ------------------------------------ | ---------------------------- |
 | 1 | **Universal agent**     | `agent.py:320` (`create_agent`) | main  | every user turn (`agent.ask`) — also every task **run**, on the run's stream | — (conversational) |

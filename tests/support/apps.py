@@ -12,6 +12,7 @@ import time
 
 from ag2 import Agent
 from ag2.acp import SessionConfig
+from ag2.knowledge import KnowledgePlugin
 from ag2.middleware import Middleware
 from ag2.testing import TestConfig
 
@@ -42,7 +43,16 @@ def compacting_agent(config, knowledge, *, tools=(), **options):
     agent = CompactingAgent(
         "chat",
         config=BudgetedModelConfig(config),
-        knowledge=knowledge,
+        plugins=[
+            KnowledgePlugin(
+                store=knowledge.store,
+                expose_tool=knowledge.expose_tool,
+                write_event_log=knowledge.write_event_log,
+                compact=knowledge.compact,
+                compact_trigger=knowledge.compact_trigger,
+            ),
+            *options.pop("plugins", ()),
+        ],
         tools=[read_compaction_source, *tools],
         **options,
     )

@@ -45,7 +45,6 @@ from ag2.events import (
     render_for_prompt,
 )
 from ag2.knowledge import KnowledgeStore, MemoryKnowledgeStore, SqliteKnowledgeStore
-from ag2.policies import ConversationPolicy, WorkingMemoryPolicy
 from ag2.stream import MemoryStream
 from fast_depends.pydantic import PydanticSerializer
 
@@ -418,14 +417,6 @@ def build_compaction_config(
         compact=CheckpointCompact(limits or CompactionLimits(max_tokens=max_tokens), store),
         compact_trigger=CompactTrigger(),
     )
-
-
-def profile_assembly() -> list:
-    """Assembly policies that inject the learned profile into each conversation."""
-    return [
-        WorkingMemoryPolicy(),  # injects the profile (/memory/working.md)
-        ConversationPolicy(),
-    ]
 
 
 async def write_profile(text: str, store_path: Path) -> None:

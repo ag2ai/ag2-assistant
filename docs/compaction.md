@@ -10,7 +10,7 @@ room for the model's response. Assistant does not infer model limits from names.
 Compaction remains enabled when passive Profile memory is disabled.
 
 One coordinator runs compaction through public AG2 extension points.
-KnowledgeConfig carries the custom strategy and storage; the resolved model
+KnowledgePlugin registers the custom strategy and storage; the resolved model
 client checks each request, and outer Turn middleware materializes its result
 after successful completion. AG2's independent automatic trigger is disabled.
 Profile aggregation runs against the original Turn history before materialization.

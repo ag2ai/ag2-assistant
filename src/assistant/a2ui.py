@@ -497,8 +497,6 @@ class _AssistantA2UIRuntime:
             version_string=self.schema_manager.version_string,
             server_to_client_schema=self.schema_manager.server_to_client_schema,
             schema_registry=registry,
-            component_schemas=component_schemas,
-            catalog_id=self.schema_manager.catalog_id,
         )
         self.actions = collect_action_declarations(A2UI_ACTIONS)
         # The protocol reference: the message format, composition rules and actions —
