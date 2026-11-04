@@ -246,6 +246,16 @@ def test_disable_native_tools_comes_from_file_or_env(paths):
     assert resolve_config(env_off, paths).tools.disable_native is False
 
 
+def test_web_fetch_allow_private_comes_from_file_or_env(paths):
+    assert resolve_config({}, paths).tools.web_fetch_allow_private is False
+    env_on = {"AG2ASSISTANT_WEB_FETCH_ALLOW_PRIVATE": " True "}
+    assert resolve_config(env_on, paths).tools.web_fetch_allow_private is True
+    write_yaml(paths.config_yaml, {"tools": {"web_fetch_allow_private": True}})
+    assert resolve_config({}, paths).tools.web_fetch_allow_private is True
+    env_off = {"AG2ASSISTANT_WEB_FETCH_ALLOW_PRIVATE": " False "}
+    assert resolve_config(env_off, paths).tools.web_fetch_allow_private is False
+
+
 def test_malformed_config_yaml_reads_as_empty(paths):
     paths.config_yaml.parent.mkdir(parents=True, exist_ok=True)
     paths.config_yaml.write_text("{{{ not yaml")

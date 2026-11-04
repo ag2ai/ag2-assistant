@@ -19,6 +19,7 @@ import copy
 import json
 import logging
 import re
+from collections import deque
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
@@ -44,7 +45,7 @@ from ag2.plugin import Plugin
 from ag2.stream import MemoryStream
 from ag2.tools import LocalEnvironment
 
-from assistant import onboarding
+from assistant import onboarding, turn_summary
 from assistant import title as title_mod
 from assistant.a2ui import (
     CardCatalog,
@@ -72,7 +73,14 @@ from assistant.codex_auth import CodexAuth, CodexAuthError
 from assistant.coding.detect import parse_bridge
 from assistant.compaction import event_ref
 from assistant.config import Config, load_config
-from assistant.events import ChatSeen, TurnCancelled, TurnCompleted, TurnFailed, TurnStarted
+from assistant.events import (
+    ChatSeen,
+    TurnCancelled,
+    TurnCompleted,
+    TurnFailed,
+    TurnStarted,
+    TurnSummarized,
+)
 from assistant.folders import FolderStore
 from assistant.gateway.chat_activity import ChatActivity
 from assistant.gateway.history import ChatEventLog
@@ -210,6 +218,16 @@ class _ActiveTurn:
     reason: str = "Stopped"
 
 
+SUMMARY_QUEUE_MAX = 10
+
+
+@dataclass
+class _PendingSummary:
+    turn_id: str
+    text: str
+    reply: str
+
+
 @dataclass
 class _AgentGeneration:
     agent: Agent
@@ -233,6 +251,7 @@ class Gateway:
         config_factory: Callable[[], Config] | None = None,
         agent_factory: Callable | None = None,
         title_factory: Callable | None = None,
+        turn_summary_factory: Callable | None = None,
         stream_observers: tuple[Callable, ...] = (),
         model_factory: Callable | None = None,
         environment_factory: Callable | None = None,
@@ -258,6 +277,10 @@ class Gateway:
         self._google = google or GoogleAuth(self._config.paths)
         self._resources = ProfileResources()
         self._title_factory = title_factory or title_mod.default_titler
+        self._turn_summary_factory = turn_summary_factory or turn_summary.default_turn_summarizer
+        # chat_id -> Turns waiting for a summary, and the one task working through them
+        self._summary_queues: dict[str, deque[_PendingSummary]] = {}
+        self._summary_workers: dict[str, asyncio.Task] = {}
         # Profile runtimes re-read registry settings at the actual Turn boundary.
         self._config_factory = config_factory or (lambda: self._config)
         # This profile's Cards and the A2UI runtime over them; both re-read from
@@ -1149,6 +1172,7 @@ class Gateway:
                         )
                         raise EmptyTurn(EMPTY_TURN_REPLY)
                     await self.emit_event(chat_id, TurnCompleted(chat_id, turn_id=turn_id))
+                    self._queue_turn_summary(chat_id, turn_id, text, reply.body)
                     await self._persist_turn(chat_id, stream, text, reply.body)
                     await self._mirror_turn(chat_id, text, reply.body, origin, attachment_names)
                     return reply.body
@@ -1160,6 +1184,69 @@ class Gateway:
                     self._record_usage(
                         stream, usage_handle, effective.llm.model
                     )  # always tally, even on error
+
+    def _queue_turn_summary(self, chat_id: str, turn_id: str, text: str, reply: str) -> None:
+        """Queue a finished Turn for summarising; each Chat's queue runs oldest first and
+        keeps at most SUMMARY_QUEUE_MAX Turns, dropping the oldest."""
+        if not self._config.gateway.turn_summaries or chat_id.startswith("task-run:"):
+            return
+        queue = self._summary_queues.setdefault(chat_id, deque())
+        if len(queue) >= SUMMARY_QUEUE_MAX:
+            dropped = queue.popleft()
+            logger.warning("turn summary dropped: chat=%s turn=%s", chat_id, dropped.turn_id)
+        queue.append(_PendingSummary(turn_id, text, reply))
+        if chat_id not in self._summary_workers:
+            task = asyncio.create_task(self._summarize_turns(chat_id))
+            self._summary_workers[chat_id] = task
+            self._background.add(task)
+            task.add_done_callback(self._background.discard)
+
+    async def _summarize_turns(self, chat_id: str) -> None:
+        """Summarise this Chat's queued Turns one at a time until the queue is empty."""
+        queue = self._summary_queues[chat_id]
+        try:
+            while queue:
+                await self._summarize_turn(chat_id, queue.popleft())
+        finally:
+            self._summary_workers.pop(chat_id, None)
+            if not queue:
+                self._summary_queues.pop(chat_id, None)
+
+    async def _summarize_turn(self, chat_id: str, pending: "_PendingSummary") -> None:
+        """Emit one Turn's TurnSummarized, offering the Chat's last summaries as parents;
+        a failure or timeout emits nothing."""
+        config = self._config
+        response = None
+        try:
+            stream = await self.stream_for(chat_id)
+            events = await stream.history.get_events()
+            recent = [e for e in events if isinstance(e, TurnSummarized)][-turn_summary.RECENT :]
+            event, response = await asyncio.wait_for(
+                turn_summary.summarize_turn(
+                    config,
+                    chat_id,
+                    pending.turn_id,
+                    pending.text,
+                    pending.reply,
+                    recent,
+                    agent_factory=self._turn_summary_factory,
+                ),
+                config.gateway.turn_summary_timeout_s,
+            )
+        except Exception as exc:
+            log_suppressed("turn summary", exc, chat_id=chat_id)
+            return
+        finally:
+            if (usage := getattr(response, "usage", None)) is not None:
+                with contextlib.suppress(Exception):
+                    self._usage.record(
+                        getattr(response, "model", None) or cheap_model(config) or config.llm.model,
+                        usage.prompt_tokens or 0,
+                        usage.completion_tokens or 0,
+                        usage.total_tokens or None,
+                    )
+        if event is not None:
+            await self.emit_event(chat_id, event)
 
     def _watch_usage(self, stream):
         """Subscribe to this turn's UsageEvents; returns (sub_id, collected list).
@@ -1944,6 +2031,7 @@ def build_gateway(
     stream_observers: tuple[Callable, ...] = (),
     title_factory: Callable | None = None,
     summary_factory: Callable | None = None,
+    turn_summary_factory: Callable | None = None,
     model_factory: Callable | None = None,
     environment_factory: Callable | None = None,
     plugins: Iterable[Plugin] = (),
@@ -1962,6 +2050,7 @@ def build_gateway(
         config_factory=config_factory,
         agent_factory=agent_factory,
         title_factory=title_factory,
+        turn_summary_factory=turn_summary_factory,
         stream_observers=stream_observers,
         model_factory=model_factory,
         environment_factory=environment_factory,

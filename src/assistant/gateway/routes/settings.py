@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from assistant import voice_providers
+from assistant.config import SharedMemory
 from assistant.gateway.profile_manager import ProfileRuntime
 from assistant.gateway.routes.deps import GatewayDeps
 from assistant.gateway.schemas import (
@@ -26,6 +27,7 @@ from assistant.gateway.schemas import (
     ProfileHealthResponse,
     ProfileSettingsResponse,
     ReplyTimeoutSavedResponse,
+    SharedMemorySavedResponse,
     VoiceCatalogResponse,
     VoiceSelectedResponse,
 )
@@ -55,6 +57,10 @@ class PreviewBrowserRequest(BaseModel):
 
 class CompactionRequest(BaseModel):
     compact_max_tokens: int = Field(strict=True, gt=0)
+
+
+class SharedMemoryRequest(BaseModel):
+    shared_memory: SharedMemory
 
 
 class VoiceRequest(BaseModel):
@@ -388,6 +394,7 @@ def build_profile_router(
             "focuses": settings.get_focuses(),  # per-profile persona focus areas
             "reply_timeout_s": cfg.gateway.reply_timeout_s,
             "compact_max_tokens": cfg.memory.compact_max_tokens,
+            "shared_memory": cfg.memory.shared,
             "preview_browser": cfg.tools.preview_browser,
             "fs": {  # start roots for the folder picker
                 "home": str(d.paths.home),
@@ -498,6 +505,15 @@ def build_profile_router(
         tokens = runtime_settings(runtime).set_compact_max_tokens(req.compact_max_tokens)
         await d.manager.refresh(runtime.pid)
         return {"ok": True, "compact_max_tokens": tokens}
+
+    @r.post("/settings/shared-memory", response_model=SharedMemorySavedResponse)
+    async def set_shared_memory(
+        req: SharedMemoryRequest, runtime: ProfileRuntime = Depends(get_runtime)
+    ):
+        """Save how this Profile uses the shared user memory and apply it to later Turns."""
+        mode = runtime_settings(runtime).set_shared_memory(req.shared_memory)
+        await d.manager.refresh(runtime.pid)
+        return {"ok": True, "shared_memory": mode}
 
     @r.post("/settings/reply-timeout", response_model=ReplyTimeoutSavedResponse)
     async def set_reply_timeout(
