@@ -19,6 +19,7 @@ from assistant.codex_auth import (
     generate_pkce,
 )
 from assistant.config import Config, load_config, tz_unset_in_container
+from assistant.config_migrations import migrate_anthropic_sampling
 from assistant.connections import ConnectionStore
 from assistant.folders import DuplicatePath, FolderStore
 from assistant.gateway.app import create_app
@@ -51,8 +52,10 @@ app = typer.Typer(
 
 
 def default_paths() -> Paths:
-    """This install's on-disk layout. The one environment read in the package."""
-    return Paths.from_env(os.environ, Path.home())
+    """Resolve this install's layout and adopt persisted provider settings."""
+    paths = Paths.from_env(os.environ, Path.home())
+    migrate_anthropic_sampling(paths.config_yaml)
+    return paths
 
 
 @app.callback()

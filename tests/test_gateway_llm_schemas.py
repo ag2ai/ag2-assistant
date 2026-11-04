@@ -391,7 +391,6 @@ def test_the_list_describes_the_parameters_of_every_type(client):
         "maximum": None,
     }
     assert by_type["anthropic"] == [
-        {"id": "temperature", "kind": "float", "choices": [], "minimum": 0, "maximum": 1},
         {"id": "max_tokens", "kind": "int", "choices": [], "minimum": 1, "maximum": None},
     ]
     assert by_type["codex"] == []

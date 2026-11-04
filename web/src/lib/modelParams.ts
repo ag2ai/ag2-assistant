@@ -36,7 +36,6 @@ export const MODEL_PARAM_TEXT: Record<string, ModelParamText> = {
     description: 'The most tokens one answer may use, thinking included.',
   },
 
-  'anthropic.temperature': TEMPERATURE,
   'anthropic.max_tokens': OUTPUT_LIMIT,
 
   'ollama.temperature': TEMPERATURE,

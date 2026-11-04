@@ -44,7 +44,7 @@ from secrets import token_hex
 
 from assistant.builtin_tools import clean_options, find_builtin
 from assistant.config import apply_provider_defaults, read_global_config, update_global_section
-from assistant.model_params import clean_params, usable_params
+from assistant.model_params import clean_params, usable_params, validate_anthropic_options
 from assistant.paths import Paths
 from assistant.secrets import SecretStore
 
@@ -231,6 +231,8 @@ def _clean_entry(raw: dict) -> dict:
     options = raw.get("options") or {}
     if not isinstance(options, dict):
         raise ValueError("options must be a JSON object")
+    if ctype == "anthropic":
+        validate_anthropic_options(options)
     # Subscription mode has no endpoint fields — the base_url and bearer token both
     # come from codex_auth. Force them empty so a stale/typo'd value can't ride along.
     # Advanced options are stripped too: the ChatGPT backend rejects every sampling

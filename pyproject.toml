@@ -14,7 +14,7 @@ dependencies = [
     # Dev installs, CI and the Docker image all resolve this through uv.lock, so they
     # run the same AG2 the published wheel asks for. ddgs powers the native
     # DuckDuckSearchTool, openai the OpenAI voice provider.
-    "ag2[gemini,ddgs,openai,acp,ag-ui]>=1.1.2",
+    "ag2[gemini,ddgs,openai,acp,ag-ui]>=1.3.0",
     "typer>=0.15.0",
     "python-dotenv>=1.0.0",
     "pydantic>=2.0.0",
@@ -50,8 +50,8 @@ dev = [
 ]
 # Provider client libraries not in the base install.
 # Opt-in: `pip install "ag2-assistant[ollama]"`.
-anthropic = ["ag2[anthropic]>=1.1.2"]
-ollama = ["ag2[ollama]>=1.1.2"]
+anthropic = ["ag2[anthropic]>=1.3.0"]
+ollama = ["ag2[ollama]>=1.3.0"]
 # Google integration (Gmail / Calendar / Drive). Opt-in: `pip install ag2-assistant[google]`.
 google = [
     "google-api-python-client>=2.0",

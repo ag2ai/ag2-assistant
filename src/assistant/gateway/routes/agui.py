@@ -275,7 +275,8 @@ def build_profile_router(d: GatewayDeps, get_runtime, *, surfaces: Mapping[str, 
             source_component_id=click.source_component_id,
             timestamp=click.timestamp,
             context={**click.context, "surface_id": click.surface_id},
-            response_request=click.response_request,
+            user_message=click.user_message,
+            metadata=click.metadata,
         )
         messages = await run_server_action(
             action,
