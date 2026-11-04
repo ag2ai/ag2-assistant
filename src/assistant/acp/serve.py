@@ -13,8 +13,9 @@ from collections.abc import Mapping
 from acp.core import DEFAULT_STDIO_BUFFER_LIMIT_BYTES
 from acp.stdio import stdio_streams
 from ag2 import Agent
-from ag2.acp import ACPAgent, SessionConfig
+from ag2.acp.agent import ACPAgent
 from ag2.acp.guard import serve as guard_serve
+from ag2.acp.sessions import SessionConfig
 
 from assistant.acp.approvals import install_owner_side_approvals
 from assistant.acp.auth import choose_auth

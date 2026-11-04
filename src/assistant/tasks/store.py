@@ -9,6 +9,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from ag2.knowledge import SqliteKnowledgeStore
 
@@ -114,9 +115,11 @@ class TaskStore:
                 continue
             path = _TASKS + entry
             try:
-                data = json.loads(await self._store.read(path))
+                data = await self._read_json(path)
             except Exception:
                 continue  # corrupt records are _read_all's problem, not the migration's
+            if data is None:
+                continue
             if "workdir" not in data and "workdir_access" not in data:
                 continue
             wd = data.pop("workdir", None)
@@ -144,9 +147,11 @@ class TaskStore:
                 continue
             path = _TASKS + entry
             try:
-                data = json.loads(await self._store.read(path))
+                data = await self._read_json(path)
             except Exception:
                 continue  # corrupt records are _read_all's problem, not the migration's
+            if data is None:
+                continue
             if "recall_depth" in data:
                 continue
             cron = (data.get("schedule") or {}).get("kind") == ScheduleKind.CRON
@@ -164,9 +169,11 @@ class TaskStore:
                 continue
             path = _TASKS + entry
             try:
-                data = json.loads(await self._store.read(path))
+                data = await self._read_json(path)
             except Exception:
                 continue  # corrupt records are _read_all's problem, not the migration's
+            if data is None:
+                continue
             cid = by_platform.get(data.get("origin_channel") or "")
             if cid is None:
                 continue
@@ -258,11 +265,17 @@ class TaskStore:
 
     # ---- shared readers ----
 
+    async def _read_json(self, path: str) -> Any:
+        """The JSON document at ``path``, or None when no record is there."""
+        raw = await self._store.read(path)
+        return None if raw is None else json.loads(raw)
+
     async def _read(self, path: str, cls, doc_id: str):
         if not await self._store.exists(path):
             return None
         try:
-            return cls.from_dict(json.loads(await self._store.read(path)))
+            data = await self._read_json(path)
+            return None if data is None else cls.from_dict(data)
         except Exception as exc:
             raise TaskStoreCorruptionError(doc_id, path, exc) from exc
 
@@ -272,7 +285,9 @@ class TaskStore:
             if not entry.endswith(".json"):
                 continue
             try:
-                out.append(cls.from_dict(json.loads(await self._store.read(prefix + entry))))
+                data = await self._read_json(prefix + entry)
+                if data is not None:
+                    out.append(cls.from_dict(data))
             except Exception:
                 logger.exception("skipping corrupt record %s", entry)
         return out

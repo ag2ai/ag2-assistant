@@ -47,7 +47,7 @@ handling) — it records the same message directly, before
 
 import asyncio
 import contextlib
-from collections.abc import Iterator
+from collections.abc import Generator
 
 from ag2.annotations import Context
 from ag2.events import BaseEvent, ToolCallEvent, ToolCallsEvent, ToolResultEvent
@@ -126,7 +126,7 @@ class _PendingToolCalls:
         self._pending: dict[str, ToolCallEvent] = {}
 
     @contextlib.contextmanager
-    def attached(self, stream) -> Iterator[None]:
+    def attached(self, stream) -> Generator[None, None, None]:
         async def on_calls(ev: ToolCallsEvent) -> None:
             for call in ev.calls:
                 self._pending[call.id] = call

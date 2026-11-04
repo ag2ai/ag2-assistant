@@ -32,9 +32,9 @@ from pathlib import Path
 
 from ag2 import KnowledgeConfig
 from ag2.aggregate import AggregateTrigger, WorkingMemoryAggregate
-from ag2.annotations import Context
 from ag2.compact import CompactTrigger
 from ag2.config import ModelConfig
+from ag2.context import ConversationContext
 from ag2.events import (
     BaseEvent,
     ModelRequest,
@@ -332,7 +332,7 @@ class ProfileUpdate:
         )
         response = await self._config.create()(
             [ModelRequest.ensure_request([prompt])],
-            Context(MemoryStream()),
+            ConversationContext(MemoryStream()),
             tools=[],
             response_schema=None,
             serializer=self._serializer,

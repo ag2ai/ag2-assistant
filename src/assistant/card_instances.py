@@ -7,7 +7,7 @@ import math
 import os
 import stat
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -146,7 +146,7 @@ def decode_instance(data: bytes) -> CardInstanceResponse:
 @contextmanager
 def document_location(
     root: str | os.PathLike[str], rel: str, suffix: str
-) -> Iterator[tuple[int, str]]:
+) -> Generator[tuple[int, str], None, None]:
     """Open an existing Files Directory without following links or escaping its root."""
     parts = rel.split("/")
     if (
@@ -170,7 +170,9 @@ def document_location(
 
 
 @contextmanager
-def instance_location(root: str | os.PathLike[str], rel: str) -> Iterator[tuple[int, str]]:
+def instance_location(
+    root: str | os.PathLike[str], rel: str
+) -> Generator[tuple[int, str], None, None]:
     """Open the Directory of an instance within this Profile's Files space."""
     with document_location(root, rel, INSTANCE_SUFFIX) as location:
         yield location

@@ -6,8 +6,13 @@ user approved. Authentication is the CLI's own on-disk login — we deliberately
 pass no provider API keys through ``env``.
 """
 
-from ag2.acp import ACPConfig, ClaudeCodeConfig, CodexConfig, OpenCodeConfig
-from ag2.acp.config import PermissionPolicy
+from ag2.acp.config import (
+    ACPConfig,
+    ClaudeCodeConfig,
+    CodexConfig,
+    OpenCodeConfig,
+    PermissionPolicy,
+)
 
 from assistant.coding.detect import AgentInfo, BridgeEndpoint
 

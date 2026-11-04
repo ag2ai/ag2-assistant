@@ -95,7 +95,11 @@ def build_profile_router(d: GatewayDeps, get_runtime) -> APIRouter:
         ``GET /api/permissions``, scoped via ``task_id``). 404 on an unknown task."""
         if await runtime.require_tasks().get_task(task_id) is None:
             return Response(status_code=404)
-        return {"rules": runtime.require_gateway().permissions.granted_commands(task_id=task_id)}
+        return {
+            "rules": runtime.require_gateway()
+            .require_permissions()
+            .granted_commands(task_id=task_id)
+        }
 
     @r.delete("/tasks/{task_id}/permissions", response_model=Ok)
     async def revoke_task_permission(
@@ -110,7 +114,11 @@ def build_profile_router(d: GatewayDeps, get_runtime) -> APIRouter:
         double-revoking isn't an error worth a 404."""
         if await runtime.require_tasks().get_task(task_id) is None:
             return Response(status_code=404)
-        ok = runtime.require_gateway().permissions.revoke_command(req.rule, task_id=task_id)
+        ok = (
+            runtime.require_gateway()
+            .require_permissions()
+            .revoke_command(req.rule, task_id=task_id)
+        )
         return {"ok": ok}
 
     return r

@@ -16,7 +16,7 @@ import contextlib
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ag2 import Agent
 
@@ -41,8 +41,9 @@ from assistant.tasks.summary import default_summarizer, suggest_task_meta, summa
 if TYPE_CHECKING:
     # Annotation-only imports: the runtime ones are lazy, inside the methods that use them.
     from assistant.gateway.core import Gateway
+    from assistant.hitl import InquiryStore
     from assistant.scheduler_lock import SchedulerLock
-    from assistant.tasks import Scheduler
+    from assistant.tasks import Scheduler, TaskStore
 
 # Chars of prior-run index a surface carries before the oldest entries are dropped.
 # ~125 summaries: six months of a weekday task.
@@ -203,8 +204,8 @@ class TaskService:
     def __init__(
         self,
         config: Config | None = None,
-        store=None,
-        inquiry_store=None,
+        store: "TaskStore | None" = None,
+        inquiry_store: "InquiryStore | None" = None,
         max_concurrent: int = 3,
         scheduler_interval: float = 30.0,
         config_factory: Callable[[], Config] | None = None,
@@ -254,11 +255,23 @@ class TaskService:
         self._questions = questions
 
     @property
-    def store(self):
+    def store(self) -> "TaskStore | None":
         return self._store
 
     @property
-    def inquiries(self):
+    def inquiries(self) -> "InquiryStore | None":
+        return self._inquiries
+
+    def _require_store(self) -> "TaskStore":
+        """The task store, which exists once ``start()`` has run."""
+        if self._store is None:
+            raise RuntimeError("task service is not started")
+        return self._store
+
+    def _require_inquiries(self) -> "InquiryStore":
+        """The inquiry store, which exists once ``start()`` has run."""
+        if self._inquiries is None:
+            raise RuntimeError("task service is not started")
         return self._inquiries
 
     @property
@@ -288,7 +301,7 @@ class TaskService:
             if lock.acquire():
                 self._scheduler_lock = lock
                 self._scheduler = Scheduler(
-                    self._store, self._fire, interval=self._scheduler_interval
+                    self._require_store(), self._fire, interval=self._scheduler_interval
                 )
                 await self._scheduler.start()
 
@@ -297,7 +310,7 @@ class TaskService:
         ones ``_MIGRATED_RECALL`` so the upgrade changes nothing for them. Best-effort:
         a failure here costs look-back, never data."""
         try:
-            await self._store.backfill_recall(_MIGRATED_RECALL)
+            await self._require_store().backfill_recall(_MIGRATED_RECALL)
         except Exception as exc:
             from assistant.observability import log_suppressed
 
@@ -311,7 +324,7 @@ class TaskService:
             # connections.json, and a store with no environment would migrate a
             # token-seeded install into nothing.
             store = ConnectionStore(self._config.paths, self._config.secret_env)
-            await self._store.rekey_origin_channels(store.first_by_platform())
+            await self._require_store().rekey_origin_channels(store.first_by_platform())
         except Exception as exc:
             from assistant.observability import log_suppressed
 
@@ -325,7 +338,7 @@ class TaskService:
         from assistant.folders import READ, READ_WRITE, FolderStore
 
         try:
-            moved = await self._store.strip_workdirs()
+            moved = await self._require_store().strip_workdirs()
             if not moved:
                 return
             folders = FolderStore(self._config.root_dir / "folders.json")
@@ -397,7 +410,7 @@ class TaskService:
             )
             name = gen_name
             description = description or gen_desc
-        task = await self._store.create_task(
+        task = await self._require_store().create_task(
             name=name,
             prompt=prompt,
             model=model or None,
@@ -420,39 +433,41 @@ class TaskService:
             patch["name"] = (patch["name"] or "").strip()
         if "description" in patch:
             patch["description"] = (patch["description"] or "").strip()
-        task = await self._store.update_task(task_id, **patch)
+        task = await self._require_store().update_task(task_id, **patch)
         return None if task is None else await self.get_task(task_id)
 
     async def delete_task(self, task_id: str) -> bool:
         """Delete a task, all its runs, and each run's chat stream. Stops any
         in-flight run first. Irreversible; the GUI gates it behind a confirm."""
-        task = await self._store.get_task(task_id)
+        task = await self._require_store().get_task(task_id)
         if task is None:
             return False
-        for r in await self._store.list_runs(task_id):
+        for r in await self._require_store().list_runs(task_id):
             await self.stop_run(r.id)  # no-op on settled runs
-            await self._store.delete_run(r.id)
+            await self._require_store().delete_run(r.id)
             if self._gateway is not None:
                 with contextlib.suppress(Exception):
                     await self._gateway.delete_chat(r.stream_id)
-        await self._store.delete_task(task_id)
+        await self._require_store().delete_task(task_id)
         if self._gateway is not None:
             # Best-effort: a stub gateway in unit tests may have no `.permissions`
             # at all, and a real deleted task's grants are gone either way once the
             # task itself no longer exists.
             with contextlib.suppress(Exception):
-                self._gateway.permissions.drop_task(task_id)
+                if (permissions := self._gateway.permissions) is not None:
+                    permissions.drop_task(task_id)
             with contextlib.suppress(Exception):
-                self._gateway.folders.drop_task(task_id)
+                if (folders := self._gateway.folders) is not None:
+                    folders.drop_task(task_id)
         return True
 
     async def list_tasks(self) -> list[dict]:
         """Task rows for the drawer: needs-input first, then newest."""
-        tasks = await self._store.list_tasks()
+        tasks = await self._require_store().list_tasks()
         latest: dict[str, Run] = {}
         unread: dict[str, int] = {}
         needs: set[str] = set()
-        for r in await self._store.list_runs():  # newest first
+        for r in await self._require_store().list_runs():  # newest first
             latest.setdefault(r.task_id, r)
             if r.status in RunStatus.TERMINAL and r.seen_at is None:
                 unread[r.task_id] = unread.get(r.task_id, 0) + 1
@@ -463,10 +478,10 @@ class TaskService:
         return out
 
     async def get_task(self, task_id: str) -> dict | None:
-        t = await self._store.get_task(task_id)
+        t = await self._require_store().get_task(task_id)
         if t is None:
             return None
-        runs = await self._store.list_runs(task_id)
+        runs = await self._require_store().list_runs(task_id)
         unread = sum(1 for r in runs if r.status in RunStatus.TERMINAL and r.seen_at is None)
         needs = any(r.status == RunStatus.NEEDS_INPUT for r in runs)
         row = _task_row(t, runs[0] if runs else None, unread, needs)
@@ -474,10 +489,10 @@ class TaskService:
         return row
 
     async def get_run(self, run_id: str) -> dict | None:
-        r = await self._store.get_run(run_id)
+        r = await self._require_store().get_run(run_id)
         if r is None:
             return None
-        t = await self._store.get_task(r.task_id)
+        t = await self._require_store().get_task(r.task_id)
         view = _run_view(r)
         view["task_name"] = t.name if t else ""
         return view
@@ -485,12 +500,12 @@ class TaskService:
     async def mark_run_seen(self, run_id: str) -> bool:
         """Stamp seen_at once the run is terminal (a live peek is not 'seen' —
         the unread dot must still fire when it finishes). Idempotent."""
-        r = await self._store.get_run(run_id)
+        r = await self._require_store().get_run(run_id)
         if r is None:
             return False
         if r.status in RunStatus.TERMINAL and r.seen_at is None:
             r.seen_at = datetime.now().astimezone().isoformat()
-            await self._store.save_run(r)
+            await self._require_store().save_run(r)
         return True
 
     async def mark_task_runs_seen(self, task_id: str) -> int:
@@ -500,10 +515,10 @@ class TaskService:
         alone so its unread indicator fires when it finishes.
         """
         stamped = 0
-        for r in await self._store.list_runs(task_id):
+        for r in await self._require_store().list_runs(task_id):
             if r.status in RunStatus.TERMINAL and r.seen_at is None:
                 r.seen_at = datetime.now().astimezone().isoformat()
-                await self._store.save_run(r)
+                await self._require_store().save_run(r)
                 stamped += 1
         return stamped
 
@@ -511,7 +526,7 @@ class TaskService:
 
     async def _fire(self, task_id: str) -> None:
         """Scheduler callback: start a run and re-arm (cron) / disarm (once)."""
-        t = await self._store.get_task(task_id)
+        t = await self._require_store().get_task(task_id)
         if t is None or t.paused or not t.next_run_at:
             return
         once = t.schedule.get("kind") == ScheduleKind.ONCE
@@ -532,14 +547,14 @@ class TaskService:
         rearm: dict = {"next_run_at": compute_next_run(t.schedule, base, after_fire=True)}
         if once:
             rearm["schedule"] = manual_schedule()  # exhausted → back to on-demand
-        await self._store.update_task(task_id, **rearm)
+        await self._require_store().update_task(task_id, **rearm)
         await self.start_run(task_id, trigger="once" if once else "schedule")
 
     async def start_run(self, task_id: str, trigger: RunTrigger = "manual") -> Run | None:
-        t = await self._store.get_task(task_id)
+        t = await self._require_store().get_task(task_id)
         if t is None:
             return None
-        run = await self._store.create_run(task_id, trigger=trigger)
+        run = await self._require_store().create_run(task_id, trigger=trigger)
         job = asyncio.create_task(self._execute(run.id))
         self._jobs[run.id] = job
         run_id = run.id  # bound here, not as a lambda default, so the closure is typed
@@ -559,10 +574,10 @@ class TaskService:
         self._config = self._config_factory()
         from assistant.hitl import DurableAsker
 
-        run = await self._store.get_run(run_id)
+        run = await self._require_store().get_run(run_id)
         if run is None or run.status in RunStatus.TERMINAL:
             return
-        task = await self._store.get_task(run.task_id)
+        task = await self._require_store().get_task(run.task_id)
         if task is None:
             await self._finish(run_id, RunStatus.FAILED, error="task deleted")
             return
@@ -572,12 +587,12 @@ class TaskService:
             return
         asker = DurableAsker(
             NullAsker(),
-            self._inquiries,
+            self._require_inquiries(),
             task_id=run_id,  # inquiry.task_id carries the RUN id (run-…)
             channel=task.origin_channel or "web",
             chat=run.stream_id,
         )
-        prior = await self._store.recent_runs(task.id, n=task.recall_depth, before=run_id)
+        prior = await self._require_store().recent_runs(task.id, n=task.recall_depth, before=run_id)
         folder_lines: list[str] = []
         with contextlib.suppress(Exception):
             folder_lines = _task_folder_lines(gateway.folders, self._config.data_dir.name, task.id)
@@ -618,7 +633,7 @@ class TaskService:
 
     async def _finish(self, run_id: str, status: str, **fields) -> None:
         self._stopping.discard(run_id)
-        await self._store.set_run_status(run_id, status, **fields)
+        await self._require_store().set_run_status(run_id, status, **fields)
         # A run cancelled while parked on DurableAsker.ask (stop/delete/shutdown)
         # never reaches its own expire() — CancelledError propagates straight past
         # it — so release any inquiry it still owns here, or it strands the
@@ -626,7 +641,7 @@ class TaskService:
         # even if the inquiry store hiccups.
         if self._inquiries is not None:
             try:
-                await self._inquiries.cancel_for_task(run_id)
+                await self._require_inquiries().cancel_for_task(run_id)
             except Exception as exc:
                 from assistant.observability import log_suppressed
 
@@ -635,7 +650,7 @@ class TaskService:
     async def stop_run(self, run_id: str) -> bool:
         """Stop a live run: cancel its turn (keeps what it already produced on the
         stream). A run still queued on the semaphore is cancelled directly."""
-        run = await self._store.get_run(run_id)
+        run = await self._require_store().get_run(run_id)
         if run is None or run.status in RunStatus.TERMINAL:
             return False
         self._stopping.add(run_id)
@@ -653,7 +668,7 @@ class TaskService:
     async def cancel_all(self, reason: str = "cancelled") -> int:
         """Stop every non-terminal run (profile archive path)."""
         n = 0
-        for r in await self._store.list_runs():
+        for r in await self._require_store().list_runs():
             if r.status not in RunStatus.TERMINAL:
                 await self.stop_run(r.id)
                 n += 1
@@ -688,10 +703,10 @@ class TaskService:
         from assistant.observability import log_suppressed
 
         log_suppressed(what, exc, task_id=task.id)
-        run = await self._store.get_run(run_id)
+        run = await self._require_store().get_run(run_id)
         if run is not None:
             run.delivery_error = _failure_text(exc)
-            await self._store.save_run(run)
+            await self._require_store().save_run(run)
 
     # ---- durable inquiries (HITL) ----
 
@@ -703,15 +718,15 @@ class TaskService:
         rid = inquiry.task_id or ""
         if not rid.startswith("run-") or self._store is None:
             return
-        run = await self._store.get_run(rid)
+        run = await self._require_store().get_run(rid)
         if run is None or run.status in RunStatus.TERMINAL:
             return
         from assistant.hitl.inquiry import InquiryStatus
 
         if kind == "raised" and run.status == RunStatus.RUNNING:
-            await self._store.set_run_status(rid, RunStatus.NEEDS_INPUT)
+            await self._require_store().set_run_status(rid, RunStatus.NEEDS_INPUT)
         elif kind in InquiryStatus.TERMINAL and run.status == RunStatus.NEEDS_INPUT:
-            await self._store.set_run_status(rid, RunStatus.RUNNING)
+            await self._require_store().set_run_status(rid, RunStatus.RUNNING)
 
     async def _mirror_inquiry(self, inquiry, kind) -> None:
         """Durable HITL lifecycle → the Attached Peer: a raised question is shown there
@@ -767,10 +782,10 @@ class TaskService:
             log_suppressed("inquiry event emit", exc, inquiry_id=inquiry.id, kind=kind)
 
     async def pending_inquiries(self, task_id: str | None = None) -> list[dict]:
-        items = await self._inquiries.list_pending(task_id)
+        items = await self._require_inquiries().list_pending(task_id)
         out = []
         for i in items:
-            v = {
+            v: dict[str, Any] = {
                 "id": i.id,
                 "task_id": i.task_id or "",
                 "chat": i.chat or (f"task:{i.task_id}" if i.task_id else ""),
@@ -783,8 +798,8 @@ class TaskService:
             # resolve the run → its task, so the strip can label + link the source
             rid = i.task_id or ""
             if rid.startswith("run-"):
-                run = await self._store.get_run(rid)
-                task = await self._store.get_task(run.task_id) if run else None
+                run = await self._require_store().get_run(rid)
+                task = await self._require_store().get_task(run.task_id) if run else None
                 v["root_id"] = task.id if task else None
                 v["task_title"] = task.name if task else ""
                 v["run_id"] = rid
@@ -794,4 +809,4 @@ class TaskService:
         return out
 
     async def answer_inquiry(self, inquiry_id: str, answer: str) -> bool:
-        return (await self._inquiries.answer(inquiry_id, answer)) is not None
+        return (await self._require_inquiries().answer(inquiry_id, answer)) is not None
