@@ -54,7 +54,7 @@ app = typer.Typer(
 def default_paths() -> Paths:
     """Resolve this install's layout and adopt persisted provider settings."""
     paths = Paths.from_env(os.environ, Path.home())
-    migrate_anthropic_sampling(paths)
+    migrate_anthropic_sampling(paths.config_yaml)
     return paths
 
 

@@ -76,10 +76,11 @@ def config_factory(
     """
 
     def resolve() -> Config:
-        cfg = resolve_config(env or {}, paths)
         meta = ProfileRegistry(paths).get_profile(pid)
         if meta is None:
             raise UnknownProfile(pid)
+        migrate_anthropic_sampling(paths.profile_dir(pid) / "config.yaml")
+        cfg = resolve_config(env or {}, paths)
         return cfg.with_profile(meta, env=env)
 
     return resolve
@@ -406,7 +407,7 @@ class ProfileManager:
         A profile whose boot raises is recorded in ``boot_errors`` and skipped — one
         broken profile must not keep the others (or the server) down.
         """
-        migrate_anthropic_sampling(self.paths)
+        migrate_anthropic_sampling(self.paths.config_yaml)
         setup_logging(self.config)
         self._connections.adopt_peer_senders()
         for meta in self._registry.list_profiles(include_archived=False):
