@@ -14,7 +14,7 @@ process environment. A Config's path fields have no defaults — build one with
 import os
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, model_validator
@@ -170,8 +170,14 @@ class ToolsConfig(BaseModel):
     web_fetch_allow_private: bool = False
 
 
+SharedMemory = Literal["read_write", "read", "off"]
+
+
 class MemoryConfig(BaseModel):
     """Configuration for the passive user-profile memory."""
+
+    # This profile's use of the shared root/user.db: write and read, read only, or neither.
+    shared: SharedMemory = "read_write"
 
     # Distil the profile every N conversation turns (an LLM call each time).
     aggregate_every_n_turns: int = 4

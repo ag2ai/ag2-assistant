@@ -20,6 +20,7 @@ const settings = {
   focuses: [],
   reply_timeout_s: 120.0,
   compact_max_tokens: 50_000,
+  shared_memory: 'read_write',
   preview_browser: '',
   fs: { home: '/home/u', cwd: '/home/u/app', workspace: '/home/u/ws' },
 }

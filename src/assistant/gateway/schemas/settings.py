@@ -9,6 +9,8 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from assistant.config import SharedMemory
+
 from .system import CodexStatusResponse, HealthStateOut
 
 
@@ -127,6 +129,7 @@ class ProfileSettingsResponse(BaseModel):
     focuses: list[str]
     reply_timeout_s: float
     compact_max_tokens: int
+    shared_memory: SharedMemory
     preview_browser: str
     fs: FsRootsOut
 
@@ -241,3 +244,10 @@ class CompactionSavedResponse(BaseModel):
 
     ok: Literal[True]
     compact_max_tokens: int
+
+
+class SharedMemorySavedResponse(BaseModel):
+    """POST /api/p/{pid}/settings/shared-memory — the saved shared-memory mode."""
+
+    ok: Literal[True]
+    shared_memory: SharedMemory

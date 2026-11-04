@@ -539,6 +539,13 @@ since that chat's last update, with each tool result cut to
 `memory.aggregate_tool_result_chars` (default 1,000). ACP listeners still update inside the
 turn and read the whole chat.
 
+Every profile also reads and writes one shared "who the user is" document. A profile's
+`memory.shared` limits that: `read_write` (default), `read` (its `remember` tool saves to
+this profile only) or `off` (saves to this profile only, and the shared document is not in
+its prompt). Set it in the profile's `config.yaml` or with
+`POST /api/p/{pid}/settings/shared-memory` and `{"shared_memory": "read"}`; it applies from
+the next turn.
+
 ## Permissions — control what AG2 Assistant can access
 
 The first time AG2 Assistant wants to read a folder (or run a shell/code command), it asks
