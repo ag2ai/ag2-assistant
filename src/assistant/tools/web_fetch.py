@@ -17,8 +17,8 @@ Two shapes ride on it:
   offered beside the native one so the model can retry locally when the
   provider's fetch itself failed (blocked domain, error result).
 
-Every hop, redirects included, resolves its host first and refuses any address
-that is not public; the request then connects to the checked address itself.
+Every new connection, redirects included, resolves its host itself and refuses
+any address that is not public; it then connects to the address it checked.
 """
 
 import asyncio
@@ -27,6 +27,7 @@ import socket
 from collections.abc import Callable, Iterable
 from contextlib import AsyncExitStack, ExitStack
 
+import httpcore
 import httpx
 from ag2 import tool
 from ag2.annotations import Context
@@ -50,10 +51,11 @@ _USER_AGENT = "AG2 Assistant/0.1"
 _NAT64 = ipaddress.IPv6Network("64:ff9b::/96")
 
 Resolve = Callable[[str, int], list[str]]
+Allow = Callable[[str], bool]
 
 
 class RefusedAddress(Exception):
-    """A URL whose host is not a public internet address."""
+    """A host that resolves to an address the fetcher may not connect to."""
 
 
 def resolve_host(host: str, port: int) -> list[str]:
@@ -70,59 +72,49 @@ def is_public(address: str) -> bool:
     return ip.is_global and not ip.is_multicast
 
 
-def _checked_addresses(url: httpx.URL, resolve: Resolve) -> list[str]:
-    """The public addresses to connect to for ``url``; raises when any is not public."""
-    if url.scheme not in ("http", "https"):
-        raise RefusedAddress("only http and https URLs can be fetched")
-    host = url.host
-    if not host:
-        raise RefusedAddress("the URL has no host")
-    port = url.port or (443 if url.scheme == "https" else 80)
-    try:
-        addresses = resolve(host, port)
-    except OSError as exc:
-        raise httpx.ConnectError(f"cannot resolve {host}: {exc}") from exc
-    if not addresses:
-        raise httpx.ConnectError(f"cannot resolve {host}")
-    for address in addresses:
-        if not is_public(address):
-            raise RefusedAddress(f"{host} is a private or local address ({address})")
-    return addresses
+class PinnedBackend(httpcore.SyncBackend):
+    """Opens TCP connections only to resolved addresses that ``allow`` accepts."""
 
+    def __init__(self, resolve: Resolve = resolve_host, allow: Allow = is_public) -> None:
+        self._resolve = resolve
+        self._allow = allow
 
-def _send_pinned(
-    client: httpx.Client, url: httpx.URL, addresses: list[str], timeout: float
-) -> httpx.Response:
-    """GET ``url`` from the first reachable checked address, keeping its name for Host and TLS."""
-    headers = {"User-Agent": _USER_AGENT, "Host": url.netloc.decode("ascii")}
-    extensions = {"sni_hostname": url.host} if url.scheme == "https" else {}
-    error: httpx.ConnectError | None = None
-    for address in addresses:
-        request = client.build_request(
-            "GET",
-            url.copy_with(host=address),
-            headers=headers,
-            extensions=extensions,
-            timeout=timeout,
-        )
+    def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: Iterable | None = None,
+    ) -> httpcore.NetworkStream:
         try:
-            return client.send(request, follow_redirects=False)
-        except httpx.ConnectError as exc:
-            error = exc
-    assert error is not None
-    raise error
+            addresses = self._resolve(host, port)
+        except OSError as exc:
+            raise httpcore.ConnectError(f"cannot resolve {host}: {exc}") from exc
+        if not addresses:
+            raise httpcore.ConnectError(f"cannot resolve {host}")
+        for address in addresses:
+            if not self._allow(address):
+                raise RefusedAddress(f"{host} is a private or local address ({address})")
+        error: httpcore.ConnectError | None = None
+        for address in addresses:
+            try:
+                return super().connect_tcp(address, port, timeout, local_address, socket_options)
+            except httpcore.ConnectError as exc:
+                error = exc
+        assert error is not None
+        raise error
 
 
-def _get(client: httpx.Client, url: str, timeout: float, resolve: Resolve) -> httpx.Response:
-    """GET ``url``, following redirects, with every hop checked and pinned."""
-    target = httpx.URL(url)
-    for _ in range(MAX_REDIRECTS + 1):
-        response = _send_pinned(client, target, _checked_addresses(target, resolve), timeout)
-        if not response.has_redirect_location:
-            return response
-        target = target.join(response.headers["location"])
-        response.close()
-    raise httpx.TooManyRedirects(f"more than {MAX_REDIRECTS} redirects")
+class PinnedTransport(httpx.HTTPTransport):
+    """httpx's transport over a ``PinnedBackend``; requests keep their hostnames."""
+
+    def __init__(self, resolve: Resolve = resolve_host, allow: Allow = is_public) -> None:
+        super().__init__(trust_env=False)
+        self._pool = httpcore.ConnectionPool(
+            ssl_context=httpx.create_ssl_context(trust_env=False),
+            network_backend=PinnedBackend(resolve, allow),
+        )
 
 
 def _bounded_timeout(timeout) -> float:
@@ -156,16 +148,22 @@ def fetch_url(
     max_chars: int = 10000,
     timeout: float = DEFAULT_TIMEOUT,
     *,
-    client: httpx.Client | None = None,
-    resolve: Resolve = resolve_host,
+    transport: httpx.BaseTransport | None = None,
 ) -> str:
-    """``web_fetch`` over an injectable client and resolver."""
-    if client is None:
-        with httpx.Client(trust_env=False) as owned:
-            return fetch_url(url, max_chars, timeout, client=owned, resolve=resolve)
+    """``web_fetch`` over an injectable transport, a ``PinnedTransport`` by default."""
     timeout = _bounded_timeout(timeout)
     try:
-        response = _get(client, url, timeout, resolve)
+        if httpx.URL(url).scheme not in ("http", "https"):
+            raise RefusedAddress("only http and https URLs can be fetched")
+        with httpx.Client(
+            transport=transport or PinnedTransport(),
+            trust_env=False,
+            follow_redirects=True,
+            max_redirects=MAX_REDIRECTS,
+            timeout=timeout,
+            headers={"User-Agent": _USER_AGENT},
+        ) as client:
+            response = client.get(url)
     except RefusedAddress as e:
         return f"Error fetching {url}: refused, {e}"
     except httpx.TimeoutException:

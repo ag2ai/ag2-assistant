@@ -1,7 +1,9 @@
-"""The local web fetcher: public addresses only, checked on every hop and pinned."""
+"""The local web fetcher: public addresses only, checked and pinned per connection."""
 
 import asyncio
+import threading
 from contextlib import ExitStack
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import httpx
 import pytest
@@ -16,43 +18,77 @@ from assistant.tools.web_fetch import (
     MAX_REDIRECTS,
     MAX_TIMEOUT,
     NativeWebFetch,
+    PinnedTransport,
     fetch_url,
     is_public,
 )
-from tests.support.http import client
 
-PUBLIC = "93.184.215.14"
-OTHER_PUBLIC = "8.8.8.8"
+LOOPBACK = "127.0.0.1"
 
 
 def resolver(answers: dict[str, list[str]]):
-    """Resolve each host to its scripted answers; a list of lists answers in turn."""
+    """Resolve each host to its scripted answers, keeping the hosts asked for."""
     asked: list[str] = []
 
     def resolve(host: str, port: int) -> list[str]:
         asked.append(host)
-        answer = answers[host]
-        if answer and isinstance(answer[0], list):
-            return answer.pop(0)
-        return answer
+        return answers[host]
 
     resolve.asked = asked  # type: ignore[attr-defined]
     return resolve
 
 
-def recording(respond):
-    """A handler that keeps every request it was sent."""
-    sent: list[httpx.Request] = []
-
-    def handle(request: httpx.Request) -> httpx.Response:
-        sent.append(request)
-        return respond(request)
-
-    return handle, sent
+def loopback_only(address: str) -> bool:
+    """Admit only the test server's address."""
+    return address == LOOPBACK
 
 
-def page(text: str = "hello"):
-    return lambda request: httpx.Response(200, text=text, headers={"content-type": "text/plain"})
+class Site(BaseHTTPRequestHandler):
+    """Names served from one address: a cookie, a redirect and a page."""
+
+    seen: list[tuple[str, str, str | None]] = []
+
+    def do_GET(self):  # noqa: N802
+        host = self.headers["Host"].split(":")[0]
+        Site.seen.append((host, self.path, self.headers.get("Cookie")))
+        port = self.server.server_address[1]
+        if self.path == "/login":
+            target = self.headers.get("X-Next") or f"http://other.test:{port}/check"
+            self.send_response(302)
+            self.send_header("Set-Cookie", "sid=secret; Path=/")
+            self.send_header("Location", target)
+            self.end_headers()
+            return
+        if self.path.startswith("/to/"):
+            self.send_response(302)
+            self.send_header("Location", "http://" + self.path[len("/to/") :])
+            self.end_headers()
+            return
+        body = f"page on {host}".encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.fixture
+def site():
+    Site.seen = []
+    server = ThreadingHTTPServer((LOOPBACK, 0), Site)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield server.server_address[1]
+    server.shutdown()
+    server.server_close()
+
+
+def pinned(answers: dict[str, list[str]]):
+    resolve = resolver(answers)
+    return PinnedTransport(resolve=resolve, allow=loopback_only), resolve
 
 
 @pytest.mark.parametrize(
@@ -75,190 +111,135 @@ def page(text: str = "hello"):
         "2002:7f00:1::",
     ],
 )
-def test_a_host_that_resolves_to_a_non_public_address_is_refused_unsent(address):
-    handle, sent = recording(page())
-    result = fetch_url(
-        "http://inside.example/api",
-        client=client(handle),
-        resolve=resolver({"inside.example": [address]}),
-    )
-    assert result.startswith("Error fetching http://inside.example/api: refused,")
-    assert address in result
-    assert sent == []
+def test_non_public_addresses_are_not_public(address):
+    assert not is_public(address)
 
 
-@pytest.mark.parametrize("address", [PUBLIC, OTHER_PUBLIC, "2606:4700::1111"])
+@pytest.mark.parametrize("address", ["93.184.215.14", "8.8.8.8", "2606:4700::1111"])
 def test_public_addresses_are_public(address):
     assert is_public(address)
 
 
-@pytest.mark.parametrize("url", ["http://127.0.0.1:8800/api/health", "http://[::1]:8800/"])
-def test_an_address_literal_is_checked_like_a_name(url):
-    handle, sent = recording(page())
-    host = httpx.URL(url).host
-    result = fetch_url(url, client=client(handle), resolve=resolver({host: [host]}))
+@pytest.mark.parametrize("address", ["127.0.0.1", "10.1.2.3", "169.254.169.254", "::1"])
+def test_the_default_policy_refuses_a_name_resolving_to_a_non_public_address(address):
+    resolve = resolver({"inside.test": [address]})
+    result = fetch_url("http://inside.test/api", transport=PinnedTransport(resolve=resolve))
+    assert result == (
+        f"Error fetching http://inside.test/api: refused, inside.test is a private or local"
+        f" address ({address})"
+    )
+
+
+def test_the_default_policy_refuses_a_loopback_literal(site):
+    result = fetch_url(f"http://127.0.0.1:{site}/page")
     assert "refused" in result
-    assert sent == []
+    assert Site.seen == []
 
 
-def test_one_private_answer_among_public_ones_refuses_the_host():
-    handle, sent = recording(page())
-    result = fetch_url(
-        "https://mixed.example/",
-        client=client(handle),
-        resolve=resolver({"mixed.example": [PUBLIC, "127.0.0.1"]}),
-    )
-    assert "refused" in result and "127.0.0.1" in result
-    assert sent == []
+def test_one_refused_answer_among_allowed_ones_refuses_the_host(site):
+    transport, _ = pinned({"mixed.test": [LOOPBACK, "10.0.0.9"]})
+    result = fetch_url(f"http://mixed.test:{site}/page", transport=transport)
+    assert "refused" in result and "10.0.0.9" in result
+    assert Site.seen == []
 
 
-def test_a_public_host_is_fetched_from_the_checked_address_under_its_own_name():
-    handle, sent = recording(page("the page"))
-    result = fetch_url(
-        "https://site.example:8443/path?q=1",
-        client=client(handle),
-        resolve=resolver({"site.example": [PUBLIC]}),
-    )
-    assert "the page" in result
-    [request] = sent
-    assert request.url.host == PUBLIC
-    assert request.url.port == 8443 and request.url.raw_path == b"/path?q=1"
-    assert request.headers["host"] == "site.example:8443"
-    assert request.extensions["sni_hostname"] == "site.example"
+def test_the_connection_goes_to_the_checked_answer_under_the_requested_name(site):
+    """`.test` names resolve nowhere else, so reaching the server proves the pin."""
+    transport, resolve = pinned({"pinned.test": [LOOPBACK]})
+    result = fetch_url(f"http://pinned.test:{site}/page", transport=transport)
+    assert "page on pinned.test" in result
+    assert Site.seen == [("pinned.test", "/page", None)]
+    assert resolve.asked == ["pinned.test"]
 
 
-def test_plain_http_carries_no_tls_name():
-    handle, sent = recording(page())
-    fetch_url(
-        "http://site.example/",
-        client=client(handle),
-        resolve=resolver({"site.example": [PUBLIC]}),
-    )
-    [request] = sent
-    assert request.url.host == PUBLIC
-    assert "sni_hostname" not in request.extensions
+def test_a_cookie_stays_with_the_host_that_set_it_across_a_same_address_redirect(site):
+    transport, _ = pinned({"first.test": [LOOPBACK], "other.test": [LOOPBACK]})
+    result = fetch_url(f"http://first.test:{site}/login", transport=transport)
+    assert "page on other.test" in result
+    assert Site.seen == [("first.test", "/login", None), ("other.test", "/check", None)]
 
 
-def test_the_connection_uses_the_answer_that_was_checked_not_a_later_one():
-    """A name re-resolved after the check (DNS rebinding) never picks the address."""
-    handle, sent = recording(page())
-    resolve = resolver({"rebind.example": [[PUBLIC], ["127.0.0.1"]]})
-    fetch_url("http://rebind.example/", client=client(handle), resolve=resolve)
-    assert [r.url.host for r in sent] == [PUBLIC]
-    assert resolve.asked == ["rebind.example"]
+def test_the_cookie_is_still_sent_back_to_its_own_host(site):
+    """The jar works at all, so the isolation test above is not passing vacuously."""
+    transport, _ = pinned({"first.test": [LOOPBACK]})
+
+    class Next(httpx.BaseTransport):
+        def handle_request(self, request):
+            request.headers["X-Next"] = f"http://first.test:{site}/check"
+            return transport.handle_request(request)
+
+    fetch_url(f"http://first.test:{site}/login", transport=Next())
+    assert Site.seen[-1] == ("first.test", "/check", "sid=secret")
 
 
-def test_a_redirect_to_a_private_address_is_refused():
-    def respond(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(302, headers={"location": "http://127.0.0.1:8800/api/health"})
-
-    handle, sent = recording(respond)
-    result = fetch_url(
-        "https://public.example/go",
-        client=client(handle),
-        resolve=resolver({"public.example": [PUBLIC], "127.0.0.1": ["127.0.0.1"]}),
-    )
-    assert "refused" in result and "127.0.0.1" in result
-    assert [r.url.host for r in sent] == [PUBLIC]
-
-
-def test_every_hop_is_resolved_again_so_a_rebound_redirect_is_refused():
-    def respond(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(302, headers={"location": "/next"})
-
-    handle, sent = recording(respond)
-    resolve = resolver({"flip.example": [[PUBLIC], ["10.0.0.7"]]})
-    result = fetch_url("http://flip.example/start", client=client(handle), resolve=resolve)
+def test_a_redirect_to_a_refused_address_is_refused(site):
+    transport, _ = pinned({"public.test": [LOOPBACK], "inside.test": ["10.0.0.7"]})
+    result = fetch_url(f"http://public.test:{site}/to/inside.test:{site}/page", transport=transport)
     assert "refused" in result and "10.0.0.7" in result
-    assert len(sent) == 1
-    assert resolve.asked == ["flip.example", "flip.example"]
+    assert [host for host, _, _ in Site.seen] == ["public.test"]
 
 
-def test_a_redirect_to_a_public_address_is_followed_and_joined():
-    def respond(request: httpx.Request) -> httpx.Response:
-        if request.headers["host"] == "first.example":
-            return httpx.Response(301, headers={"location": "https://second.example/final"})
-        return page("arrived")(request)
-
-    handle, sent = recording(respond)
-    result = fetch_url(
-        "http://first.example/",
-        client=client(handle),
-        resolve=resolver({"first.example": [PUBLIC], "second.example": [OTHER_PUBLIC]}),
-    )
-    assert "arrived" in result
-    assert [(r.url.host, r.headers["host"], r.url.path) for r in sent] == [
-        (PUBLIC, "first.example", "/"),
-        (OTHER_PUBLIC, "second.example", "/final"),
-    ]
-
-
-def test_redirects_stop_after_the_limit():
-    handle, sent = recording(lambda request: httpx.Response(302, headers={"location": "/again"}))
-    result = fetch_url(
-        "http://loop.example/",
-        client=client(handle),
-        resolve=resolver({"loop.example": [PUBLIC]}),
-    )
-    assert result.startswith("Error fetching http://loop.example/:")
-    assert "redirects" in result
-    assert len(sent) == MAX_REDIRECTS + 1
-
-
-@pytest.mark.parametrize("url", ["file:///etc/passwd", "ftp://files.example/x"])
-def test_only_http_and_https_are_fetched(url):
-    handle, sent = recording(page())
-    result = fetch_url(url, client=client(handle), resolve=resolver({}))
-    assert result == f"Error fetching {url}: refused, only http and https URLs can be fetched"
-    assert sent == []
-
-
-def test_an_unreachable_address_falls_back_to_the_next_checked_one():
-    def respond(request: httpx.Request) -> httpx.Response:
-        if request.url.host == PUBLIC:
-            raise httpx.ConnectError("unreachable", request=request)
-        return page("second address")(request)
-
-    handle, sent = recording(respond)
-    result = fetch_url(
-        "http://two.example/",
-        client=client(handle),
-        resolve=resolver({"two.example": [PUBLIC, OTHER_PUBLIC]}),
-    )
-    assert "second address" in result
-    assert [r.url.host for r in sent] == [PUBLIC, OTHER_PUBLIC]
+def test_an_unreachable_answer_falls_back_to_the_next_checked_one(site):
+    """The server listens on IPv4 only, so ``::1`` refuses and the next answer serves."""
+    resolve = resolver({"two.test": ["::1", LOOPBACK]})
+    transport = PinnedTransport(resolve=resolve, allow={"::1", LOOPBACK}.__contains__)
+    result = fetch_url(f"http://two.test:{site}/page", transport=transport)
+    assert "page on two.test" in result
 
 
 def test_a_name_that_does_not_resolve_is_reported():
     def resolve(host: str, port: int) -> list[str]:
         raise OSError("no such host")
 
-    handle, sent = recording(page())
-    result = fetch_url("http://nowhere.example/", client=client(handle), resolve=resolve)
+    result = fetch_url("http://nowhere.test/", transport=PinnedTransport(resolve=resolve))
     assert (
-        result
-        == "Error fetching http://nowhere.example/: cannot resolve nowhere.example: no such host"
+        result == "Error fetching http://nowhere.test/: cannot resolve nowhere.test: no such host"
     )
+
+
+@pytest.mark.parametrize("url", ["file:///etc/passwd", "ftp://files.example/x"])
+def test_only_http_and_https_are_fetched(url):
+    sent: list[httpx.Request] = []
+    result = fetch_url(url, transport=httpx.MockTransport(lambda r: sent.append(r)))
+    assert result == f"Error fetching {url}: refused, only http and https URLs can be fetched"
     assert sent == []
 
 
+def page(text: str = "hello"):
+    return lambda request: httpx.Response(200, text=text, headers={"content-type": "text/plain"})
+
+
+def test_redirects_stop_after_the_limit():
+    sent: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(302, headers={"location": "/again"})
+
+    result = fetch_url("http://loop.example/", transport=httpx.MockTransport(respond))
+    assert result.startswith("Error fetching http://loop.example/:")
+    assert "redirects" in result.lower()
+    assert len(sent) == MAX_REDIRECTS + 1
+
+
 def test_an_error_status_is_reported():
-    handle, _ = recording(lambda request: httpx.Response(404))
     result = fetch_url(
-        "http://site.example/missing",
-        client=client(handle),
-        resolve=resolver({"site.example": [PUBLIC]}),
+        "http://site.example/missing", transport=httpx.MockTransport(lambda r: httpx.Response(404))
     )
     assert result == "Error fetching http://site.example/missing: HTTP 404 Not Found"
 
 
 def test_web_fetch_timeout_is_the_agents_to_choose_within_bounds():
     """Absent or unusable values take the 30 s default; any value is clamped to 1-30."""
-    handle, sent = recording(page())
-    resolve = resolver({"x.example": [PUBLIC]})
+    sent: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return page()(request)
+
     for timeout in (5, DEFAULT_TIMEOUT, "2.5", 0, 10_000, "soon", None):
         assert "hello" in fetch_url(
-            "https://x.example", timeout=timeout, client=client(handle), resolve=resolve
+            "https://x.example", timeout=timeout, transport=httpx.MockTransport(respond)
         )
     assert [r.extensions["timeout"]["read"] for r in sent] == [
         5.0,
@@ -275,13 +256,13 @@ def test_web_fetch_reports_a_timeout_instead_of_failing_the_turn():
     def respond(request: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("timed out", request=request)
 
-    resolve = resolver({"slow.example": [PUBLIC]})
-    short = fetch_url("https://slow.example", timeout=3, client=client(respond), resolve=resolve)
+    slow = httpx.MockTransport(respond)
+    short = fetch_url("https://slow.example", timeout=3, transport=slow)
     assert short.startswith("Error fetching https://slow.example: no response within 3s")
     assert "larger timeout, up to 30" in short
-    assert fetch_url(
-        "https://slow.example", timeout=30, client=client(respond), resolve=resolve
-    ) == ("Error fetching https://slow.example: no response within 30s")
+    assert fetch_url("https://slow.example", timeout=30, transport=slow) == (
+        "Error fetching https://slow.example: no response within 30s"
+    )
 
 
 async def test_a_native_fetch_handed_back_to_the_client_runs_ours_on_a_short_budget():
