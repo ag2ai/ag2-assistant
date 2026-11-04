@@ -29,15 +29,21 @@ def _extract_json(text: str) -> str:
 
 async def ask_structured(agent, prompt: str, schema_cls):
     """One validated ``schema_cls`` instance from a one-shot ask on ``agent``."""
+    out, _ = await ask_structured_reply(agent, prompt, schema_cls)
+    return out
+
+
+async def ask_structured_reply(agent, prompt: str, schema_cls):
+    """The validated ``schema_cls`` instance and the reply it came from."""
     if not isinstance(agent.config, ACPConfig):
         reply = await agent.ask(prompt, response_schema=schema_cls)
-        return await reply.content()
+        return await reply.content(), reply
     schema_json = json.dumps(schema_cls.model_json_schema())
     reply = await agent.ask(
         f"{prompt}\n\nReply with ONLY a JSON object matching this JSON Schema — "
         f"no prose, no code fences:\n{schema_json}"
     )
-    return schema_cls.model_validate_json(_extract_json(reply.body))
+    return schema_cls.model_validate_json(_extract_json(reply.body)), reply
 
 
 async def aclose_config(config) -> None:

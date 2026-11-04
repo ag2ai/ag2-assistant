@@ -36,7 +36,7 @@ from assistant.compaction import (
     SkillResolver,
     read_compaction_source,
 )
-from assistant.config import Config, load_config
+from assistant.config import Config, SharedMemory, load_config
 from assistant.folders import FolderStore
 from assistant.hitl import Asker, build_hitl_hook
 from assistant.integrations.google_auth import GoogleAuth
@@ -450,7 +450,20 @@ MEMORY_GUIDANCE = (
 )
 
 
-def build_memory_tool(store_path, user_store_path):
+_NOTE_FIELD = Field(
+    description="The durable preference or fact about the user to save, "
+    "in your own concise words (e.g. 'Always include citations and "
+    "source links in research answers')."
+)
+_CATEGORY_FIELD = Field(
+    description="Which part of the profile this belongs under: "
+    "how=how they like things done; when=timing/cadence/scheduling; "
+    "dislikes=things to avoid or past corrections; "
+    "writing=tone/phrasing for emails & messages."
+)
+
+
+def build_memory_tool(store_path, user_store_path, *, shared: SharedMemory = "read_write"):
     """A tool the agent calls to save an explicit user preference/fact to long-term
     memory immediately (the passive aggregator otherwise only updates every few
     turns, and won't reliably capture a one-off 'remember this').
@@ -459,28 +472,40 @@ def build_memory_tool(store_path, user_store_path):
       - ``store_path`` is THIS profile's ``profile.db`` — persona-scoped memory;
       - ``user_store_path`` is the shared ``root_dir/user.db`` — the universal
         "who the user is" memory read by EVERY profile.
-    The tool closes over both so a "remember this" lands in exactly one, never
-    leaking a persona preference into the shared layer (or vice versa)."""
+    Unless ``shared`` is "read_write" the tool has no ``scope`` and writes only
+    ``store_path``."""
+
+    async def save(target, note, category, where) -> str:
+        try:
+            await remember_note(target, note, category)
+        except Exception as exc:  # surface a clear failure rather than a tool error
+            return f"Could not save to memory: {exc}"
+        return f"Saved to {where} (under '{category}')."
+
+    if shared != "read_write":
+
+        @tool(name="remember")
+        async def remember_in_profile(
+            note: Annotated[str, _NOTE_FIELD],
+            category: Annotated[
+                Literal["how", "when", "dislikes", "writing"], _CATEGORY_FIELD
+            ] = "how",
+        ) -> str:
+            """Save a durable preference or fact about the user to this profile's memory now.
+
+            Use when the user says "remember ...", "from now on ...", or states a
+            lasting preference. NOT for one-off task details. What you save is injected
+            into future conversations in this profile and is viewable/editable by the
+            user in Settings → Memory.
+            """
+            return await save(store_path, note, category, "this profile's memory")
+
+        return remember_in_profile
 
     @tool
     async def remember(
-        note: Annotated[
-            str,
-            Field(
-                description="The durable preference or fact about the user to save, "
-                "in your own concise words (e.g. 'Always include citations and "
-                "source links in research answers')."
-            ),
-        ],
-        category: Annotated[
-            Literal["how", "when", "dislikes", "writing"],
-            Field(
-                description="Which part of the profile this belongs under: "
-                "how=how they like things done; when=timing/cadence/scheduling; "
-                "dislikes=things to avoid or past corrections; "
-                "writing=tone/phrasing for emails & messages."
-            ),
-        ] = "how",
+        note: Annotated[str, _NOTE_FIELD],
+        category: Annotated[Literal["how", "when", "dislikes", "writing"], _CATEGORY_FIELD] = "how",
         scope: Annotated[
             Literal["profile", "universal"],
             Field(
@@ -502,13 +527,9 @@ def build_memory_tool(store_path, user_store_path):
         this persona's own preferences. What you save is injected into future
         conversations and is viewable/editable by the user in Settings → Memory.
         """
-        target = user_store_path if scope == "universal" else store_path
-        try:
-            await remember_note(target, note, category)
-        except Exception as exc:  # surface a clear failure rather than a tool error
-            return f"Could not save to memory: {exc}"
-        where = "shared 'who you are' memory" if scope == "universal" else "this profile's memory"
-        return f"Saved to {where} (under '{category}')."
+        if scope == "universal":
+            return await save(user_store_path, note, category, "shared 'who you are' memory")
+        return await save(store_path, note, category, "this profile's memory")
 
     return remember
 
@@ -559,7 +580,10 @@ def universal_memory_guidance(config: Config) -> str:
     empty. Read FRESH each turn from ``config.root_dir / "user.db"`` (mirroring
     ``focuses_guidance``'s read-settings-per-turn pattern) so an edit or a
     remember(scope="universal") shows up on the next turn without a reload — and so
-    EVERY profile's agent injects the same identity facts. Empty doc → no section."""
+    EVERY profile's agent injects the same identity facts. Empty doc or a profile
+    whose ``memory.shared`` is "off" → no section."""
+    if config.memory.shared == "off":
+        return ""
     try:
         doc = read_profile_sync(config.root_dir / "user.db")
     except Exception:
@@ -822,10 +846,16 @@ def create_agent(
     # this" immediately (the passive aggregator alone is slow and may filter it).
     # The tool closes over BOTH stores: THIS profile's ``profile.db`` (persona
     # memory) and the shared ``root_dir/user.db`` (universal "who the user is"
-    # memory). Its `scope` argument picks the layer — a persona preference never
-    # leaks into the shared layer, and an identity fact is written once for all.
+    # memory). With memory.shared "read_write" its `scope` argument picks the layer;
+    # otherwise it writes only profile.db.
     if memory:
-        tools.append(build_memory_tool(config.data_dir / "profile.db", config.root_dir / "user.db"))
+        tools.append(
+            build_memory_tool(
+                config.data_dir / "profile.db",
+                config.root_dir / "user.db",
+                shared=config.memory.shared,
+            )
+        )
 
     # One injected authority for all permission decisions (knows the sandbox mode
     # so prompts can say where a command actually runs — host vs container).

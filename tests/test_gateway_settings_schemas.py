@@ -77,12 +77,14 @@ def test_settings_on_a_fresh_profile(client):
         "focuses",
         "reply_timeout_s",
         "compact_max_tokens",
+        "shared_memory",
         "preview_browser",
         "fs",
     }
     assert body["mcp_servers"] == []
     assert body["focuses"] == []
     assert body["compact_max_tokens"] == 50_000
+    assert body["shared_memory"] == "read_write"
     assert body["preview_browser"] == ""
     # No config saved and none pinned: both switchers inherit, and there is
     # nothing to inherit either.

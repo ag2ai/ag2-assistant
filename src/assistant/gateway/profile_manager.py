@@ -130,6 +130,7 @@ class ProfileRuntime:
         stream_observers: Iterable[Callable] = (),
         title_factory: Callable | None = None,
         summary_factory: Callable | None = None,
+        turn_summary_factory: Callable | None = None,
         model_factory: Callable | None = None,
         environment_factory: Callable | None = None,
         plugins: Iterable[Plugin] = (),
@@ -147,6 +148,7 @@ class ProfileRuntime:
         self._stream_observers = tuple(stream_observers)
         self._title_factory = title_factory
         self._summary_factory = summary_factory
+        self._turn_summary_factory = turn_summary_factory
         self._model_factory = model_factory
         self._environment_factory = environment_factory
         self._plugins = tuple(plugins)  # AG2 plugins added to every turn of every profile
@@ -261,6 +263,7 @@ class ProfileRuntime:
             stream_observers=self._stream_observers,
             title_factory=self._title_factory,
             summary_factory=self._summary_factory,
+            turn_summary_factory=self._turn_summary_factory,
             model_factory=self._model_factory,
             environment_factory=self._environment_factory,
             plugins=self._plugins,
@@ -308,6 +311,7 @@ class ProfileManager:
         channel_factory: Callable | None = None,
         title_factory: Callable | None = None,
         summary_factory: Callable | None = None,
+        turn_summary_factory: Callable | None = None,
         model_factory: Callable | None = None,
         environment_factory: Callable | None = None,
         plugins: Iterable[Plugin] = (),
@@ -334,6 +338,7 @@ class ProfileManager:
         self._channel_factory = channel_factory or channels.get_channel
         self._title_factory = title_factory
         self._summary_factory = summary_factory
+        self._turn_summary_factory = turn_summary_factory
         self._model_factory = model_factory
         self._environment_factory = environment_factory
         self._plugins = tuple(plugins)  # AG2 plugins added to every turn of every profile
@@ -437,6 +442,7 @@ class ProfileManager:
             stream_observers=[partial(observer, meta.id) for observer in self._stream_observers],
             title_factory=self._title_factory,
             summary_factory=self._summary_factory,
+            turn_summary_factory=self._turn_summary_factory,
             model_factory=self._model_factory,
             environment_factory=self._environment_factory,
             plugins=self._plugins,

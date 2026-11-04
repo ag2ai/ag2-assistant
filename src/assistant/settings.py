@@ -27,8 +27,10 @@ import re
 import shlex
 from math import isfinite
 from pathlib import Path
+from typing import get_args
 
 from assistant import voice_providers
+from assistant.config import SharedMemory
 from assistant.yamlio import read_yaml, write_yaml
 
 _MCP_KEY = "mcp_servers"
@@ -117,6 +119,18 @@ class Settings:
         data["memory"] = memory
         self._write(data)
         return tokens
+
+    def set_shared_memory(self, mode: str) -> str:
+        """Persist how this profile uses the shared "who the user is" memory."""
+        if mode not in get_args(SharedMemory):
+            raise ValueError("Shared memory must be read_write, read or off.")
+        data = self._read()
+        existing = data.get("memory")
+        memory = existing if isinstance(existing, dict) else {}
+        memory["shared"] = mode
+        data["memory"] = memory
+        self._write(data)
+        return mode
 
     # --- gateway ---
 
