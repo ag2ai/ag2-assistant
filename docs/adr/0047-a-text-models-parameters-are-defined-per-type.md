@@ -24,8 +24,9 @@ normalised `reasoning: high` would promise an equivalence that does not exist.
 
 A Parameter's id is therefore the constructor name AG2's provider configuration takes,
 and its choices or bounds are that provider's: the output limit is `max_output_tokens`
-on Gemini and OpenAI · Responses and `max_tokens` elsewhere, and temperature stops at 1
-on Anthropic and at 2 on the rest. Types that offer none are registered empty — the
+on Gemini and OpenAI · Responses and `max_tokens` elsewhere, and temperature stops at 2.
+Anthropic offers no temperature: AG2 1.3 no longer sends its sampling settings, and
+Advanced options naming them are refused. Types that offer none are registered empty — the
 ChatGPT subscription, whose backend refuses every tunable, and the CLI-login types.
 
 ### 2. A Parameter is an attribute of the Text model, not of a Chat

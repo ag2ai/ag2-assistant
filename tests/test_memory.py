@@ -6,7 +6,7 @@ from ag2.knowledge import SqliteKnowledgeStore
 from ag2.stream import MemoryStream
 
 import assistant.agent as agent_mod
-from assistant.agent import ask
+from assistant.agent import agent_session, ask
 from assistant.compaction import CheckpointData
 from assistant.config import Config, LLMConfig, load_config
 from assistant.memory import (
@@ -21,7 +21,28 @@ from assistant.memory import (
     write_universal,
 )
 from tests.support.apps import compacting_agent
-from tests.support.fakes import CheckpointTestConfig, checkpoint_json
+from tests.support.fakes import CheckpointTestConfig, ScriptedModels, checkpoint_json
+
+
+@pytest.mark.parametrize("compact", [False, True])
+async def test_knowledge_plugin_learns_and_reloads_the_profile(paths, compact):
+    cfg = Config.for_paths(paths)
+    cfg.llm.aggregate_model = "profile-model"
+    profile = "## How they like things done\n* Prefer concise answers.\n"
+    models = ScriptedModels(
+        script=lambda config, model: [profile if model == "profile-model" else "done"]
+    )
+    async with agent_session(
+        cfg, memory=True, skills=False, compact=compact, single_shot=True, model_factory=models
+    ) as agent:
+        await agent.ask("Remember that I prefer concise answers.")
+    assert await read_profile(cfg.data_dir / "profile.db") == profile
+
+    async with agent_session(
+        cfg, memory=True, skills=False, compact=compact, model_factory=models
+    ) as agent:
+        await agent.ask("What do you remember?")
+    assert "Prefer concise answers" in "\n".join(models.requests[-1][1])
 
 
 def test_the_profile_prompt_puts_the_growing_conversation_before_the_profile():
@@ -82,8 +103,13 @@ def test_build_knowledge_config_needs_somewhere_to_persist():
 
 
 def _knowledge_of(agent):
-    """The KnowledgeConfig a built agent actually carries (AG2 keeps it here)."""
-    return agent._knowledge_context.config
+    """The maintenance configuration contributed by the knowledge plugin."""
+    return next(
+        entry.middleware.config
+        for entry in agent.middleware
+        if hasattr(entry.middleware, "config")
+        and hasattr(entry.middleware.config, "aggregate_trigger")
+    )
 
 
 def _aggregate_model(agent) -> str:
