@@ -13,7 +13,7 @@ from assistant.config import Config, resolve_config
 from assistant.events import TurnStarted, TurnSummarized
 from assistant.gateway.agui.session import ChatRuns, TurnRequest
 from assistant.gateway.core import SUMMARY_QUEUE_MAX, Gateway
-from assistant.turn_summary import parent_of
+from assistant.turn_summary import OUTCOME_AIM, OUTCOME_MAX, TurnSummary, parent_of
 from assistant.yamlio import write_yaml
 from tests.support.fakes import FakeReply, FakeRunMixin, fake_agent_factory
 
@@ -145,7 +145,13 @@ async def test_title_and_outcome_are_capped_in_code(paths, tmp_path):
     finally:
         await gateway.close()
     assert len(summary.title) <= 60 and summary.title.endswith("…")
-    assert len(summary.outcome) == 120 and summary.outcome.endswith("…")
+    assert len(summary.outcome) == 150 and summary.outcome.endswith("…")
+
+
+def test_the_model_is_asked_for_120_and_the_outcome_is_cut_only_past_150():
+    described = TurnSummary.model_json_schema()["properties"]["outcome"]["description"]
+    assert (OUTCOME_AIM, OUTCOME_MAX) == (120, 150)
+    assert "at most 120 characters" in described
 
 
 @pytest.mark.parametrize("text", ["fail", "empty"])

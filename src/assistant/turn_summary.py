@@ -12,7 +12,8 @@ from assistant.events import TurnSummarized
 from assistant.structured import aclose_config, ask_structured_reply
 
 TITLE_MAX = 60
-OUTCOME_MAX = 120
+OUTCOME_AIM = 120
+OUTCOME_MAX = 150
 RECENT = 5
 _TEXT_MAX = 2000
 
@@ -25,7 +26,7 @@ class TurnSummary(BaseModel):
         "characters, no quotes, no trailing punctuation)."
     )
     outcome: str = Field(
-        description=f"What was done, in the past tense (at most {OUTCOME_MAX} characters)."
+        description=f"What was done, in the past tense (at most {OUTCOME_AIM} characters)."
     )
     parent_turn_id: str | None = Field(
         default=None,
