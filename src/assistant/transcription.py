@@ -5,11 +5,14 @@ transcribed first and handed to the agent as a `TextInput`.
 """
 
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from ag2.events import BinaryType, TextInput
-from openai import AsyncOpenAI
 
 from assistant.observability import log_suppressed
+
+if TYPE_CHECKING:
+    from openai import AsyncOpenAI
 
 TRANSCRIBE_MODEL = "gpt-4o-mini-transcribe"
 VOICE_PREFIX = "Voice message transcript:\n\n"
@@ -30,7 +33,7 @@ def _is_audio(item) -> bool:
 
 
 async def transcribe_audio(
-    items: Sequence, *, api_key: str, client: AsyncOpenAI | None = None
+    items: Sequence, *, api_key: str, client: "AsyncOpenAI | None" = None
 ) -> list:
     """Replace each audio input with its transcript; other inputs pass through.
 
@@ -39,6 +42,8 @@ async def transcribe_audio(
     """
     if not api_key or not any(_is_audio(i) for i in items):
         return list(items)
+    from openai import AsyncOpenAI  # local: the SDK loads only when a clip is transcribed
+
     openai = client or AsyncOpenAI(api_key=api_key)
     out = []
     for item in items:

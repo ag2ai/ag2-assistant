@@ -15,10 +15,6 @@ import struct
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from ag2.live import OpenAITTSConfig, gemini
-from ag2.live import openai as oai
-from openai import AsyncOpenAI
-
 from assistant.config import Config
 
 DEFAULT_PROVIDER = "gemini"
@@ -137,6 +133,7 @@ def _gemini_key(api_key: str, config: Config) -> str:
 
 
 def _gemini_realtime(config: Config, voice: str, model: str, api_key: str = ""):
+    from ag2.live import gemini  # local: SDK loads on first voice use
     from google.genai import Client  # local: lazy Gemini GenAI SDK
 
     client = Client(api_key=_gemini_key(api_key, config))
@@ -215,6 +212,9 @@ def _openai_key(api_key: str, config: Config) -> str:
 
 
 def _openai_realtime(config: Config, voice: str, model: str, api_key: str = ""):
+    from ag2.live import openai as oai  # local: SDK loads on first voice use
+    from openai import AsyncOpenAI
+
     # AG2's tool-calling example config plus input transcription; audio format and
     # semantic-VAD turn detection stay at the defaults.
     return oai.RealTimeConfig(
@@ -226,6 +226,9 @@ def _openai_realtime(config: Config, voice: str, model: str, api_key: str = ""):
 
 
 async def _openai_preview(config: Config, voice: str, text: str, api_key: str = "") -> bytes:
+    from ag2.live import OpenAITTSConfig  # local: SDK loads on first voice use
+    from openai import AsyncOpenAI
+
     tts = OpenAITTSConfig(
         _OPENAI_TTS_MODEL, voice=voice, client=AsyncOpenAI(api_key=_openai_key(api_key, config))
     )
@@ -235,6 +238,8 @@ async def _openai_preview(config: Config, voice: str, text: str, api_key: str = 
 
 async def _openai_check(api_key: str) -> None:
     """Cheap key probe: list models. Raises on a bad/absent key."""
+    from openai import AsyncOpenAI  # local: SDK loads on first voice use
+
     await AsyncOpenAI(api_key=api_key).models.list()
 
 
