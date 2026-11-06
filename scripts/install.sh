@@ -14,7 +14,7 @@
 set -eu
 
 REF="${AG2_ASSISTANT_REF:-main}"
-EXTRAS="${AG2_ASSISTANT_EXTRAS:-}"
+EXTRAS="${AG2_ASSISTANT_EXTRAS:-gemini}"  # a provider library; "all" installs every one
 REPO="${AG2_ASSISTANT_REPO:-https://github.com/ag2ai/ag2-assistant.git}"
 SPEC="ag2-assistant${EXTRAS:+[$EXTRAS]} @ git+${REPO}@${REF}"
 

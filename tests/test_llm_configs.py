@@ -23,10 +23,12 @@ from assistant.llm_configs import (
     PROVIDER_OF,
     TYPES,
     LlmConfigStore,
+    ProviderLibraryMissing,
     _clean_entry,
     _module_present,
     deps_status,
     image_capable,
+    require_provider_library,
 )
 from assistant.secrets import SecretStore
 from tests.support.apps import write_codex_session
@@ -559,7 +561,7 @@ def test_codex_not_image_capable():
 
 def test_deps_status_clean_for_types_bundled_in_the_base_install():
     """Types with no optional library report ok with an empty hint."""
-    for ctype in ("gemini", "claude_code", "codex"):
+    for ctype in ("claude_code", "codex"):
         assert deps_status(ctype) == {"ok": True, "extra": "", "install": ""}
 
 
@@ -580,6 +582,16 @@ def test_deps_status_names_the_extra_when_the_library_is_absent():
             "install": 'pip install "ag2-assistant[openai]"',
         }
         assert deps_status(ctype, extras=PRESENT_EXTRAS)["ok"] is True
+    assert deps_status("gemini", extras=ABSENT_EXTRAS)["install"] == (
+        'pip install "ag2-assistant[gemini]"'
+    )
+
+
+def test_require_provider_library_names_the_extra():
+    require_provider_library("gemini", extras=PRESENT_EXTRAS)
+    require_provider_library("codex", extras=ABSENT_EXTRAS)  # no library needed
+    with pytest.raises(ProviderLibraryMissing, match=r"ag2-assistant\[gemini\]"):
+        require_provider_library("gemini", extras=ABSENT_EXTRAS)
 
 
 def test_deps_status_probes_the_real_provider_libraries_by_default():

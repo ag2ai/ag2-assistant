@@ -5,8 +5,11 @@
 ### 1. Install
 
 ```bash
-pip install ag2-assistant
+pip install "ag2-assistant[gemini]"   # or [openai], [anthropic], [ollama], [all]
 ```
+
+Model provider libraries are extras; a bare `pip install ag2-assistant` can run only the
+Claude Code / Codex CLI logins until you add one.
 
 Or from source:
 
@@ -458,10 +461,9 @@ loads, and configs that cannot be read or rewritten are retried on the next star
 
 Set the provider; the model and the env var holding its key follow it unless you
 name them too (`openai` → `gpt-5.6-luna` / `OPENAI_API_KEY`, `anthropic` →
-`claude-sonnet-5` / `ANTHROPIC_API_KEY`, `ollama` → `llama3.2`, keyless). Gemini
-is bundled; **OpenAI, Anthropic and Ollama need their provider extra installed
-first** (`pip install "ag2-assistant[openai]"` / `pip install "ag2-assistant[anthropic]"` /
-`pip install "ag2-assistant[ollama]"`; the Docker image already carries all three),
+`claude-sonnet-5` / `ANTHROPIC_API_KEY`, `ollama` → `llama3.2`, keyless). **Every
+provider needs its extra installed first** (`pip install "ag2-assistant[gemini]"`,
+`[openai]`, `[anthropic]`, `[ollama]`, or `[all]`; the Docker image carries them all),
 otherwise the provider fails at first use with a missing-dependency error:
 
 ```yaml

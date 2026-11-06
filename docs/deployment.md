@@ -71,7 +71,7 @@ uv tool install "git+https://github.com/ag2ai/ag2-assistant.git"
 pipx install "git+https://github.com/ag2ai/ag2-assistant.git"
 ```
 
-Add extras like Google integration with `"git+https://github.com/ag2ai/ag2-assistant.git#egg=ag2-assistant[google]"`.
+Pick the extras you need, e.g. `"git+https://github.com/ag2ai/ag2-assistant.git#egg=ag2-assistant[gemini,google]"` (model provider libraries are extras: `gemini`, `openai`, `anthropic`, `ollama`, or `all`).
 
 ---
 
@@ -257,7 +257,7 @@ Publishing a GitHub release (created from a `vX.Y.Z` tag) uploads the sdist + wh
 ag2-classic's `python-package.yml`). From the first release onwards:
 
 ```bash
-uv tool install ag2-assistant        # or: pipx install ag2-assistant / pip install ag2-assistant
+uv tool install "ag2-assistant[gemini]"   # or: pipx install / pip install; pick [openai], [anthropic], [ollama] or [all]
 ```
 
 Release flow: pushing the tag publishes the Docker image; publishing the GitHub release from

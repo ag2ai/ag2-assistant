@@ -17,8 +17,7 @@ from typing import Annotated
 from urllib.parse import quote
 
 from ag2 import Agent, Context, tool
-from ag2.config import OpenAIResponsesConfig
-from ag2.config.gemini import GeminiConfig
+from ag2.config import GeminiConfig, OpenAIResponsesConfig
 from ag2.tools import ImageGenerationTool
 from pydantic import Field
 

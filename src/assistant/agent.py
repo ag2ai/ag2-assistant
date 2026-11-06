@@ -10,11 +10,12 @@ from ag2 import Agent, tool
 from ag2.assembly import AssemblerMiddleware
 from ag2.config import (
     AnthropicConfig,
+    GeminiConfig,
+    ModelProvider,
     OllamaConfig,
     OpenAICompletionsConfig,
     OpenAIResponsesConfig,
 )
-from ag2.config.gemini import GeminiConfig
 from ag2.middleware import HaltCheckMiddleware, Middleware
 from ag2.middleware.base import MiddlewareFactory
 from ag2.policies import AlertPolicy, ConversationPolicy, WorkingMemoryPolicy
@@ -40,6 +41,7 @@ from assistant.config import Config, SharedMemory, load_config
 from assistant.folders import FolderStore
 from assistant.hitl import Asker, build_hitl_hook
 from assistant.integrations.google_auth import GoogleAuth
+from assistant.llm_configs import ProviderLibraryMissing, require_provider_library
 from assistant.memory import (
     build_compaction_config,
     build_knowledge_config,
@@ -104,6 +106,8 @@ def model_config(config: Config, model: str | None = None):
     """
     model = model or config.llm.model
     provider = config.llm.provider.lower()
+    if provider not in ACP_PROVIDERS:
+        require_provider_library(provider)
     api_key = config.secret_env.get(KEY_ENV.get(provider, config.llm.api_key_env), "")
     opts: dict[str, Any] = dict(config.llm.provider_options.get(provider) or {})
     if provider in ACP_PROVIDERS:
@@ -186,6 +190,33 @@ def model_config(config: Config, model: str | None = None):
         **opts,
     }
     return GeminiConfig(**gemini_kwargs)
+
+
+class MissingProviderModelConfig:
+    """A ModelConfig stand-in for a provider whose library is not installed: it
+    carries the provider and model, and every client call raises the install hint."""
+
+    def __init__(self, config: Config, model: str | None, error: ProviderLibraryMissing) -> None:
+        self._provider = ModelProvider(config.llm.provider.lower())
+        self._model = model or config.llm.model
+        self._error = error
+
+    @property
+    def provider(self) -> ModelProvider:
+        return self._provider
+
+    @property
+    def model(self):
+        return self._model
+
+    def copy(self):
+        return self
+
+    def create(self):
+        raise self._error
+
+    def create_files_client(self):
+        raise self._error
 
 
 class RefreshingModelConfig:
@@ -756,7 +787,11 @@ def create_agent(
     knowledge = None
     assembly: list = []
     agg_model = config.llm.aggregate_model or _default_aggregate_model(config)
-    agg_config = model_factory(config, agg_model) if memory else None
+    try:
+        agg_config = model_factory(config, agg_model) if memory else None
+    except ProviderLibraryMissing as exc:
+        # The base agent still boots; the first model call reports the missing library.
+        agg_config = MissingProviderModelConfig(config, agg_model, exc)
     if memory:
         if owner is not None and knowledge_store is None:
             knowledge_store = owned_resource(

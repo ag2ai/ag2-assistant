@@ -145,6 +145,7 @@ def cli_login_present(
 # below, not a global to be rewritten: a caller (a test, or a future install with its
 # own extras) passes its own map instead of patching this one.
 PROVIDER_EXTRA = {
+    "gemini": ("google.genai", "gemini"),
     "anthropic": ("anthropic", "anthropic"),
     "ollama": ("ollama", "ollama"),
     "openai": ("openai", "openai"),
@@ -178,6 +179,22 @@ def deps_status(ctype: str, *, extras: Mapping[str, tuple[str, str]] = PROVIDER_
         "extra": extra,
         "install": f'pip install "ag2-assistant[{extra}]"',
     }
+
+
+class ProviderLibraryMissing(RuntimeError):
+    """The configured provider's client library is not installed."""
+
+
+def require_provider_library(
+    ctype: str, *, extras: Mapping[str, tuple[str, str]] = PROVIDER_EXTRA
+) -> None:
+    """Raise ProviderLibraryMissing, naming the extra to install, when ``ctype`` needs
+    a library this install lacks."""
+    status = deps_status(ctype, extras=extras)
+    if not status["ok"]:
+        raise ProviderLibraryMissing(
+            f"the {ctype} provider library is not installed; run {status['install']}"
+        )
 
 
 _SECTION = "llm_configs"
