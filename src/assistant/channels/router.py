@@ -10,7 +10,6 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
 
 from ag2.events import ModelMessageChunk, TextInput, ToolCallsEvent
-from openai import AsyncOpenAI
 
 from assistant import connections
 from assistant import pairing as pairing_mod
@@ -23,6 +22,8 @@ from assistant.transcription import transcribe_audio
 from assistant.workspace import write_upload
 
 if TYPE_CHECKING:
+    from openai import AsyncOpenAI
+
     from assistant.gateway.core import Gateway  # type-only (runtime import would cycle)
 
 # A bare attachment carries no words, so the model is given a prompt for it.
@@ -561,7 +562,7 @@ class ChannelRouter:
         directory: ProfileDirectory,
         paths: Paths,
         *,
-        transcribe_client: AsyncOpenAI | None = None,
+        transcribe_client: "AsyncOpenAI | None" = None,
     ) -> None:
         self._directory = directory
         self._transcribe_client = transcribe_client

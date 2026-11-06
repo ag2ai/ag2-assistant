@@ -14,13 +14,12 @@ import asyncio
 import struct
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-
-from ag2.live import OpenAITTSConfig, gemini
-from ag2.live import openai as oai
-from ag2.live.realtime import RealtimeConfig
-from openai import AsyncOpenAI
+from typing import TYPE_CHECKING
 
 from assistant.config import Config
+
+if TYPE_CHECKING:
+    from ag2.live.realtime import RealtimeConfig
 
 DEFAULT_PROVIDER = "gemini"
 PREVIEW_TEXT = "Hi, I'm AG2 Assistant. This is how I sound — happy to help you out."
@@ -53,7 +52,7 @@ class VoiceProvider:
     # (config, voice, model, api_key) -> RealtimeConfig. api_key is the resolved key for
     # the active live config (its own per-config key, or the shared provider key); the
     # builders fall back to the provider's env key when it is empty.
-    build_realtime: Callable[[Config, str, str, str], RealtimeConfig]
+    build_realtime: Callable[[Config, str, str, str], "RealtimeConfig"]
     synthesize: Callable[
         [Config, str, str, str], Awaitable[bytes]
     ]  # (config, voice, text, api_key)
@@ -138,6 +137,7 @@ def _gemini_key(api_key: str, config: Config) -> str:
 
 
 def _gemini_realtime(config: Config, voice: str, model: str, api_key: str = ""):
+    from ag2.live import gemini  # local: SDK loads on first voice use
     from google.genai import Client  # local: lazy Gemini GenAI SDK
 
     client = Client(api_key=_gemini_key(api_key, config))
@@ -216,6 +216,9 @@ def _openai_key(api_key: str, config: Config) -> str:
 
 
 def _openai_realtime(config: Config, voice: str, model: str, api_key: str = ""):
+    from ag2.live import openai as oai  # local: SDK loads on first voice use
+    from openai import AsyncOpenAI
+
     # AG2's tool-calling example config plus input transcription; audio format and
     # semantic-VAD turn detection stay at the defaults.
     return oai.RealTimeConfig(
@@ -227,6 +230,9 @@ def _openai_realtime(config: Config, voice: str, model: str, api_key: str = ""):
 
 
 async def _openai_preview(config: Config, voice: str, text: str, api_key: str = "") -> bytes:
+    from ag2.live import OpenAITTSConfig  # local: SDK loads on first voice use
+    from openai import AsyncOpenAI
+
     tts = OpenAITTSConfig(
         _OPENAI_TTS_MODEL, voice=voice, client=AsyncOpenAI(api_key=_openai_key(api_key, config))
     )
@@ -236,6 +242,8 @@ async def _openai_preview(config: Config, voice: str, text: str, api_key: str = 
 
 async def _openai_check(api_key: str) -> None:
     """Cheap key probe: list models. Raises on a bad/absent key."""
+    from openai import AsyncOpenAI  # local: SDK loads on first voice use
+
     await AsyncOpenAI(api_key=api_key).models.list()
 
 

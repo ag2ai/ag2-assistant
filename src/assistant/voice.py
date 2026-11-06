@@ -18,7 +18,6 @@ model's speech leaves as `SynthesizedAudioEvent` on the same conversation stream
 from typing import TYPE_CHECKING
 
 from ag2 import tool
-from ag2.live import LiveAgent
 
 from assistant import voice_providers
 from assistant.agent import environment_context
@@ -198,6 +197,8 @@ def build_voice_agent(
             return "Ending the call."
 
         tools.append(end_call)
+
+    from ag2.live import LiveAgent  # local: SDK loads on first voice use
 
     return LiveAgent(
         name="voice",
