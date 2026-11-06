@@ -106,8 +106,6 @@ def model_config(config: Config, model: str | None = None):
     """
     model = model or config.llm.model
     provider = config.llm.provider.lower()
-    if provider not in ACP_PROVIDERS:
-        require_provider_library(provider)
     api_key = config.secret_env.get(KEY_ENV.get(provider, config.llm.api_key_env), "")
     opts: dict[str, Any] = dict(config.llm.provider_options.get(provider) or {})
     if provider in ACP_PROVIDERS:
@@ -115,7 +113,9 @@ def model_config(config: Config, model: str | None = None):
         # and the entry's Advanced options are ACPConfig constructor overrides.
         return acp_provider.BUILDERS[provider](config, model=model, options=opts)
     if provider == "anthropic":
-        validate_anthropic_options(opts)
+        validate_anthropic_options(opts)  # a bad option is refused before the library check
+    require_provider_library(provider)
+    if provider == "anthropic":
         anthropic_kwargs: dict[str, Any] = {
             "model": model,
             "api_key": api_key,
