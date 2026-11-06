@@ -10,12 +10,13 @@ Resolution is DEFAULT-ON: a skill is available unless a record turns it off. See
 ``assistant.state_store`` for the machinery and for why not to "fix" that.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from ag2.context import ConversationContext
 from ag2.exceptions import SkillNotFoundError
+from ag2.tools.skills.runtime import SkillRuntime
 
 from assistant.compaction import SkillTextLoaded
 from assistant.state_store import ORIGIN_BUNDLED, ORIGIN_GLOBAL, ORIGIN_PROFILE, StateStore
@@ -55,8 +56,11 @@ class SkillStateStore(StateStore):
 class DiscoveredSkill(Protocol):
     """What availability resolution reads off a skill a runtime discovered."""
 
-    name: str
-    location: str | None
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def location(self) -> str | None: ...
 
 
 class FilteredSkillRuntime:
@@ -72,7 +76,11 @@ class FilteredSkillRuntime:
     """
 
     def __init__(
-        self, inner, is_available: Callable[[DiscoveredSkill], bool], *, snapshot: bool = False
+        self,
+        inner: SkillRuntime,
+        is_available: Callable[[DiscoveredSkill], bool],
+        *,
+        snapshot: bool = False,
     ) -> None:
         self._inner = inner
         self._is_available = is_available
@@ -96,9 +104,35 @@ class FilteredSkillRuntime:
         await context.send(SkillTextLoaded(name=name, resource=resource, text=text))
         return text
 
-    async def execute(self, name: str, script: str, context: ConversationContext, args=None) -> str:
+    async def execute(
+        self,
+        name: str,
+        script: str,
+        context: ConversationContext,
+        args: dict[str, Any] | Sequence[str] | None = None,
+    ) -> str:
         self._guard(name)
         return await self._inner.execute(name, script, context, args)
+
+    @property
+    def cleanup(self) -> bool:
+        return self._inner.cleanup
+
+    @property
+    def lock_dir(self) -> Path:
+        return self._inner.lock_dir
+
+    def invalidate(self) -> None:
+        self._inner.invalidate()
+
+    def ensure_storage(self) -> None:
+        self._inner.ensure_storage()
+
+    def install(self, source: Path, name: str) -> None:
+        self._inner.install(source, name)
+
+    def remove(self, name: str) -> None:
+        self._inner.remove(name)
 
     def _guard(self, name: str) -> None:
         if self._snapshot is not None:
@@ -116,6 +150,5 @@ class FilteredSkillRuntime:
             raise SkillNotFoundError(f"Skill {name!r} is not available")
 
     def __getattr__(self, item):
-        # Delegate the rest of the SkillRuntime protocol (cleanup, lock_dir,
-        # invalidate, ensure_storage, install, remove, …) to the inner runtime.
+        # Delegate any attribute beyond the SkillRuntime protocol to the inner runtime.
         return getattr(self._inner, item)

@@ -8,7 +8,7 @@ import httpx2
 import openai
 import pytest
 from ag2 import Agent, tool
-from ag2.config import OpenAIConfig, OpenAIResponsesConfig
+from ag2.config import OpenAICompletionsConfig, OpenAIResponsesConfig
 from ag2.events import ModelMessageChunk, ModelResponse, ToolResultsEvent
 from ag2.stream import MemoryStream
 
@@ -156,7 +156,7 @@ async def test_interrupted_provider_stream_recovers_without_reexecuting_tools(tm
         )
         partial = chat_chunk(content="Partial answer")
         recovered = chat_chunk(content="Recovered answer") + b"data: [DONE]\n\n"
-        config_type = OpenAIConfig
+        config_type = OpenAICompletionsConfig
     else:
         item = {
             "type": "function_call",

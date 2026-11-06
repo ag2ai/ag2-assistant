@@ -34,8 +34,8 @@ def persist_uploads(workspace_dir, items) -> list[tuple[str, str]]:
             continue
         if not raw:
             continue
+        name = a.get("name", "file")
         try:
-            name = a.get("name", "file")
             out.append((write_upload(workspace_dir, name, raw), name))
         except Exception as exc:
             log_suppressed("upload persist", exc, name=name)

@@ -14,7 +14,7 @@ dependencies = [
     # Dev installs, CI and the Docker image all resolve this through uv.lock, so they
     # run the same AG2 the published wheel asks for. ddgs powers the native
     # DuckDuckSearchTool, openai the OpenAI voice provider.
-    "ag2[gemini,ddgs,openai,acp,ag-ui]>=1.1.2",
+    "ag2[gemini,ddgs,openai,acp,ag-ui]>=1.3.0",
     "typer>=0.15.0",
     "python-dotenv>=1.0.0",
     "pydantic>=2.0.0",
@@ -44,14 +44,17 @@ dev = [
     "pytest-cov>=6.0",
     "ruff>=0.15.18,<0.17",  # pinned line; matches .pre-commit-config.yaml + the CI lint gate
     "mypy>=2.3,<2.4",
+    # Each release of a pre-1.0 checker can add checks, so ty is pinned to one patch.
+    "ty>=0.0.97,<0.0.98",
+    "pyrefly>=1.4,<1.5",
     "types-PyYAML>=6.0",
     "pre-commit>=4.0.0",
     "types-jsonschema>=4.26.0.20260518",
 ]
 # Provider client libraries not in the base install.
 # Opt-in: `pip install "ag2-assistant[ollama]"`.
-anthropic = ["ag2[anthropic]>=1.1.2"]
-ollama = ["ag2[ollama]>=1.1.2"]
+anthropic = ["ag2[anthropic]>=1.3.0"]
+ollama = ["ag2[ollama]>=1.3.0"]
 # Google integration (Gmail / Calendar / Drive). Opt-in: `pip install ag2-assistant[google]`.
 google = [
     "google-api-python-client>=2.0",
@@ -104,6 +107,21 @@ check_untyped_defs = true
 [[tool.mypy.overrides]]
 module = ["cron_descriptor.*", "googleapiclient.*", "google_auth_oauthlib.*"]
 ignore_missing_imports = true
+
+[tool.ty.environment]
+# Same target and source root as mypy; the interpreter is the project's .venv.
+python-version = "3.12"
+root = ["src"]
+
+[tool.ty.src]
+include = ["src/assistant"]
+
+[tool.pyrefly]
+project-includes = ["src/assistant"]
+search-path = ["src"]
+python-version = "3.12"
+# The same three untyped libraries mypy names in its overrides.
+ignore-missing-imports = ["cron_descriptor.*", "googleapiclient.*", "google_auth_oauthlib.*"]
 
 [tool.codespell]
 # The generated SPA bundle and lockfiles are machine-written — never spell-check them.

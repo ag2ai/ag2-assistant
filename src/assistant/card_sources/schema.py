@@ -76,7 +76,7 @@ class CardSource(SourceDefinition):
             Draft202012Validator.check_schema(contract)
         except SchemaError as exc:
             raise ValueError(f"Invalid source field contract: {exc.message}") from exc
-        pending = [self.fields]
+        pending: list[Any] = [self.fields]
         while pending:
             value = pending.pop()
             if isinstance(value, dict):

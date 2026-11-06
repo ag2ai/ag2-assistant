@@ -90,7 +90,7 @@ def test_model_config_provider_options_openai_compatible(paths):
     cfg.llm.model = "gemma-4-31B-it-qat"
     cfg.llm.provider_options = {"openai": {"base_url": "http://192.168.0.55:8080/v1"}}
     mc = model_config(cfg)
-    assert type(mc).__name__ == "OpenAIConfig"  # chat completions for compat servers
+    assert type(mc).__name__ == "OpenAICompletionsConfig"  # chat completions for compat servers
     assert mc.base_url == "http://192.168.0.55:8080/v1"
     assert mc.model == "gemma-4-31B-it-qat"
 

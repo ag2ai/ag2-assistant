@@ -8,8 +8,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from ag2.a2ui import A2UIMessageEvent
 from ag2.a2ui._types import CreateSurfaceMessage, ServerToClientMessage, UpdateComponentsMessage
+from ag2.a2ui.events import A2UIMessageEvent
 from ag2.context import ConversationContext
 from ag2.tools.skills import MemoryRuntime, MemorySkill
 from ag2.tools.skills.skill_types import Resource, Script, Skill, SkillMetadata

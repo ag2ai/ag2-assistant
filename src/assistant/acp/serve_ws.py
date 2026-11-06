@@ -17,7 +17,8 @@ from typing import Any
 import uvicorn
 from acp.http.asgi import create_asgi_app
 from ag2 import Agent
-from ag2.acp import ACPAgent, SessionConfig
+from ag2.acp.agent import ACPAgent
+from ag2.acp.sessions import SessionConfig
 
 from assistant.acp.approvals import install_owner_side_approvals
 from assistant.acp.auth import choose_auth
@@ -93,7 +94,7 @@ def build_ws_app(acp_agent: ACPAgent, token: str) -> AsgiApp:
       registry on disconnect — so without it a quit client leaves its sessions
       (and the chat's live badge) alive forever.
     """
-    base = create_asgi_app(acp_agent.bind)  # type: ignore[arg-type]  # lifespan passthrough only
+    base = create_asgi_app(acp_agent.bind)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]  # lifespan passthrough only
 
     async def guarded(scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "websocket":

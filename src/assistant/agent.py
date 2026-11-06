@@ -4,18 +4,20 @@ from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from ag2 import Agent, tool
+from ag2.assembly import AssemblerMiddleware
 from ag2.config import (
     AnthropicConfig,
     OllamaConfig,
-    OpenAIConfig,
+    OpenAICompletionsConfig,
     OpenAIResponsesConfig,
 )
 from ag2.config.gemini import GeminiConfig
-from ag2.middleware import Middleware
-from ag2.policies import AlertPolicy
+from ag2.middleware import HaltCheckMiddleware, Middleware
+from ag2.middleware.base import MiddlewareFactory
+from ag2.policies import AlertPolicy, ConversationPolicy, WorkingMemoryPolicy
 from ag2.tools import LocalEnvironment, SkillSearchToolkit
 from ag2.tools.skills import LocalRuntime, SkillPlugin
 from pydantic import Field
@@ -34,7 +36,7 @@ from assistant.compaction import (
     SkillResolver,
     read_compaction_source,
 )
-from assistant.config import Config, load_config
+from assistant.config import Config, SharedMemory, load_config
 from assistant.folders import FolderStore
 from assistant.hitl import Asker, build_hitl_hook
 from assistant.integrations.google_auth import GoogleAuth
@@ -42,7 +44,7 @@ from assistant.memory import (
     build_compaction_config,
     build_knowledge_config,
     build_profile_store,
-    profile_assembly,
+    knowledge_plugin,
     read_profile_sync,
     remember_note,
 )
@@ -52,6 +54,7 @@ from assistant.middleware import (
     LLMRetryMiddleware,
     LLMTimeoutMiddleware,
 )
+from assistant.model_params import validate_anthropic_options
 from assistant.observability import agent_logging_middleware, log_suppressed
 from assistant.observers import build_observers
 from assistant.permissions import PermissionManager, PermissionStore
@@ -102,15 +105,20 @@ def model_config(config: Config, model: str | None = None):
     model = model or config.llm.model
     provider = config.llm.provider.lower()
     api_key = config.secret_env.get(KEY_ENV.get(provider, config.llm.api_key_env), "")
-    opts = dict(config.llm.provider_options.get(provider) or {})
+    opts: dict[str, Any] = dict(config.llm.provider_options.get(provider) or {})
     if provider in ACP_PROVIDERS:
         # Coding CLI over ACP: the CLI's own disk login is the auth (no key),
         # and the entry's Advanced options are ACPConfig constructor overrides.
         return acp_provider.BUILDERS[provider](config, model=model, options=opts)
     if provider == "anthropic":
-        return AnthropicConfig(
-            **{"model": model, "api_key": api_key, "streaming": config.llm.streaming, **opts}
-        )
+        validate_anthropic_options(opts)
+        anthropic_kwargs: dict[str, Any] = {
+            "model": model,
+            "api_key": api_key,
+            "streaming": config.llm.streaming,
+            **opts,
+        }
+        return AnthropicConfig(**anthropic_kwargs)
     if provider == "openai":
         if config.llm.auth_mode == "subscription":
             # "Sign in with ChatGPT": route requests through the ChatGPT backend on
@@ -129,18 +137,16 @@ def model_config(config: Config, model: str | None = None):
             # set to true") and response storage rejected ("Store must be set to
             # false") — both found live; the Codex CLI sends the same. "api" is our
             # own surface switch and meaningless here.
-            sub_opts = {k: v for k, v in opts.items() if k != "api"}
-            return OpenAIResponsesConfig(
-                **{
-                    **sub_opts,
-                    "model": model,
-                    "api_key": creds.access_token,
-                    "base_url": BACKEND_BASE,
-                    "default_headers": default_headers(creds),
-                    "streaming": True,
-                    "store": False,
-                }
-            )
+            sub_kwargs: dict[str, Any] = {
+                **{k: v for k, v in opts.items() if k != "api"},
+                "model": model,
+                "api_key": creds.access_token,
+                "base_url": BACKEND_BASE,
+                "default_headers": default_headers(creds),
+                "streaming": True,
+                "store": False,
+            }
+            return OpenAIResponsesConfig(**sub_kwargs)
         # OpenAI's Responses API (their preferred surface; also enables the native
         # image_generation tool). A custom base_url flips the default to the Chat
         # Completions API instead: OpenAI-compatible servers (llama.cpp, vLLM,
@@ -151,31 +157,35 @@ def model_config(config: Config, model: str | None = None):
             api = "chat" if opts.get("base_url") else "responses"
         if api not in ("responses", "chat", "chat_completions"):
             raise ValueError(f'openai option "api" must be "responses" or "chat", not {api!r}')
-        kwargs = {"model": model, "api_key": api_key, "streaming": config.llm.streaming, **opts}
-        if api == "responses":
-            return OpenAIResponsesConfig(**kwargs)
-        return OpenAIConfig(**kwargs)
-    if provider == "ollama":
-        return OllamaConfig(
-            **{
-                "model": model,
-                "host": config.secret_env.get(OLLAMA_BASE_ENV, DEFAULT_OLLAMA_BASE),
-                "streaming": config.llm.streaming,
-                **opts,
-            }
-        )
-    # Generous output budget so long research notes / briefings aren't truncated
-    # mid-sentence. Gemini counts thinking tokens against max_output_tokens, so
-    # this must cover reasoning plus the full report text.
-    return GeminiConfig(
-        **{
+        kwargs: dict[str, Any] = {
             "model": model,
             "api_key": api_key,
-            "max_output_tokens": 32768,
             "streaming": config.llm.streaming,
             **opts,
         }
-    )
+        if api == "responses":
+            return OpenAIResponsesConfig(**kwargs)
+        return OpenAICompletionsConfig(**kwargs)
+    if provider == "ollama":
+        # Ollama config for the local host; mypy flags AG2's unimplemented Files API protocol.
+        ollama_kwargs: dict[str, Any] = {
+            "model": model,
+            "host": config.secret_env.get(OLLAMA_BASE_ENV, DEFAULT_OLLAMA_BASE),
+            "streaming": config.llm.streaming,
+            **opts,
+        }
+        return OllamaConfig(**ollama_kwargs)  # type: ignore[abstract]
+    # Generous output budget so long research notes / briefings aren't truncated
+    # mid-sentence. Gemini counts thinking tokens against max_output_tokens, so
+    # this must cover reasoning plus the full report text.
+    gemini_kwargs: dict[str, Any] = {
+        "model": model,
+        "api_key": api_key,
+        "max_output_tokens": 32768,
+        "streaming": config.llm.streaming,
+        **opts,
+    }
+    return GeminiConfig(**gemini_kwargs)
 
 
 class RefreshingModelConfig:
@@ -205,9 +215,9 @@ class RefreshingModelConfig:
         return self._factory(self._config, self._model).create_files_client()
 
 
-def _build_middleware(config: Config) -> list:
+def _build_middleware(config: Config) -> list[MiddlewareFactory]:
     """The per-agent LLM middleware stack for this provider."""
-    middleware = [
+    middleware: list[MiddlewareFactory] = [
         agent_logging_middleware(),  # per-turn LLM/tool logs → ag2assistant.log
         CitationMarkerMiddleware(),
         # Retry a failed call before it kills the attempt/task. Listed BEFORE
@@ -446,7 +456,20 @@ MEMORY_GUIDANCE = (
 )
 
 
-def build_memory_tool(store_path, user_store_path):
+_NOTE_FIELD = Field(
+    description="The durable preference or fact about the user to save, "
+    "in your own concise words (e.g. 'Always include citations and "
+    "source links in research answers')."
+)
+_CATEGORY_FIELD = Field(
+    description="Which part of the profile this belongs under: "
+    "how=how they like things done; when=timing/cadence/scheduling; "
+    "dislikes=things to avoid or past corrections; "
+    "writing=tone/phrasing for emails & messages."
+)
+
+
+def build_memory_tool(store_path, user_store_path, *, shared: SharedMemory = "read_write"):
     """A tool the agent calls to save an explicit user preference/fact to long-term
     memory immediately (the passive aggregator otherwise only updates every few
     turns, and won't reliably capture a one-off 'remember this').
@@ -455,28 +478,40 @@ def build_memory_tool(store_path, user_store_path):
       - ``store_path`` is THIS profile's ``profile.db`` — persona-scoped memory;
       - ``user_store_path`` is the shared ``root_dir/user.db`` — the universal
         "who the user is" memory read by EVERY profile.
-    The tool closes over both so a "remember this" lands in exactly one, never
-    leaking a persona preference into the shared layer (or vice versa)."""
+    Unless ``shared`` is "read_write" the tool has no ``scope`` and writes only
+    ``store_path``."""
+
+    async def save(target, note, category, where) -> str:
+        try:
+            await remember_note(target, note, category)
+        except Exception as exc:  # surface a clear failure rather than a tool error
+            return f"Could not save to memory: {exc}"
+        return f"Saved to {where} (under '{category}')."
+
+    if shared != "read_write":
+
+        @tool(name="remember")
+        async def remember_in_profile(
+            note: Annotated[str, _NOTE_FIELD],
+            category: Annotated[
+                Literal["how", "when", "dislikes", "writing"], _CATEGORY_FIELD
+            ] = "how",
+        ) -> str:
+            """Save a durable preference or fact about the user to this profile's memory now.
+
+            Use when the user says "remember ...", "from now on ...", or states a
+            lasting preference. NOT for one-off task details. What you save is injected
+            into future conversations in this profile and is viewable/editable by the
+            user in Settings → Memory.
+            """
+            return await save(store_path, note, category, "this profile's memory")
+
+        return remember_in_profile
 
     @tool
     async def remember(
-        note: Annotated[
-            str,
-            Field(
-                description="The durable preference or fact about the user to save, "
-                "in your own concise words (e.g. 'Always include citations and "
-                "source links in research answers')."
-            ),
-        ],
-        category: Annotated[
-            Literal["how", "when", "dislikes", "writing"],
-            Field(
-                description="Which part of the profile this belongs under: "
-                "how=how they like things done; when=timing/cadence/scheduling; "
-                "dislikes=things to avoid or past corrections; "
-                "writing=tone/phrasing for emails & messages."
-            ),
-        ] = "how",
+        note: Annotated[str, _NOTE_FIELD],
+        category: Annotated[Literal["how", "when", "dislikes", "writing"], _CATEGORY_FIELD] = "how",
         scope: Annotated[
             Literal["profile", "universal"],
             Field(
@@ -498,13 +533,9 @@ def build_memory_tool(store_path, user_store_path):
         this persona's own preferences. What you save is injected into future
         conversations and is viewable/editable by the user in Settings → Memory.
         """
-        target = user_store_path if scope == "universal" else store_path
-        try:
-            await remember_note(target, note, category)
-        except Exception as exc:  # surface a clear failure rather than a tool error
-            return f"Could not save to memory: {exc}"
-        where = "shared 'who you are' memory" if scope == "universal" else "this profile's memory"
-        return f"Saved to {where} (under '{category}')."
+        if scope == "universal":
+            return await save(user_store_path, note, category, "shared 'who you are' memory")
+        return await save(store_path, note, category, "this profile's memory")
 
     return remember
 
@@ -555,7 +586,10 @@ def universal_memory_guidance(config: Config) -> str:
     empty. Read FRESH each turn from ``config.root_dir / "user.db"`` (mirroring
     ``focuses_guidance``'s read-settings-per-turn pattern) so an edit or a
     remember(scope="universal") shows up on the next turn without a reload — and so
-    EVERY profile's agent injects the same identity facts. Empty doc → no section."""
+    EVERY profile's agent injects the same identity facts. Empty doc or a profile
+    whose ``memory.shared`` is "off" → no section."""
+    if config.memory.shared == "off":
+        return ""
     try:
         doc = read_profile_sync(config.root_dir / "user.db")
     except Exception:
@@ -747,7 +781,7 @@ def create_agent(
             ),
             compaction_store=compaction_store,
         )
-        assembly = profile_assembly()
+        assembly = [WorkingMemoryPolicy()]
     elif compact:
         # Memory-less agents (task subagents) still get their context bounded.
         knowledge = build_compaction_config(
@@ -818,10 +852,16 @@ def create_agent(
     # this" immediately (the passive aggregator alone is slow and may filter it).
     # The tool closes over BOTH stores: THIS profile's ``profile.db`` (persona
     # memory) and the shared ``root_dir/user.db`` (universal "who the user is"
-    # memory). Its `scope` argument picks the layer — a persona preference never
-    # leaks into the shared layer, and an identity fact is written once for all.
+    # memory). With memory.shared "read_write" its `scope` argument picks the layer;
+    # otherwise it writes only profile.db.
     if memory:
-        tools.append(build_memory_tool(config.data_dir / "profile.db", config.root_dir / "user.db"))
+        tools.append(
+            build_memory_tool(
+                config.data_dir / "profile.db",
+                config.root_dir / "user.db",
+                shared=config.memory.shared,
+            )
+        )
 
     # One injected authority for all permission decisions (knows the sandbox mode
     # so prompts can say where a command actually runs — host vs container).
@@ -849,15 +889,18 @@ def create_agent(
     if asker is not None:
         hitl_hook = build_hitl_hook(asker)
 
-    # AlertPolicy delivers observer alerts to the model and, on a FATAL alert,
-    # emits a HaltEvent that AG2's halt middleware turns into a short-circuited
-    # turn. Appending it makes `assembly` non-empty for EVERY agent (task
-    # subagents included), which is what wires that halt path in — so the
-    # SilenceWatchdog's FATAL escalation deterministically terminates a wedged
-    # turn even on the memory-less subagents that hang in the incident.
-    assembly = list(assembly) + [AlertPolicy()]
-
     middleware = [] if invocation_only else _build_middleware(config)
+    # Deliver observer alerts and halt FATAL turns, including memory-less workers.
+    middleware.extend(
+        [
+            Middleware(
+                AssemblerMiddleware, policies=[*assembly, AlertPolicy(), ConversationPolicy()]
+            ),
+            Middleware(HaltCheckMiddleware),
+        ]
+    )
+    if knowledge is not None:
+        plugins.append(knowledge_plugin(knowledge))
     selected_model = default_model or llm_config
     if compact:
         assert knowledge is not None
@@ -870,8 +913,6 @@ def create_agent(
         config=selected_model,
         tools=tools,
         plugins=[*plugins, *(extra_plugins or [])],
-        knowledge=knowledge,
-        assembly=assembly,
         hitl_hook=hitl_hook,
         dependencies=dependencies,
         middleware=middleware,

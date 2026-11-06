@@ -8,7 +8,7 @@ const OFFERED: Record<string, string[]> = {
   openai: ['reasoning_effort', 'temperature', 'max_tokens'],
   openai_responses: ['temperature', 'max_output_tokens'],
   gemini: ['thinking_level', 'temperature', 'max_output_tokens'],
-  anthropic: ['temperature', 'max_tokens'],
+  anthropic: ['max_tokens'],
   ollama: ['temperature', 'max_tokens'],
   openai_subscription: [],
   claude_code: [],

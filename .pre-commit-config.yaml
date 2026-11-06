@@ -51,6 +51,19 @@ repos:
         pass_filenames: false
         entry: uv run mypy
 
+      # Same shape as mypy: project environment, configured target, no `files:` filter.
+      - id: ty
+        name: typecheck python (ty)
+        language: system
+        pass_filenames: false
+        entry: uv run ty check
+
+      - id: pyrefly
+        name: typecheck python (pyrefly)
+        language: system
+        pass_filenames: false
+        entry: uv run pyrefly check
+
       # Keep the committed SPA bundle in sync with its source. Any change to a Vite
       # build input under web/ rebuilds static/app and stages it into the same commit,
       # so the bundle can't drift (mirrors the CI "SPA bundle is up to date" gate).

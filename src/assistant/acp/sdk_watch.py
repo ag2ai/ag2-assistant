@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 
 SEND_LOOP_FAILED = "Send loop failed"
 
@@ -35,7 +35,7 @@ class _AttributeSendLoopFailure(logging.Filter):
 @contextlib.contextmanager
 def watch_send_loop(
     on_failure: Callable[[logging.LogRecord], None] | None = None,
-) -> Iterator[None]:
+) -> Generator[None, None, None]:
     """Re-emit the SDK's send-loop failure under this package's logger for the block.
 
     Matched on the root logger, where the SDK emits it; the original record is

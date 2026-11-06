@@ -19,13 +19,15 @@ import copy
 import json
 import logging
 import re
+from collections import deque
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 from urllib.parse import quote
 
 from ag2 import Agent
-from ag2.a2ui import A2UIMessageEvent
+from ag2.a2ui.events import A2UIMessageEvent
 from ag2.agent import AgentRun
 from ag2.context import ConversationContext
 from ag2.events import (
@@ -38,13 +40,14 @@ from ag2.events import (
     ModelResponse,
     UsageEvent,
 )
+from ag2.events.conditions import TypeCondition
 from ag2.knowledge import SqliteKnowledgeStore
 from ag2.knowledge.constants import LOG_PREFIX
 from ag2.plugin import Plugin
 from ag2.stream import MemoryStream
 from ag2.tools import LocalEnvironment
 
-from assistant import onboarding
+from assistant import onboarding, turn_summary
 from assistant import title as title_mod
 from assistant.a2ui import (
     CardCatalog,
@@ -72,7 +75,14 @@ from assistant.codex_auth import CodexAuth, CodexAuthError
 from assistant.coding.detect import parse_bridge
 from assistant.compaction import event_ref
 from assistant.config import Config, load_config
-from assistant.events import ChatSeen, TurnCancelled, TurnCompleted, TurnFailed, TurnStarted
+from assistant.events import (
+    ChatSeen,
+    TurnCancelled,
+    TurnCompleted,
+    TurnFailed,
+    TurnStarted,
+    TurnSummarized,
+)
 from assistant.folders import FolderStore
 from assistant.gateway.chat_activity import ChatActivity
 from assistant.gateway.history import ChatEventLog
@@ -210,6 +220,16 @@ class _ActiveTurn:
     reason: str = "Stopped"
 
 
+SUMMARY_QUEUE_MAX = 10
+
+
+@dataclass
+class _PendingSummary:
+    turn_id: str
+    text: str
+    reply: str
+
+
 @dataclass
 class _AgentGeneration:
     agent: Agent
@@ -233,6 +253,7 @@ class Gateway:
         config_factory: Callable[[], Config] | None = None,
         agent_factory: Callable | None = None,
         title_factory: Callable | None = None,
+        turn_summary_factory: Callable | None = None,
         stream_observers: tuple[Callable, ...] = (),
         model_factory: Callable | None = None,
         environment_factory: Callable | None = None,
@@ -258,6 +279,10 @@ class Gateway:
         self._google = google or GoogleAuth(self._config.paths)
         self._resources = ProfileResources()
         self._title_factory = title_factory or title_mod.default_titler
+        self._turn_summary_factory = turn_summary_factory or turn_summary.default_turn_summarizer
+        # chat_id -> Turns waiting for a summary, and the one task working through them
+        self._summary_queues: dict[str, deque[_PendingSummary]] = {}
+        self._summary_workers: dict[str, asyncio.Task] = {}
         # Profile runtimes re-read registry settings at the actual Turn boundary.
         self._config_factory = config_factory or (lambda: self._config)
         # This profile's Cards and the A2UI runtime over them; both re-read from
@@ -342,15 +367,21 @@ class Gateway:
         return self._catalog
 
     @property
-    def folders(self):
+    def folders(self) -> FolderStore | None:
         """This install's Folder/Grant store (the same instance the turn-level
         ``PermissionManager`` resolves against) — so the ``@``-picker's search can
         honor exactly the access the agent's own reads would (ADR 0006/0012)."""
         return self._folders
 
     @property
-    def permissions(self):
+    def permissions(self) -> PermissionStore | None:
         """Install-wide PermissionStore — task routes/service read task-scoped rules."""
+        return self._permissions
+
+    def require_permissions(self) -> PermissionStore:
+        """The install-wide PermissionStore, set between ``start()`` and ``close()``."""
+        if self._permissions is None:
+            raise RuntimeError("Gateway not started")
         return self._permissions
 
     def usage_today(self) -> dict:
@@ -613,7 +644,7 @@ class Gateway:
         current = list(await stream.history.get_events())
         if self._writer is None:
             return current
-        return await self._writer.replay(chat_id, current, self._chat_archive())  # type: ignore[arg-type]
+        return await self._writer.replay(chat_id, current, self._chat_archive())  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
     def streaming_chunks(self, chat_id: str) -> list[ModelMessageChunk]:
         """The chunks of the model message being written now, which the log never keeps."""
@@ -699,11 +730,11 @@ class Gateway:
         # our ids are strings that name those files, so the ignores below have no fix here.
         stream = self._streams.get(chat_id)
         if stream is None:
-            stream = MemoryStream(id=chat_id)  # type: ignore[arg-type]
+            stream = MemoryStream(id=chat_id)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
             # Retain compaction lifecycle events for reconnects and persisted replay.
             stream.subscribe(
                 stream.history.storage.save_event,
-                condition=CompactionStarted | CompactionCompleted | CompactionFailed,
+                condition=TypeCondition(CompactionStarted) | CompactionCompleted | CompactionFailed,
             )
             self._streams[chat_id] = stream
             self._chat_activity[chat_id] = ChatActivity()
@@ -719,7 +750,9 @@ class Gateway:
                 else:
                     self._streaming.pop(chat_id, None)
 
-            stream.subscribe(collect_chunks, condition=ModelMessageChunk | ModelResponse)
+            stream.subscribe(
+                collect_chunks, condition=TypeCondition(ModelMessageChunk) | ModelResponse
+            )
 
             async def tell_observers(event):
                 for stream_observer in self._stream_observers:
@@ -735,11 +768,11 @@ class Gateway:
             try:
                 raw = await self._read_log(chat_id)
                 if chat_id not in self._synced or self._synced[chat_id] != raw:
-                    events = await self._writer.load_current(chat_id)  # type: ignore[arg-type]
+                    events = await self._writer.load_current(chat_id)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
                     await stream.history.replace(events)
                     activity = ChatActivity()
                     for event in await self._writer.replay(
-                        chat_id,  # type: ignore[arg-type]
+                        chat_id,  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
                         events,
                         self._chat_archive(),
                     ):
@@ -775,7 +808,7 @@ class Gateway:
         """Write the stream's events as the chat's log and remember the stored text."""
         assert self._writer is not None
         async with self._log_locks.setdefault(chat_id, asyncio.Lock()):
-            await self._writer.persist(chat_id, list(await stream.history.get_events()))  # type: ignore[arg-type]
+            await self._writer.persist(chat_id, list(await stream.history.get_events()))  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
             self._synced[chat_id] = await self._read_log(chat_id)
 
     async def _draft_history(self, context: ConversationContext) -> list:
@@ -1149,6 +1182,7 @@ class Gateway:
                         )
                         raise EmptyTurn(EMPTY_TURN_REPLY)
                     await self.emit_event(chat_id, TurnCompleted(chat_id, turn_id=turn_id))
+                    self._queue_turn_summary(chat_id, turn_id, text, reply.body)
                     await self._persist_turn(chat_id, stream, text, reply.body)
                     await self._mirror_turn(chat_id, text, reply.body, origin, attachment_names)
                     return reply.body
@@ -1160,6 +1194,69 @@ class Gateway:
                     self._record_usage(
                         stream, usage_handle, effective.llm.model
                     )  # always tally, even on error
+
+    def _queue_turn_summary(self, chat_id: str, turn_id: str, text: str, reply: str) -> None:
+        """Queue a finished Turn for summarising; each Chat's queue runs oldest first and
+        keeps at most SUMMARY_QUEUE_MAX Turns, dropping the oldest."""
+        if not self._config.gateway.turn_summaries or chat_id.startswith("task-run:"):
+            return
+        queue = self._summary_queues.setdefault(chat_id, deque())
+        if len(queue) >= SUMMARY_QUEUE_MAX:
+            dropped = queue.popleft()
+            logger.warning("turn summary dropped: chat=%s turn=%s", chat_id, dropped.turn_id)
+        queue.append(_PendingSummary(turn_id, text, reply))
+        if chat_id not in self._summary_workers:
+            task = asyncio.create_task(self._summarize_turns(chat_id))
+            self._summary_workers[chat_id] = task
+            self._background.add(task)
+            task.add_done_callback(self._background.discard)
+
+    async def _summarize_turns(self, chat_id: str) -> None:
+        """Summarise this Chat's queued Turns one at a time until the queue is empty."""
+        queue = self._summary_queues[chat_id]
+        try:
+            while queue:
+                await self._summarize_turn(chat_id, queue.popleft())
+        finally:
+            self._summary_workers.pop(chat_id, None)
+            if not queue:
+                self._summary_queues.pop(chat_id, None)
+
+    async def _summarize_turn(self, chat_id: str, pending: "_PendingSummary") -> None:
+        """Emit one Turn's TurnSummarized, offering the Chat's last summaries as parents;
+        a failure or timeout emits nothing."""
+        config = self._config
+        response = None
+        try:
+            stream = await self.stream_for(chat_id)
+            events = await stream.history.get_events()
+            recent = [e for e in events if isinstance(e, TurnSummarized)][-turn_summary.RECENT :]
+            event, response = await asyncio.wait_for(
+                turn_summary.summarize_turn(
+                    config,
+                    chat_id,
+                    pending.turn_id,
+                    pending.text,
+                    pending.reply,
+                    recent,
+                    agent_factory=self._turn_summary_factory,
+                ),
+                config.gateway.turn_summary_timeout_s,
+            )
+        except Exception as exc:
+            log_suppressed("turn summary", exc, chat_id=chat_id)
+            return
+        finally:
+            if (usage := getattr(response, "usage", None)) is not None:
+                with contextlib.suppress(Exception):
+                    self._usage.record(
+                        getattr(response, "model", None) or cheap_model(config) or config.llm.model,
+                        usage.prompt_tokens or 0,
+                        usage.completion_tokens or 0,
+                        usage.total_tokens or None,
+                    )
+        if event is not None:
+            await self.emit_event(chat_id, event)
 
     def _watch_usage(self, stream):
         """Subscribe to this turn's UsageEvents; returns (sub_id, collected list).
@@ -1271,10 +1368,11 @@ class Gateway:
         agent with a short recent-conversation snapshot for immediate grounding."""
         if self._tasks is None:
             raise RuntimeError("Voice needs the task service")
+        tasks = self._tasks
 
         task_context = ""
         if task_id:
-            node = await self._tasks.get_task(task_id)
+            node = await tasks.get_task(task_id)
             if node:
                 task_context = (
                     "You are currently on a task's page. When the user says "
@@ -1305,7 +1403,7 @@ class Gateway:
 
         async def delegate(request: str) -> str:
             if task_id:
-                node = await self._tasks.get_task(task_id)  # fresh each call
+                node = await tasks.get_task(task_id)  # fresh each call
                 snap = _task_summary(node) if node else f"(task {task_id})"
                 return await _send_capturing(
                     request,
@@ -1332,7 +1430,7 @@ class Gateway:
         return build_voice_agent(
             self._config,
             profile_settings(self._config.data_dir, voice_provider=self._config.voice_provider),
-            self._tasks,
+            tasks,
             delegate,
             voice=voice,
             task_context=task_context,
@@ -1439,7 +1537,7 @@ class Gateway:
         if store is None:
             return
         path = self._transcript_path(chat_id)
-        doc = {"chat_id": chat_id, "messages": [], "updated": ""}
+        doc: dict[str, Any] = {"chat_id": chat_id, "messages": [], "updated": ""}
         if await store.exists(path):
             try:
                 doc = json.loads(await store.read(path) or "")
@@ -1764,7 +1862,7 @@ class Gateway:
                 removed = True
             if self._writer is not None:
                 removed = (
-                    await self._writer.delete(chat_id, self._chat_archive()) or removed  # type: ignore[arg-type]
+                    await self._writer.delete(chat_id, self._chat_archive()) or removed  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
                 )
             self._streams.pop(chat_id, None)
             self._chat_activity.pop(chat_id, None)
@@ -1944,6 +2042,7 @@ def build_gateway(
     stream_observers: tuple[Callable, ...] = (),
     title_factory: Callable | None = None,
     summary_factory: Callable | None = None,
+    turn_summary_factory: Callable | None = None,
     model_factory: Callable | None = None,
     environment_factory: Callable | None = None,
     plugins: Iterable[Plugin] = (),
@@ -1962,6 +2061,7 @@ def build_gateway(
         config_factory=config_factory,
         agent_factory=agent_factory,
         title_factory=title_factory,
+        turn_summary_factory=turn_summary_factory,
         stream_observers=stream_observers,
         model_factory=model_factory,
         environment_factory=environment_factory,

@@ -139,6 +139,7 @@ class _PersistentSession:
                 await self.aclose()
                 if attempt == 2:
                     raise
+        raise AssertionError("unreachable: the second attempt returns or raises")
 
     async def list_tools(self, resolved):
         session = await self._session(resolved)

@@ -3,9 +3,11 @@
 import asyncio
 from contextlib import ExitStack
 
+import pytest
 from ag2.context import ConversationContext
 from ag2.events import (
     BuiltinToolCallEvent,
+    HaltEvent,
     ModelResponse,
     ObserverAlert,
     Severity,
@@ -15,12 +17,36 @@ from ag2.events import (
 from ag2.observers import LoopDetector
 from ag2.stream import MemoryStream
 
+from assistant.agent import agent_session
+from assistant.config import Config
 from assistant.observers import (
     NativeToolLoopDetector,
     SilenceWatchdog,
     ToolChurnObserver,
     build_observers,
 )
+from tests.support.fakes import ScriptedModels
+
+
+@pytest.mark.parametrize("memory", [False, True])
+@pytest.mark.parametrize("severity", [Severity.WARNING, Severity.FATAL])
+async def test_agent_delivers_alerts_and_halts_fatal_turns(paths, memory, severity):
+    stream = MemoryStream()
+    await ConversationContext(stream=stream).send(
+        ObserverAlert(source="guard", severity=severity, message="Stop repeating")
+    )
+    models = ScriptedModels()
+    async with agent_session(
+        Config.for_paths(paths), memory=memory, skills=False, model_factory=models
+    ) as agent:
+        reply = await agent.ask("continue", stream=stream)
+    events = await stream.history.get_events()
+    if severity == Severity.FATAL:
+        assert "HALTED" in reply.body
+        assert any(isinstance(event, HaltEvent) for event in events)
+    else:
+        assert reply.body == "done"
+        assert "Stop repeating" in "\n".join(models.requests[-1][1])
 
 
 def _calls(n, name="gmail_search"):

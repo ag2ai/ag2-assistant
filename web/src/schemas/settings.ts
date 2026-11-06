@@ -53,6 +53,7 @@ export const ProfileSettings = z.object({
   focuses: z.array(z.string()),
   reply_timeout_s: z.number(),
   compact_max_tokens: z.number().int(),
+  shared_memory: z.enum(['read_write', 'read', 'off']),
   preview_browser: z.string(),
   fs: FsRoots,
 })
@@ -133,6 +134,12 @@ export const CompactionSaved = z.object({
   compact_max_tokens: z.number().int(),
 })
 export type CompactionSaved = z.infer<typeof CompactionSaved>
+
+export const SharedMemorySaved = z.object({
+  ok: z.literal(true),
+  shared_memory: z.enum(['read_write', 'read', 'off']),
+})
+export type SharedMemorySaved = z.infer<typeof SharedMemorySaved>
 
 export const McpServerSaved = z.object({
   ok: z.literal(true),

@@ -13,7 +13,7 @@ import json
 import os
 import secrets
 import tempfile
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
 
@@ -82,7 +82,7 @@ class PeerStore:
         self._lock_path = paths.root / "peers.json.lock"
 
     @contextmanager
-    def _transaction(self) -> Iterator[list[dict]]:
+    def _transaction(self) -> Generator[list[dict], None, None]:
         """Hold the registry exclusively for one read-modify-write, yielding the
         entries read under the lock.
 

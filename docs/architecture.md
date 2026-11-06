@@ -166,7 +166,7 @@ rebuilds the tool schemas before each Turn, so settings changes apply to the nex
 | ---------------- | ---------------------------- | ------------------------------------------------- |
 | Web search       | `tools/__init__.py`          | native AG2 `DuckDuckSearchTool`                    |
 | Shell / code     | `tools/__init__.py`, `docker_sandbox.py` | host or Docker sandbox; approval-gated |
-| Web fetch        | `tools/web_fetch.py`         | function-tool fallback (native WF conflicts on Gemini) |
+| Web fetch        | `tools/web_fetch.py`         | function-tool fallback (native WF conflicts on Gemini); public addresses only |
 | Read file        | `tools/files.py`             | permission-gated host-path reader                 |
 | Image generation | `tools/image_gen.py`         | provider-aware (Gemini native / OpenAI Responses) |
 | Google           | `tools/google.py`            | Gmail/Calendar/Drive when signed in               |
@@ -345,6 +345,11 @@ platform concerns. HITL surfaces through `ChannelAsker`.
 Every model-backed call in the backend. Two model tiers: **main**
 (`config.llm.model`) for quality-sensitive work, **cheap/aggregate**
 (`cheap_model(config)` / `config.llm.aggregate_model`) for background/bulk.
+
+AG2 1.3's `KnowledgePlugin` registers memory and compaction. Explicit
+`AssemblerMiddleware` injects working memory and observer alerts before
+`ConversationPolicy` filters the transcript; `HaltCheckMiddleware` stops FATAL turns.
+OpenAI configurations explicitly select Responses or Chat Completions.
 
 | # | Agent / call            | File                         | Tier  | Trigger                              | Structured output            |
 | - | ----------------------- | ---------------------------- | ----- | ------------------------------------ | ---------------------------- |

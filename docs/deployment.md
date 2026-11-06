@@ -239,6 +239,7 @@ Notes:
 | `AG2ASSISTANT_DATA_DIR` | install root: secrets, profiles, config, memory | `/data` |
 | `AG2ASSISTANT_WORKSPACE` | the agent's readable/writable file space | `/workspace` |
 | `AG2ASSISTANT_SANDBOX` | `local` (in-container) or `docker` (sibling containers) | `local` |
+| `AG2ASSISTANT_WEB_FETCH_ALLOW_PRIVATE` | set to `true` to let `web_fetch` reach loopback, private and link-local hosts | `false` |
 | `AG2ASSISTANT_DISABLE_NATIVE_TOOLS` | set to `true` to remove the tools that only work in the native app | `false` |
 | `TZ` | IANA timezone for scheduled tasks (wall-clock local) — **set this** | unset → `UTC` |
 | `AG2ASSISTANT_ACP_BRIDGE` | `host:port` of the ACP host bridge; unset = spawn coding agents locally | — |

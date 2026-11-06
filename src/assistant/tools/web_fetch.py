@@ -16,12 +16,18 @@ Two shapes ride on it:
   instead. ``fallback_web_fetch_tool`` is the same fetcher under its own name,
   offered beside the native one so the model can retry locally when the
   provider's fetch itself failed (blocked domain, error result).
+
+Every new connection, redirects included, resolves its host itself and refuses
+any address that is not public; it then connects to the address it checked.
 """
 
 import asyncio
-from collections.abc import Iterable
+import ipaddress
+import socket
+from collections.abc import Callable, Iterable
 from contextlib import AsyncExitStack, ExitStack
 
+import httpcore
 import httpx
 from ag2 import tool
 from ag2.annotations import Context
@@ -39,6 +45,76 @@ FALLBACK_TOOL_NAME = "fetch_page"
 # The ceiling an agent-supplied timeout is clamped to: a fetch must always come
 # back within half a minute, and a slow site is better reported than waited on.
 MAX_TIMEOUT = 30.0
+MAX_REDIRECTS = 10
+_USER_AGENT = "AG2 Assistant/0.1"
+# NAT64's well-known prefix carries an IPv4 address in its last 32 bits.
+_NAT64 = ipaddress.IPv6Network("64:ff9b::/96")
+
+Resolve = Callable[[str, int], list[str]]
+Allow = Callable[[str], bool]
+
+
+class RefusedAddress(Exception):
+    """A host that resolves to an address the fetcher may not connect to."""
+
+
+def resolve_host(host: str, port: int) -> list[str]:
+    """The addresses ``host`` resolves to, in the system's preferred order."""
+    infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM, flags=socket.AI_ADDRCONFIG)
+    return list(dict.fromkeys(str(info[4][0]) for info in infos))
+
+
+def is_public(address: str) -> bool:
+    """Whether ``address`` is a global unicast address, judging NAT64 by its IPv4 part."""
+    ip: ipaddress.IPv4Address | ipaddress.IPv6Address = ipaddress.ip_address(address)
+    if isinstance(ip, ipaddress.IPv6Address) and ip in _NAT64:
+        ip = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+    return ip.is_global and not ip.is_multicast
+
+
+class PinnedBackend(httpcore.SyncBackend):
+    """Opens TCP connections only to resolved addresses that ``allow`` accepts."""
+
+    def __init__(self, resolve: Resolve = resolve_host, allow: Allow = is_public) -> None:
+        self._resolve = resolve
+        self._allow = allow
+
+    def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: Iterable | None = None,
+    ) -> httpcore.NetworkStream:
+        try:
+            addresses = self._resolve(host, port)
+        except OSError as exc:
+            raise httpcore.ConnectError(f"cannot resolve {host}: {exc}") from exc
+        if not addresses:
+            raise httpcore.ConnectError(f"cannot resolve {host}")
+        for address in addresses:
+            if not self._allow(address):
+                raise RefusedAddress(f"{host} is a private or local address ({address})")
+        error: httpcore.ConnectError | None = None
+        for address in addresses:
+            try:
+                return super().connect_tcp(address, port, timeout, local_address, socket_options)
+            except httpcore.ConnectError as exc:
+                error = exc
+        assert error is not None
+        raise error
+
+
+class PinnedTransport(httpx.HTTPTransport):
+    """httpx's transport over a ``PinnedBackend``; requests keep their hostnames."""
+
+    def __init__(self, resolve: Resolve = resolve_host, allow: Allow = is_public) -> None:
+        super().__init__(trust_env=False)
+        self._pool = httpcore.ConnectionPool(
+            ssl_context=httpx.create_ssl_context(trust_env=False),
+            network_backend=PinnedBackend(resolve, allow),
+        )
 
 
 def _bounded_timeout(timeout) -> float:
@@ -64,20 +140,40 @@ def web_fetch(url: str, max_chars: int = 10000, timeout: float = DEFAULT_TIMEOUT
     Returns:
         The extracted text content from the page.
     """
+    return fetch_url(url, max_chars, timeout)
+
+
+def fetch_url(
+    url: str,
+    max_chars: int = 10000,
+    timeout: float = DEFAULT_TIMEOUT,
+    *,
+    transport: httpx.BaseTransport | None = None,
+    allow: Allow = is_public,
+) -> str:
+    """``web_fetch`` over an injectable transport, a ``PinnedTransport(allow=allow)`` by default."""
     timeout = _bounded_timeout(timeout)
     try:
-        response = httpx.get(
-            url,
+        if httpx.URL(url).scheme not in ("http", "https"):
+            raise RefusedAddress("only http and https URLs can be fetched")
+        with httpx.Client(
+            transport=transport or PinnedTransport(allow=allow),
+            trust_env=False,
             follow_redirects=True,
+            max_redirects=MAX_REDIRECTS,
             timeout=timeout,
-            headers={"User-Agent": "AG2 Assistant/0.1"},
-        )
-        response.raise_for_status()
+            headers={"User-Agent": _USER_AGENT},
+        ) as client:
+            response = client.get(url)
+    except RefusedAddress as e:
+        return f"Error fetching {url}: refused, {e}"
     except httpx.TimeoutException:
         hint = " (pass a larger timeout, up to 30, to wait longer)" if timeout < MAX_TIMEOUT else ""
         return f"Error fetching {url}: no response within {timeout:g}s{hint}"
-    except httpx.HTTPError as e:
+    except (httpx.HTTPError, httpx.InvalidURL) as e:
         return f"Error fetching {url}: {e}"
+    if response.is_error:
+        return f"Error fetching {url}: HTTP {response.status_code} {response.reason_phrase}"
 
     content_type = response.headers.get("content-type", "")
 
@@ -137,14 +233,47 @@ def fetch_page(url: str, max_chars: int = 10000, timeout: float = FALLBACK_TIMEO
 fallback_web_fetch_tool = tool(fetch_page)
 
 
+def allow_any_address(address: str) -> bool:
+    """Admit every address, for ``tools.web_fetch_allow_private``."""
+    return True
+
+
+def private_web_fetch(url: str, max_chars: int = 10000, timeout: float = DEFAULT_TIMEOUT) -> str:
+    return fetch_url(url, max_chars, timeout, allow=allow_any_address)
+
+
+def private_fetch_page(url: str, max_chars: int = 10000, timeout: float = FALLBACK_TIMEOUT) -> str:
+    return fetch_url(url, max_chars, timeout, allow=allow_any_address)
+
+
+private_web_fetch.__doc__ = web_fetch.__doc__
+private_fetch_page.__doc__ = fetch_page.__doc__
+private_web_fetch_tool = tool(private_web_fetch, name="web_fetch")
+private_fallback_web_fetch_tool = tool(private_fetch_page, name=FALLBACK_TOOL_NAME)
+
+
+def local_fetch_tools(allow_private: bool = False) -> tuple[Tool, Tool, Callable[..., str]]:
+    """The ``web_fetch`` tool, ``fetch_page`` tool and fetcher for the address policy."""
+    if allow_private:
+        return private_web_fetch_tool, private_fallback_web_fetch_tool, private_web_fetch
+    return web_fetch_tool, fallback_web_fetch_tool, web_fetch
+
+
 class NativeWebFetch(Tool):
     """The provider's ``web_fetch`` first; ours behind it (module docstring)."""
 
-    __slots__ = ("_native", "_timeout", "name")
+    __slots__ = ("_fetcher", "_native", "_timeout", "name")
 
-    def __init__(self, native: Tool, *, timeout: float = FALLBACK_TIMEOUT) -> None:
+    def __init__(
+        self,
+        native: Tool,
+        *,
+        timeout: float = FALLBACK_TIMEOUT,
+        fetcher: Callable[..., str] = web_fetch,
+    ) -> None:
         self._native = native
         self._timeout = timeout
+        self._fetcher = fetcher
         self.name = native.name
 
     @property
@@ -185,18 +314,21 @@ class NativeWebFetch(Tool):
         if not isinstance(max_chars, int) or max_chars < 1:
             max_chars = 10000
         timeout = args.get("timeout", self._timeout)
-        return await asyncio.to_thread(web_fetch, url, max_chars=max_chars, timeout=timeout)
+        return await asyncio.to_thread(self._fetcher, url, max_chars=max_chars, timeout=timeout)
 
 
-def native_first(tools: list, *, timeout: float = FALLBACK_TIMEOUT) -> list:
+def native_first(
+    tools: list, *, timeout: float = FALLBACK_TIMEOUT, allow_private: bool = False
+) -> list:
     """Wrap a provider-native ``web_fetch`` in ``NativeWebFetch`` and offer the local
     fallback beside it; a list without one is returned unchanged."""
+    _, fallback_tool, fetcher = local_fetch_tools(allow_private)
     out, wrapped = [], False
     for t in tools:
         if getattr(t, "name", "") == "web_fetch" and not isinstance(t, NativeWebFetch):
-            t = NativeWebFetch(t, timeout=timeout)
+            t = NativeWebFetch(t, timeout=timeout, fetcher=fetcher)
         wrapped = wrapped or isinstance(t, NativeWebFetch)
         out.append(t)
     if wrapped and not any(getattr(t, "name", "") == FALLBACK_TOOL_NAME for t in out):
-        out.append(fallback_web_fetch_tool)
+        out.append(fallback_tool)
     return out

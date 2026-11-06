@@ -517,7 +517,7 @@ class ChatTrackingACPAgent(ACPAgent):
         self._scope = scope
         real_store = scope._sessions  # noqa: SLF001 — kept for the close-session registry
         # A duck-typed wrapper, not a SessionStore subclass — mypy can't see the match.
-        scope._sessions = _CorrelatingSessionStore(  # type: ignore[assignment]  # noqa: SLF001
+        scope._sessions = _CorrelatingSessionStore(  # type: ignore[assignment]  # ty: ignore[invalid-assignment]  # noqa: SLF001
             real_store,
             lambda stream_id, session_id, meta=None: self._chat_storage.note_session(
                 stream_id,

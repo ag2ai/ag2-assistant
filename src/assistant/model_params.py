@@ -56,7 +56,7 @@ register(
     _output_limit("max_output_tokens"),
 )
 
-register("anthropic", _temperature(1), _output_limit("max_tokens"))
+register("anthropic", _output_limit("max_tokens"))
 
 register("ollama", _temperature(2), _output_limit("max_tokens"))
 
@@ -68,6 +68,17 @@ for _ctype in ("openai_subscription", "claude_code", "codex"):
 def params_for(ctype: str) -> tuple[ModelParam, ...]:
     """The parameters this configuration type offers, in display order."""
     return _REGISTRY.get(ctype, ())
+
+
+def validate_anthropic_options(options: dict) -> None:
+    """Reject sampling settings unsupported by Anthropic's Messages API."""
+    extra = options.get("extra_body")
+    for values in [options, extra] if isinstance(extra, dict) else [options]:
+        for key in ("temperature", "top_p", "top_k"):
+            if values.get(key) is not None:
+                raise ValueError(
+                    f"Anthropic no longer supports {key}; remove it from model options"
+                )
 
 
 def _checked(param: ModelParam, value: object) -> object:

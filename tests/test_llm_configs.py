@@ -799,16 +799,16 @@ def test_generation_parameters_are_saved_under_the_provider_s_own_names(store):
             "name": "A",
             "type": "anthropic",
             "model": "claude",
-            "params": {"temperature": 0.2, "max_tokens": 8000},
+            "params": {"max_tokens": 8000},
         }
     )
-    assert entry["params"] == {"temperature": 0.2, "max_tokens": 8000}
+    assert entry["params"] == {"max_tokens": 8000}
 
 
 @pytest.mark.parametrize(
     ("params", "named"),
     [
-        ({"temperature": 1.5}, "temperature"),  # Anthropic's scale stops at 1
+        ({"temperature": 2.5}, "temperature"),
         ({"temperature": -0.1}, "temperature"),
         ({"temperature": "warm"}, "temperature"),
         ({"temperature": True}, "temperature"),
@@ -819,7 +819,7 @@ def test_generation_parameters_are_saved_under_the_provider_s_own_names(store):
 )
 def test_a_value_outside_a_parameter_s_bounds_is_refused(store, params, named):
     with pytest.raises(ValueError, match=named):
-        store.save_config({"name": "A", "type": "anthropic", "model": "claude", "params": params})
+        store.save_config({"name": "A", "type": "ollama", "model": "local", "params": params})
 
 
 def test_an_output_limit_overrides_the_app_s_own_budget_and_advanced_overrides_both(store, paths):

@@ -426,12 +426,35 @@ Every key above also has an env override (these win over `config.yaml`):
 | `AG2ASSISTANT_LOCATION` | `agent.location` |
 | `AG2ASSISTANT_REPLY_TIMEOUT` | `gateway.reply_timeout_s` |
 | `AG2ASSISTANT_CHAT_TITLES` | `gateway.chat_titles` (`0` turns off the LLM call that names a chat) |
+| `AG2ASSISTANT_TURN_SUMMARIES` | `gateway.turn_summaries` (default `false`; see [Turn summaries](#turn-summaries)) |
 | `AG2ASSISTANT_SANDBOX` | `tools.sandbox` (`local` / `docker`) |
 | `AG2ASSISTANT_DISABLE_NATIVE_TOOLS` | `tools.disable_native` (default `false`; `true` removes the tools that only work in the native app from chat, task and ACP turns: `ask_user`, `answer_question`, `list_open_questions`, `describe_settings`, `describe_integrations`, `list_coding_agents`, `install_skill`, `remove_skill`, `search_skills`, `list_folders`) |
+| `AG2ASSISTANT_WEB_FETCH_ALLOW_PRIVATE` | `tools.web_fetch_allow_private` (default `false`; `true` lets `web_fetch` and `fetch_page` reach loopback, private and link-local hosts, such as a dev server on `localhost`) |
 | `AG2ASSISTANT_DOCKER_IMAGE` / `AG2ASSISTANT_DOCKER_NETWORK` | Docker sandbox |
 | `AG2ASSISTANT_AGGREGATE_EVERY_N` | `memory.aggregate_every_n_turns` |
 
+### Turn summaries
+
+Off by default. With `gateway.turn_summaries: true` (or `AG2ASSISTANT_TURN_SUMMARIES=1`),
+each successful chat turn is followed by one call to the cheap model
+(`llm.aggregate_model`), in the background, after the reply. It emits a
+`TurnSummarized` event on the chat's stream: `turn_id` (the id `TurnStarted` carried),
+`title` (at most 60 characters), `outcome` (asked for at most 120 characters, cut at
+150) and `parent_turn_id`. The parent is the first turn of the earlier work this turn
+continues, or `null`; the model picks it from the chat's last 5 summaries. A chat's summaries run one at a time, in turn
+order. Failed, empty and cancelled turns and task-run chats get none, and a call that
+fails or passes `gateway.turn_summary_timeout_s` (default 30) emits nothing. Stream
+observers receive the event, and AG-UI carries it as a `CUSTOM` event named
+`assistant.events.TurnSummarized`. With the setting off, nothing runs.
+
 ### Switching LLM providers
+
+AG2 1.3 no longer sends Anthropic's `temperature`, `top_p`, or `top_k` settings.
+On upgrade, the CLI and gateway remove these settings from saved Global and
+Profile configs once, preserving other options. New Advanced options containing
+them are rejected; Anthropic still offers the output-token limit.
+Each file records its own completion; Profile configs are adopted when the profile
+loads, and configs that cannot be read or rewritten are retried on the next start.
 
 Set the provider; the model and the env var holding its key follow it unless you
 name them too (`openai` → `gpt-5.6-luna` / `OPENAI_API_KEY`, `anthropic` →
@@ -538,6 +561,13 @@ since that chat's last update, with each tool result cut to
 `memory.aggregate_tool_result_chars` (default 1,000). ACP listeners still update inside the
 turn and read the whole chat.
 
+Every profile also reads and writes one shared "who the user is" document. A profile's
+`memory.shared` limits that: `read_write` (default), `read` (its `remember` tool saves to
+this profile only) or `off` (saves to this profile only, and the shared document is not in
+its prompt). Set it in the profile's `config.yaml` or with
+`POST /api/p/{pid}/settings/shared-memory` and `{"shared_memory": "read"}`; it applies from
+the next turn.
+
 ## Permissions — control what AG2 Assistant can access
 
 The first time AG2 Assistant wants to read a folder (or run a shell/code command), it asks
@@ -555,6 +585,15 @@ ag2-assistant permissions unblock ~/private          # remove the block
 ```
 
 Grants/blocks persist in `~/.ag2assistant/permissions.json`.
+
+**Web fetch stays on the public internet.** The local `web_fetch` (and its `fetch_page`
+fallback) resolves each URL's host, redirects included, and refuses it when any address is
+loopback, private, link-local (including cloud metadata at `169.254.169.254`), shared,
+unspecified or multicast. The request then connects to the address it checked. It does not
+use `HTTP_PROXY`/`HTTPS_PROXY`. To fetch a page on your own machine or network, such as a
+dev server on `localhost`, set `tools.web_fetch_allow_private: true` in `config.yaml` (or
+`AG2ASSISTANT_WEB_FETCH_ALLOW_PRIVATE=true`). It is off by default; with it on, only
+`http`/`https` URLs and the redirect limit still apply.
 
 ## Sandbox — where shell/code runs
 

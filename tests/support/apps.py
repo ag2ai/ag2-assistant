@@ -28,6 +28,7 @@ from assistant.config import load_config
 from assistant.gateway.app import create_app
 from assistant.gateway.core import Gateway
 from assistant.gateway.profile_manager import ProfileManager, resolve_active_profile
+from assistant.memory import knowledge_plugin
 from assistant.paths import Paths
 from assistant.profiles import ProfileRegistry
 from tests.support.fakes import (
@@ -42,7 +43,7 @@ def compacting_agent(config, knowledge, *, tools=(), **options):
     agent = CompactingAgent(
         "chat",
         config=BudgetedModelConfig(config),
-        knowledge=knowledge,
+        plugins=[knowledge_plugin(knowledge), *options.pop("plugins", ())],
         tools=[read_compaction_source, *tools],
         **options,
     )
