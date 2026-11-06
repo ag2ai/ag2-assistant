@@ -459,9 +459,9 @@ loads, and configs that cannot be read or rewritten are retried on the next star
 Set the provider; the model and the env var holding its key follow it unless you
 name them too (`openai` → `gpt-5.6-luna` / `OPENAI_API_KEY`, `anthropic` →
 `claude-sonnet-5` / `ANTHROPIC_API_KEY`, `ollama` → `llama3.2`, keyless). Gemini
-and OpenAI are bundled; **Anthropic and Ollama need their provider extra
-installed first** (`pip install "ag2-assistant[anthropic]"` /
-`pip install "ag2-assistant[ollama]"`; the Docker image already carries both),
+is bundled; **OpenAI, Anthropic and Ollama need their provider extra installed
+first** (`pip install "ag2-assistant[openai]"` / `pip install "ag2-assistant[anthropic]"` /
+`pip install "ag2-assistant[ollama]"`; the Docker image already carries all three),
 otherwise the provider fails at first use with a missing-dependency error:
 
 ```yaml

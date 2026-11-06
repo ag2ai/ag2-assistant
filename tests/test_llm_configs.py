@@ -559,7 +559,7 @@ def test_codex_not_image_capable():
 
 def test_deps_status_clean_for_types_bundled_in_the_base_install():
     """Types with no optional library report ok with an empty hint."""
-    for ctype in ("gemini", "openai", "openai_responses", "openai_subscription", "codex"):
+    for ctype in ("gemini", "claude_code", "codex"):
         assert deps_status(ctype) == {"ok": True, "extra": "", "install": ""}
 
 
@@ -573,6 +573,13 @@ def test_deps_status_names_the_extra_when_the_library_is_absent():
         'pip install "ag2-assistant[anthropic]"'
     )
     assert deps_status("ollama", extras=PRESENT_EXTRAS)["ok"] is True
+    for ctype in ("openai", "openai_responses", "openai_subscription"):
+        assert deps_status(ctype, extras=ABSENT_EXTRAS) == {
+            "ok": False,
+            "extra": "openai",
+            "install": 'pip install "ag2-assistant[openai]"',
+        }
+        assert deps_status(ctype, extras=PRESENT_EXTRAS)["ok"] is True
 
 
 def test_deps_status_probes_the_real_provider_libraries_by_default():

@@ -21,7 +21,7 @@ tick a checklist box once it is actually true.
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"     # add ",google" for the Gmail/Calendar/Drive extra
+pip install -e ".[dev]"     # add ",google" for Gmail/Calendar/Drive, ",openai" for OpenAI models
 pre-commit install          # run the lint/format/safety hooks on every commit
 ```
 

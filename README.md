@@ -92,9 +92,10 @@ The primary interface is the Svelte web UI served at `/` (→ `/app`). It includ
 
 Set up as many named model configurations as you like (Gemini, OpenAI, Anthropic, Ollama, or any OpenAI-compatible endpoint), test them, and switch the active one at any time in **Settings → Models**. Two OpenAI paths are supported: a normal **API key**, or **Sign in with ChatGPT**, which runs on your ChatGPT/Codex subscription instead of paying per token (unofficial — see `ag2-assistant auth --help`).
 
-**Anthropic and Ollama need one extra install.** Gemini, all three OpenAI paths, and the Claude Code / Codex CLI logins work out of the box. The other two ship as configuration types but their provider libraries aren't bundled — Settings → Models says so on the row and on the template card, so you find out before configuring, not at **Test** time:
+**OpenAI, Anthropic and Ollama need one extra install.** Gemini and the Claude Code / Codex CLI logins work out of the box. The other three ship as configuration types but their provider libraries aren't bundled — Settings → Models says so on the row and on the template card, so you find out before configuring, not at **Test** time:
 
 ```bash
+pip install "ag2-assistant[openai]"      # OpenAI API key or Sign in with ChatGPT
 pip install "ag2-assistant[anthropic]"   # Anthropic
 pip install "ag2-assistant[ollama]"      # Ollama (local models)
 ```
@@ -105,7 +106,7 @@ Installed with the one-line script or `uv tool install`? Add the extra to that e
 uv tool install --with "ag2-assistant[ollama]" "git+https://github.com/ag2ai/ag2-assistant.git"
 ```
 
-Running in Docker? Nothing to install — the image already carries both libraries.
+Running in Docker? Nothing to install — the image already carries all three libraries.
 
 #### Claude Code (subscription) as the main model
 

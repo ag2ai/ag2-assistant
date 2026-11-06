@@ -147,6 +147,9 @@ def cli_login_present(
 PROVIDER_EXTRA = {
     "anthropic": ("anthropic", "anthropic"),
     "ollama": ("ollama", "ollama"),
+    "openai": ("openai", "openai"),
+    "openai_responses": ("openai", "openai"),
+    "openai_subscription": ("openai", "openai"),
 }
 
 

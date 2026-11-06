@@ -73,7 +73,7 @@ name = "ag2-assistant"
 version = "0.6.1"
 source = { editable = "." }
 dependencies = [
-    { name = "ag2", extra = ["acp", "ag-ui", "ddgs", "gemini", "openai"] },
+    { name = "ag2", extra = ["acp", "ag-ui", "ddgs", "gemini"] },
     { name = "beautifulsoup4" },
     { name = "cron-descriptor" },
     { name = "cronsim" },
@@ -97,6 +97,7 @@ anthropic = [
     { name = "ag2", extra = ["anthropic"] },
 ]
 dev = [
+    { name = "ag2", extra = ["openai"] },
     { name = "mypy" },
     { name = "pre-commit" },
     { name = "pyrefly" },
@@ -117,12 +118,17 @@ google = [
 ollama = [
     { name = "ag2", extra = ["ollama"] },
 ]
+openai = [
+    { name = "ag2", extra = ["openai"] },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "ag2", extras = ["anthropic"], marker = "extra == 'anthropic'", specifier = ">=1.3.0" },
-    { name = "ag2", extras = ["gemini", "ddgs", "openai", "acp", "ag-ui"], specifier = ">=1.3.0" },
+    { name = "ag2", extras = ["gemini", "ddgs", "acp", "ag-ui"], specifier = ">=1.3.0" },
     { name = "ag2", extras = ["ollama"], marker = "extra == 'ollama'", specifier = ">=1.3.0" },
+    { name = "ag2", extras = ["openai"], marker = "extra == 'dev'", specifier = ">=1.3.0" },
+    { name = "ag2", extras = ["openai"], marker = "extra == 'openai'", specifier = ">=1.3.0" },
     { name = "beautifulsoup4", specifier = ">=4.12.0" },
     { name = "cron-descriptor", specifier = ">=1.4" },
     { name = "cronsim", specifier = ">=2.7" },
@@ -154,7 +160,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
     { name = "websockets", specifier = ">=15" },
 ]
-provides-extras = ["dev", "anthropic", "ollama", "google"]
+provides-extras = ["dev", "anthropic", "ollama", "openai", "google"]
 
 [[package]]
 name = "agent-client-protocol"
