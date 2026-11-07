@@ -447,3 +447,49 @@ async def test_the_env_names_the_file_the_install_mirrors_its_activity_to(paths,
     finally:
         await manager.close()
     assert make_manager(paths, env={}).activity.snapshot()["holds"] == []
+
+
+async def test_polling_during_the_grace_does_not_postpone_the_idle_write(tmp_path):
+    path = tmp_path / "activity.json"
+    a = Activity(path, idle_grace_s=0.1)
+    with a.track("turn"):
+        pass
+    for _ in range(8):  # GET /api/activity refreshes every profile's schedule
+        a.set_scheduled("p", 0, None)
+        await asyncio.sleep(0.02)
+    assert json.loads(path.read_text())["holds"] == []
+
+
+async def test_a_turn_starting_during_the_grace_keeps_the_file_busy_without_a_rewrite(tmp_path):
+    path = tmp_path / "activity.json"
+    a = Activity(path, idle_grace_s=0.1)
+    release = a.acquire("turn")
+    stamp = path.stat().st_mtime_ns
+    release()
+    release = a.acquire("turn")
+    await asyncio.sleep(0.2)
+    assert json.loads(path.read_text())["holds"] == [{"kind": "work", "count": 1, "detail": "turn"}]
+    assert path.stat().st_mtime_ns == stamp
+    release()
+
+
+async def test_archiving_a_profile_drops_its_scheduled_hold(paths):
+    from assistant.profiles import ProfileRegistry
+    from tests.support.apps import make_manager
+
+    registry = ProfileRegistry(paths)
+    work = registry.create_profile("Work", "#109e91").id
+    personal = registry.create_profile("Personal", "#f95339").id
+    manager = make_manager(paths)
+    await manager.start()
+    try:
+        await (
+            manager.get(work)
+            .require_tasks()
+            .create_task(name="A", prompt="p", schedule={"kind": "cron", "cron": "@daily"})
+        )
+        assert [h["kind"] for h in manager.activity.holds()] == ["scheduled"]
+        await manager.archive(work, new_default=personal)
+        assert manager.activity.holds() == []
+    finally:
+        await manager.close()

@@ -5,6 +5,10 @@ background work, an ACP turn), ``scheduled`` (tasks with a future ``next_run_at`
 and ``human`` (a turn parked on a question). ``snapshot()`` is the wire shape of
 ``GET /api/activity``; with a file path it is also written atomically on every change
 of the holds, after a short grace once the last work hold closes.
+
+The registry describes one process: the gateway, which owns every profile's turns,
+runs and ACP listeners. ``ag2-assistant acp-serve`` is a separate per-client stdio
+process an editor launches on the same machine and is not part of this signal.
 """
 
 import asyncio
@@ -87,6 +91,7 @@ class Activity:
         self._idle_since: datetime | None = clock()
         self._last_written: list[dict] | None = None
         self._idle_timer: asyncio.TimerHandle | None = None
+        self._pending: list[dict] | None = None  # the holds the timed idle write carries
 
     # ---- holds ----
 
@@ -146,7 +151,7 @@ class Activity:
     def set_scheduled(self, key: str, count: int, next_at: str | None) -> None:
         """Record one profile's scheduled tasks: how many, and the earliest ``next_run_at``."""
         value = (count, next_at if count else None)
-        if self._scheduled.get(key) == value:
+        if self._scheduled.get(key, (0, None)) == value:
             return
         if count:
             self._scheduled[key] = value
@@ -195,11 +200,14 @@ class Activity:
         if self._file is None:
             return
         holds = self.holds()
-        if holds == self._last_written:
-            return
         if self._idle_timer is not None:
+            if holds == self._pending:
+                return  # the timed write already carries this state; let it land
             self._idle_timer.cancel()
             self._idle_timer = None
+            self._pending = None
+        if holds == self._last_written:
+            return
         if self._work or self._grace <= 0:
             self._write()
             return
@@ -208,10 +216,12 @@ class Activity:
         except RuntimeError:
             self._write()
             return
+        self._pending = holds
         self._idle_timer = loop.call_later(self._grace, self._write)
 
     def _write(self) -> None:
         self._idle_timer = None
+        self._pending = None
         if self._file is None:
             return
         snapshot = self.snapshot()

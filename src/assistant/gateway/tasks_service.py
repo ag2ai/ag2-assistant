@@ -384,6 +384,7 @@ class TaskService:
         for job in list(self._jobs.values()):
             job.cancel()
         self._jobs.clear()
+        self._activity.set_scheduled(self._config.data_dir.name, 0, None)
 
     async def _jobs_done(self) -> None:
         """Await all in-flight run jobs (tests + orderly shutdown)."""

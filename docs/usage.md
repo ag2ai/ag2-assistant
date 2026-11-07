@@ -466,6 +466,10 @@ With `AG2ASSISTANT_ACTIVITY_FILE=/path/activity.json` the same snapshot is writt
 `work` left waiting 2.5 s so back-to-back turns do not flap. The file is never read
 back; a process starts with no holds and `idle_since` = its start time.
 
+Both describe the gateway process, which owns every profile's turns, runs and ACP
+listeners. `ag2-assistant acp-serve` is a separate per-client stdio process an editor
+launches on the same machine and is not included.
+
 ### Turn summaries
 
 Off by default. With `gateway.turn_summaries: true` (or `AG2ASSISTANT_TURN_SUMMARIES=1`),
