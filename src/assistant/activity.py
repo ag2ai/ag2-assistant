@@ -37,6 +37,7 @@ HUMAN = "human"
 IDLE_GRACE_S = 2.5
 RETRY_S = 1.0  # first retry after a failed file write; doubles up to RETRY_MAX_S
 RETRY_MAX_S = 30.0
+HEARTBEAT_S = 30.0  # the file is rewritten this often even when nothing changed
 
 
 def iso_utc(dt: datetime) -> str:
@@ -94,9 +95,12 @@ class Activity:
         clock: Callable[[], datetime] = _utcnow,
         initial_hold: str | None = None,
         write: Callable[[Path, str], None] = atomic_write,
+        heartbeat_s: float = HEARTBEAT_S,
     ) -> None:
         self._file = Path(file) if file else None
         self._write_file = write
+        self._heartbeat_s = heartbeat_s
+        self._heartbeat_timer: asyncio.TimerHandle | None = None
         self._grace = idle_grace_s
         self._retry_s = retry_s
         self._retry_delay = retry_s
@@ -236,10 +240,10 @@ class Activity:
         """Write the final state now: the grace and retry timers are cancelled, so an
         orderly stop inside the grace never leaves a work hold in the file."""
         self._stopped = True
-        for timer in (self._idle_timer, self._retry_timer):
+        for timer in (self._idle_timer, self._retry_timer, self._heartbeat_timer):
             if timer is not None:
                 timer.cancel()
-        self._idle_timer = self._retry_timer = None
+        self._idle_timer = self._retry_timer = self._heartbeat_timer = None
         self._pending = None
         if self._file is not None and (self._dirty or self.holds() != self._last_written):
             self._write()
@@ -308,6 +312,28 @@ class Activity:
         if self._retry_timer is not None:
             self._retry_timer.cancel()
             self._retry_timer = None
+        self._arm_heartbeat()
+
+    def _arm_heartbeat(self) -> None:
+        """Rewrite the file after ``heartbeat_s`` even if nothing changes, so a reader
+        can tell a live file from one the process stopped updating (``ts`` ages)."""
+        if self._heartbeat_timer is not None:
+            self._heartbeat_timer.cancel()
+            self._heartbeat_timer = None
+        if self._stopped or self._heartbeat_s <= 0:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # before the loop runs; the first write inside it arms the beat
+        self._heartbeat_timer = loop.call_later(self._heartbeat_s, self._beat)
+
+    def _beat(self) -> None:
+        self._heartbeat_timer = None
+        if self._idle_timer is None and self._retry_timer is None:
+            self._write()
+        else:
+            self._arm_heartbeat()
 
     def _schedule_retry(self) -> None:
         if self._retry_timer is not None:

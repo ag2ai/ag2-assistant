@@ -1367,3 +1367,43 @@ async def test_a_failed_busy_write_takes_the_stale_idle_file_away(tmp_path):
     assert json.loads(path.read_text())["holds"] == [{"kind": "work", "count": 1, "detail": "turn"}]
     release()
     assert json.loads(path.read_text())["holds"] == []
+
+
+async def test_the_file_beats_while_the_process_runs(tmp_path):
+    path = tmp_path / "activity.json"
+    clock = _Clock()
+    a = Activity(path, idle_grace_s=0, heartbeat_s=0.05, clock=clock)
+    with a.track("turn"):
+        pass
+    clock.now = T0 + timedelta(seconds=30)
+    await asyncio.sleep(0.12)
+    assert (
+        json.loads(path.read_text())["ts"] == "2026-11-07T10:00:30Z"
+    )  # rewritten, unchanged holds
+    a.shutdown()
+    clock.now = T0 + timedelta(seconds=60)
+    await asyncio.sleep(0.12)
+    assert json.loads(path.read_text())["ts"] == "2026-11-07T10:00:30Z"  # no beat after shutdown
+
+
+async def test_an_acp_frame_on_its_way_out_is_work():
+    from assistant.acp.serve_ws import holding_send
+
+    activity = Activity()
+    gate = asyncio.Event()
+    sending = asyncio.Event()
+
+    async def send(message):
+        if message["type"] == "websocket.send":
+            sending.set()
+            await gate.wait()  # the socket is backpressured
+
+    held = holding_send(send, activity)
+    await held({"type": "websocket.accept"})
+    assert activity.holds() == []
+    frame = asyncio.ensure_future(held({"type": "websocket.send", "text": "{}"}))
+    await asyncio.wait_for(sending.wait(), 5)
+    assert _work(activity) == {"acp_send": 1}
+    gate.set()
+    await frame
+    assert activity.holds() == []

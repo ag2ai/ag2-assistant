@@ -25,6 +25,7 @@ from assistant.acp.auth import choose_auth
 from assistant.acp.chats import ChatBackedStorage, ChatTrackingACPAgent
 from assistant.acp.sdk_watch import watch_send_loop
 from assistant.acp.serve import cold_start_agent
+from assistant.activity import Activity
 from assistant.gateway.core import Gateway
 from assistant.gateway.profile_manager import (
     ArchivedProfile,
@@ -77,6 +78,20 @@ def _token_authorized(scope: Scope, token: str) -> bool:
     return presented is not None and secrets.compare_digest(presented, token)
 
 
+def holding_send(send: Send, activity: Activity) -> Send:
+    """``send`` that holds ``work`` while a WebSocket frame is on its way out, so a
+    backpressured final response still counts as work until the client took it."""
+
+    async def held(message: Any) -> None:
+        if message.get("type") != "websocket.send":
+            await send(message)
+            return
+        with activity.track("acp_send"):
+            await send(message)
+
+    return held
+
+
 def build_ws_app(acp_agent: ACPAgent, token: str) -> AsgiApp:
     """The listener's whole ASGI front door: WebSocket-only, token at the upgrade,
     and per-connection session teardown.
@@ -95,6 +110,7 @@ def build_ws_app(acp_agent: ACPAgent, token: str) -> AsgiApp:
       (and the chat's live badge) alive forever.
     """
     base = create_asgi_app(acp_agent.bind)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]  # lifespan passthrough only
+    activity: Activity = getattr(acp_agent, "activity", None) or Activity()
 
     async def guarded(scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "websocket":
@@ -112,7 +128,7 @@ def build_ws_app(acp_agent: ACPAgent, token: str) -> AsgiApp:
 
             conn_app = create_asgi_app(tracked_bind)
             try:
-                await conn_app(scope, receive, send)
+                await conn_app(scope, receive, holding_send(send, activity))
             finally:
                 # Close the connection's sessions and detach its outbound receiver.
                 for conn_scope in scopes:

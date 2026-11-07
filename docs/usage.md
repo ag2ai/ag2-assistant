@@ -477,10 +477,12 @@ back. A process writes its state at once, so a crashed predecessor's file never 
 it; that first state holds `work` with detail `startup` until every profile has been
 discovered and its schedule read, after which the holds speak for themselves. A write that fails
 removes the file (no file means unknown, never idle) and is retried with backoff (1 s
-doubling to 30 s) and on the next `GET /api/activity`. `ts` is the time of the last
-write, not a heartbeat: an idle install's file does not change. The file is a hint for
-a host that cannot poll; a host that can must confirm with `GET /api/activity` before
-stopping the process, and treat a missing file as "do not stop".
+doubling to 30 s) and on the next `GET /api/activity`. The file is also rewritten
+every 30 s while the process runs, so `ts` is a heartbeat: a reader treats a `ts` older
+than a few minutes, like a missing file, as "unknown, do not stop" (a stale idle
+snapshot can survive a storage fault that defeats both the write and the delete). The
+file is a hint for a host that cannot poll; a host that can must confirm with
+`GET /api/activity` before stopping the process.
 
 Both describe the gateway process, which owns every profile's turns, runs and ACP
 listeners. `ag2-assistant acp-serve` is a separate per-client stdio process an editor
