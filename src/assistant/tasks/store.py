@@ -287,9 +287,13 @@ class TaskStore:
             if not entry.endswith(".json"):
                 continue
             try:
-                data = await self._read_json(prefix + entry)
-                if data is not None:
-                    out.append(cls.from_dict(data))
+                raw = await self._store.read(prefix + entry)
+                if raw is None:
+                    continue  # listed, then deleted: not a record
+                data = json.loads(raw)
+                if not isinstance(data, dict):
+                    raise ValueError(f"record {entry} is not an object")
+                out.append(cls.from_dict(data))
             except Exception:
                 if strict:
                     raise

@@ -439,7 +439,7 @@ async def test_the_env_names_the_file_the_install_mirrors_its_activity_to(paths,
     pid = ProfileRegistry(paths).create_profile("Work", "#109e91").id
     await manager.start()
     try:
-        assert json.loads(path.read_text())["holds"] == []
+        assert manager.activity.holds() == []  # the file follows after the idle grace
         await manager.get(pid).require_gateway().send_message("hi", chat_id="c1")
         assert json.loads(path.read_text())["holds"] != []  # the turn (and its title job)
         await _settled(manager.activity)
@@ -447,7 +447,8 @@ async def test_the_env_names_the_file_the_install_mirrors_its_activity_to(paths,
         assert json.loads(path.read_text())["holds"] == []
     finally:
         await manager.close()
-    assert make_manager(paths, env={}).activity.snapshot()["holds"] == []
+    unstarted = make_manager(paths, env={})
+    assert unstarted.activity.holds() == [{"kind": "work", "count": 1, "detail": "startup"}]
 
 
 async def test_polling_during_the_grace_does_not_postpone_the_idle_write(tmp_path):
@@ -663,19 +664,23 @@ def test_an_unknown_schedule_is_a_scheduled_hold_without_a_count():
 
 
 async def test_a_failed_schedule_read_fails_closed_and_recovers_on_its_own(paths, tmp_path):
+    from ag2.knowledge import SqliteKnowledgeStore
+
+    from assistant.storage import SerialStore
+
     activity = Activity()
     failures = {"left": 0}
 
-    class _Flaky(TaskStore):
-        async def _read_json(self, path):  # one record's read fails, the rest are fine
+    class _FlakyBacking(SerialStore):
+        async def read(self, path):  # one record's read fails, the rest are fine
             if failures["left"]:
                 failures["left"] -= 1
                 raise OSError("disk hiccup")
-            return await super()._read_json(path)
+            return await super().read(path)
 
     tasks = TaskService(
         config=Config.for_paths(paths),
-        store=_Flaky(path=tmp_path / "tasks.db"),
+        store=TaskStore(store=_FlakyBacking(SqliteKnowledgeStore(str(tmp_path / "tasks.db")))),
         inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
         activity=activity,
         refresh_retry_s=0.05,
@@ -709,3 +714,46 @@ async def test_a_profile_that_fails_to_boot_keeps_an_unknown_scheduled_hold(path
         assert manager.get(healthy).require_tasks() is not None
     finally:
         await manager.close()
+
+
+async def test_the_file_holds_startup_work_until_every_schedule_is_read(paths, tmp_path):
+    from assistant.profiles import ProfileRegistry
+    from tests.support.apps import make_manager
+
+    path = tmp_path / "activity.json"
+    ProfileRegistry(paths).create_profile("Work", "#109e91")
+    manager = make_manager(paths, env={"AG2ASSISTANT_ACTIVITY_FILE": str(path)})
+    written = json.loads(path.read_text())
+    assert written["holds"] == [{"kind": "work", "count": 1, "detail": "startup"}]
+    assert written["idle_since"] is None
+    await manager.start()
+    try:
+        await asyncio.sleep(3)  # the idle grace
+        assert json.loads(path.read_text())["holds"] == []
+    finally:
+        await manager.close()
+
+
+async def test_a_null_task_record_keeps_the_schedule_unknown(paths, tmp_path):
+    from ag2.knowledge import SqliteKnowledgeStore
+
+    from assistant.storage import SerialStore
+
+    backing = SerialStore(SqliteKnowledgeStore(str(tmp_path / "tasks.db")))
+    activity = Activity()
+    tasks = TaskService(
+        config=Config.for_paths(paths),
+        store=TaskStore(store=backing),
+        inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
+        activity=activity,
+        refresh_retry_s=0.05,
+    )
+    await tasks.start(scheduler=False)
+    await backing.write("/tasks/task-corrupt.json", "null")
+    await tasks.create_task(name="A", prompt="p", schedule={"kind": "cron", "cron": "@daily"})
+    assert activity.holds() == [{"kind": "scheduled"}]  # not "one task": unknown
+    await backing.delete("/tasks/task-corrupt.json")
+    await asyncio.sleep(0.3)
+    (hold,) = activity.holds()
+    assert hold["count"] == 1
+    await tasks.close()

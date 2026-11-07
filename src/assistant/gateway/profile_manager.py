@@ -339,7 +339,15 @@ class ProfileManager:
         self._connections = ConnectionStore(self.paths, env)
         # One install-wide tally of open work, shared by every profile's gateway and
         # task service; AG2ASSISTANT_ACTIVITY_FILE mirrors it to disk for a host.
-        self.activity = activity or Activity((env or {}).get("AG2ASSISTANT_ACTIVITY_FILE"))
+        self.activity = activity or Activity(
+            (env or {}).get("AG2ASSISTANT_ACTIVITY_FILE"), initial_hold="startup"
+        )
+        # Held until start() has discovered every profile and read each schedule.
+        self._release_startup = (
+            self.activity.release_initial_hold
+            if activity is None
+            else self.activity.acquire("startup")
+        )
         self._voice_factory = (
             voice_factory  # how a voice call's LiveAgent is built; None = production
         )
@@ -441,6 +449,7 @@ class ProfileManager:
             except Exception as exc:
                 self.boot_errors[meta.id] = str(exc)
                 profile_logger(meta.id).error("profile failed to boot: %s", exc)
+        self._release_startup()  # from here the holds speak for themselves
         for connection in self._connections.list_connections():
             await self.start_channel(connection.id)
         for listener in self._connections.list_acp_connections():

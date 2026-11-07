@@ -5,7 +5,7 @@ background work, an ACP turn), ``scheduled`` (tasks with a future ``next_run_at`
 and ``human`` (a turn parked on a question). ``snapshot()`` is the wire shape of
 ``GET /api/activity``; with a file path it is also written atomically on every change
 of the holds, after a short grace once the last work hold closes; a new process writes
-its empty state at once, so a crashed predecessor's file never outlives it.
+its state at once, so a crashed predecessor's file never outlives it.
 
 The registry describes one process: the gateway, which owns every profile's turns,
 runs and ACP listeners. ``ag2-assistant acp-serve`` is a separate per-client stdio
@@ -84,6 +84,7 @@ class Activity:
         idle_grace_s: float = IDLE_GRACE_S,
         retry_s: float = RETRY_S,
         clock: Callable[[], datetime] = _utcnow,
+        initial_hold: str | None = None,
     ) -> None:
         self._file = Path(file) if file else None
         self._grace = idle_grace_s
@@ -102,8 +103,16 @@ class Activity:
         self._last_written: list[dict] | None = None
         self._idle_timer: asyncio.TimerHandle | None = None
         self._pending: list[dict] | None = None  # the holds the timed idle write carries
+        # A work hold open from the first write, for a process that is not yet in a
+        # state to say what it holds; the owner releases it once it is.
+        self._release_initial = self.acquire(initial_hold) if initial_hold else None
         if self._file is not None:
             self._write()  # a fresh process replaces whatever its predecessor left
+
+    def release_initial_hold(self) -> None:
+        if self._release_initial is not None:
+            self._release_initial()
+            self._release_initial = None
 
     # ---- holds ----
 

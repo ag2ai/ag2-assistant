@@ -467,8 +467,9 @@ With `AG2ASSISTANT_ACTIVITY_FILE=/path/activity.json` the same snapshot is writt
 (atomically, tmp + rename) on every change of the holds; only the write that reports the last
 `work` hold closing waits 2.5 s, so back-to-back turns do not flap, and a schedule saved
 while idle lands at once. The file is never read
-back; a process starts with no holds and `idle_since` = its start time, and writes that
-state at once, so a crashed predecessor's file never outlives it. A write that fails is
+back. A process writes its state at once, so a crashed predecessor's file never outlives
+it; that first state holds `work` with detail `startup` until every profile has been
+discovered and its schedule read, after which the holds speak for themselves. A write that fails is
 retried with backoff (1 s doubling to 30 s) and on the next `GET /api/activity`, so a
 transient storage fault cannot leave the file saying idle while work runs. `ts` is the
 time of the last write, not a heartbeat: an idle install's file does not change.
