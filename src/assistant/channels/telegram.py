@@ -423,23 +423,24 @@ class TelegramChannel(Channel):
         if inbound is None:
             return
 
-        chat_id = str(msg.chat.id)
-        if not self._require_router().paired(inbound):
-            # Nothing an unpaired account sends may touch a running turn. Its message
-            # goes to the router with no placeholder, in case it carries a code.
-            await self._answer_unpaired(inbound)
-            return
-
-        # An answer is a reply to the question, never merely the next thing said: a
-        # question can be mirrored here from a turn this conversation never started.
-        if msg.reply_to_message is not None and await self._answer_question(inbound, msg):
-            return
-
-        if not self._require_router().accepts(inbound):
-            return
-
-        # Everything from here to the delivered reply is work for a sleep host.
+        # Everything from here to the delivered reply is work for a sleep host: a
+        # pairing code redeemed, a question answered, or a turn and its answer.
         with self._request_hold():
+            chat_id = str(msg.chat.id)
+            if not self._require_router().paired(inbound):
+                # Nothing an unpaired account sends may touch a running turn. Its message
+                # goes to the router with no placeholder, in case it carries a code.
+                await self._answer_unpaired(inbound)
+                return
+
+            # An answer is a reply to the question, never merely the next thing said: a
+            # question can be mirrored here from a turn this conversation never started.
+            if msg.reply_to_message is not None and await self._answer_question(inbound, msg):
+                return
+
+            if not self._require_router().accepts(inbound):
+                return
+
             # Immediate, always-visible feedback: a placeholder we edit into the reply. A
             # message fed into a running turn gets none — its answer lands in the
             # placeholder of the message that started that turn.

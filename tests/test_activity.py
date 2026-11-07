@@ -1885,3 +1885,62 @@ def test_a_reused_acp_request_id_keeps_the_slower_request_s_hold():
     holds.on_receive(frame("websocket.receive", id=2, method="session/prompt", params={}))
     holds.close()
     assert activity.holds() == []
+
+
+async def test_a_telegram_pairing_reply_is_work_until_it_is_delivered():
+    from types import SimpleNamespace
+
+    from assistant.channels.router import Reply
+    from assistant.channels.telegram import TelegramChannel
+
+    activity = Activity()
+    sending = asyncio.Event()
+    gate = asyncio.Event()
+
+    class _Router:
+        def hold(self):
+            return activity.track("channel")
+
+        def paired(self, inbound):
+            return False  # an unpaired account sending its code
+
+        async def handle(self, inbound, **kwargs):
+            return Reply("Paired. Say hello.")
+
+    class _Bot:
+        async def send_message(self, chat_id, text, reply_markup=None):
+            sending.set()
+            await gate.wait()
+
+    async def reply_text(text, **kwargs):
+        return SimpleNamespace(message_id=5)
+
+    channel = TelegramChannel(token="fake-token")
+    channel._bot_username = "ag2assistantbot"
+    channel._bot_id = 999
+    channel._router = _Router()
+    channel._app = SimpleNamespace(bot=_Bot())
+    message = SimpleNamespace(
+        text="ABC-123",
+        caption=None,
+        chat=SimpleNamespace(id=42, type="private", PRIVATE="private"),
+        from_user=SimpleNamespace(id=7, full_name="Test User", username="tester"),
+        reply_to_message=None,
+        entities=[],
+        caption_entities=[],
+        photo=[],
+        document=None,
+        voice=None,
+        audio=None,
+        video=None,
+        reply_text=reply_text,
+    )
+    update = SimpleNamespace(message=message, effective_chat=message.chat)
+    handling = asyncio.ensure_future(
+        channel._on_message(update, SimpleNamespace(bot=channel._app.bot))
+    )
+    await asyncio.wait_for(sending.wait(), 5)
+    assert _work(activity) == {"channel": 1}
+    gate.set()
+    await asyncio.wait_for(handling, 5)
+    assert activity.holds() == []
