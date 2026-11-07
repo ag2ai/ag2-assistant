@@ -397,7 +397,7 @@ class ProfileManager:
         # The one router every adapter is handed. It resolves the profile per inbound
         # message through the directory methods below, so changing a Channel's default
         # profile — or a Peer's own selection — needs no restart.
-        self.router = channels.ChannelRouter(self, self.paths)
+        self.router = channels.ChannelRouter(self, self.paths, activity=self.activity)
 
     # ---- the router's ProfileDirectory (read fresh on every message) ----
 

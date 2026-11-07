@@ -1062,3 +1062,50 @@ async def test_an_acp_request_is_work_until_its_answer_is_delivered(paths):
     await asyncio.wait_for(turn, 5)
     assert activity.holds() == []
     await scope.aclose()
+
+
+async def test_a_channel_message_is_work_until_its_reply_is_delivered():
+    from types import SimpleNamespace
+
+    from assistant.channels.discord import DiscordChannel
+    from assistant.channels.router import Reply
+
+    activity = Activity()
+    sending = asyncio.Event()
+    gate = asyncio.Event()
+
+    class _Router:
+        def hold(self):
+            return activity.track("channel")
+
+        def accepts(self, inbound):
+            return True
+
+        async def handle(self, inbound, **kwargs):
+            return Reply("hello")
+
+    @contextlib.asynccontextmanager
+    async def typing():
+        yield
+
+    async def send(chunk):
+        sending.set()
+        await gate.wait()  # the platform is slow to take the reply
+
+    channel = DiscordChannel(token="fake-token")
+    channel._bot_user_id = 999
+    channel._router = _Router()
+    message = SimpleNamespace(
+        content="hi",
+        guild=None,
+        channel=SimpleNamespace(id=42, typing=typing, send=send),
+        author=SimpleNamespace(id=7, bot=False, display_name="Test User"),
+        mentions=[],
+        attachments=[],
+    )
+    handling = asyncio.ensure_future(channel.on_message(message))
+    await asyncio.wait_for(sending.wait(), 5)
+    assert _work(activity) == {"channel": 1}  # the turn is over; delivery is not
+    gate.set()
+    await asyncio.wait_for(handling, 5)
+    assert activity.holds() == []
