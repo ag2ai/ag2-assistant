@@ -530,12 +530,12 @@ class Gateway:
             ]
         )
 
-    async def _make_agent(self, cfg: Config):
+    async def _make_agent(self, cfg: Config, memory: bool):
         held = self._resources.lease()
         try:
             agent = self._agent_factory(
                 cfg,
-                memory=self._memory,
+                memory=memory,
                 platform=self._platform,
                 knowledge_store=self._knowledge_store,
                 compact=True,
@@ -549,13 +549,17 @@ class Gateway:
             raise
         return _AgentGeneration(agent, held)
 
-    async def _select_agent(self, cfg: Config, lease: ResourceLease):
+    async def _select_agent(self, cfg: Config, lease: ResourceLease, *, memory: bool = True):
+        """The turn's agent: the profile's own, or one built without memory, kept apart."""
+        memory = memory and self._memory
+        kind = "agent" if memory == self._memory else "agent-without-memory"
         key = self._constructor_key(cfg)
         generation = await lease.acquire_async(
-            "agent", key, lambda: self._make_agent(copy.deepcopy(cfg))
+            kind, key, lambda: self._make_agent(copy.deepcopy(cfg), memory)
         )
-        self._agent = generation.agent
-        await self._resources.reconcile("agent", [key])
+        if kind == "agent":
+            self._agent = generation.agent
+        await self._resources.reconcile(kind, [key])
         return generation.agent
 
     async def _resolve_turn_model(
@@ -941,7 +945,13 @@ class Gateway:
         asker=None,
         task_id=None,
         surface: str = "",
+        *,
+        capabilities: list[str] | None = None,
+        memory: bool = True,
     ):
+        """The turn's config, agent, run arguments and A2UI runtime. A `capabilities` list
+        keeps only those tool groups, with no self or system tools and the skills plugin
+        only with "skills"; `memory=False` runs the turn on an agent without memory."""
         self._config = self._config_factory()
         profile_config = copy.deepcopy(self._config)
         effective = copy.deepcopy(self._config)
@@ -954,7 +964,7 @@ class Gateway:
         await self._refresh_subscription(effective)
         await self._refresh_subscription(profile_config)
         await self._reconcile_resources(profile_config)
-        agent = await self._select_agent(profile_config, lease)
+        agent = await self._select_agent(profile_config, lease, memory=memory)
         task_id = task_id or await self._task_for_stream(chat_id)
         extra = self._ask_kwargs(asker, chat_id, task_id or "", config=effective)
         docker_key = fingerprint([effective.tools.docker_image, effective.tools.docker_network])
@@ -979,6 +989,7 @@ class Gateway:
             sandbox=effective.tools.sandbox,
             docker_image=effective.tools.docker_image,
             docker_network=effective.tools.docker_network,
+            capabilities=capabilities,
             workspace_dir=effective.workspace_dir,
             config=effective,
             builtin=effective.llm.builtin_tools,
@@ -987,20 +998,29 @@ class Gateway:
             local_environment_factory=local_environment_factory,
             google=self._google,
         )
-        settings = profile_settings(effective.data_dir, voice_provider=effective.voice_provider)
-        tools.extend(build_self_tools(effective, settings))
-        tools.extend(self._system_tools(effective))
-        skill_runtime = build_skills_runtime(effective)
-        tools.extend(build_skills_install_tools(effective, build_skills_runtime(effective)))
+        if capabilities is None:
+            settings = profile_settings(effective.data_dir, voice_provider=effective.voice_provider)
+            tools.extend(build_self_tools(effective, settings))
+            tools.extend(self._system_tools(effective))
+        skills = capabilities is None or "skills" in capabilities
+        skill_runtime = build_skills_runtime(effective) if skills else None
+        if skill_runtime is not None:
+            tools.extend(build_skills_install_tools(effective, build_skills_runtime(effective)))
         if effective.tools.disable_native:
             tools = [tool for tool in tools if tool.name not in _NATIVE_ONLY_TOOLS]
         held_cards = self._catalog.hold()
-        plugins = [
-            build_skills_plugin(
-                effective, skill_runtime, catalog=held_cards, snapshot=True, drafts=self.card_drafts
-            ),
-            *self._plugins,
-        ]
+        plugins: list = []
+        if skill_runtime is not None:
+            plugins.append(
+                build_skills_plugin(
+                    effective,
+                    skill_runtime,
+                    catalog=held_cards,
+                    snapshot=True,
+                    drafts=self.card_drafts,
+                )
+            )
+        plugins.extend(self._plugins)
         guidance = [
             effective.agent.system_prompt,
             *universal_turn_prompt(
@@ -1011,6 +1031,8 @@ class Gateway:
                     for tool in tools
                 ),
                 open_questions=not effective.tools.disable_native,
+                capabilities=capabilities,
+                memory=memory,
             ),
         ]
         if BEHAVIOR_GUIDANCE in agent.system_prompt:
@@ -1038,6 +1060,9 @@ class Gateway:
         attachment_names: tuple[str, ...] = (),
         chat_model: str = "",
         on_text=None,
+        *,
+        capabilities: list[str] | None = None,
+        memory: bool = True,
     ) -> str:
         """Run a message with Profile shutdown and invocation scope ownership."""
         if self._closing:
@@ -1060,8 +1085,11 @@ class Gateway:
                     attachment_names,
                     chat_model,
                     on_text,
+                    capabilities=capabilities,
+                    memory=memory,
                 )
-                self._schedule_memory_update(chat_id)
+                if memory:
+                    self._schedule_memory_update(chat_id)
             return reply
         finally:
             if task is not None:
@@ -1081,6 +1109,9 @@ class Gateway:
         attachment_names: tuple[str, ...] = (),
         chat_model: str = "",
         on_text=None,
+        *,
+        capabilities: list[str] | None = None,
+        memory: bool = True,
     ) -> str:
         """Send a user message to the universal agent and return its reply.
 
@@ -1109,11 +1140,14 @@ class Gateway:
         the override of the Chat this message creates, and is ignored on one that exists.
         `on_text` is an optional async callback given the turn's streamed `ModelMessageChunk`
         and `ModelResponse` events, so a channel can show the reply as it is written.
+        `capabilities` scopes the turn's tools (see `_prepare_turn`). `memory=False` runs it
+        without onboarding, profile memory, its update or the shared "who the user is" notes.
         """
         if self._agent is None:
             raise RuntimeError("Gateway not started")
 
-        await self._maybe_onboard(asker)
+        if memory:
+            await self._maybe_onboard(asker)
         forwarded = on_event is not None or on_text is not None
         msg = [text, *(attachments or [])]
 
@@ -1151,7 +1185,15 @@ class Gateway:
                     await self.emit_event(chat_id, TurnStarted(chat_id, turn_id=turn_id))
                     async with self._preparation_lock:
                         effective, agent, extra, a2ui_runtime = await self._prepare_turn(
-                            lease, chat_id, llm_config_id, chat_model, asker, task_id, surface
+                            lease,
+                            chat_id,
+                            llm_config_id,
+                            chat_model,
+                            asker,
+                            task_id,
+                            surface,
+                            capabilities=capabilities,
+                            memory=memory,
                         )
                     a2ui_handle = None
                     if a2ui_runtime is not None:

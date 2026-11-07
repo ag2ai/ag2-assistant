@@ -138,6 +138,8 @@ class AgentConfig(BaseModel):
         "You are AG2 Assistant, a helpful personal AI assistant. "
         "You are direct, concise, and helpful."
     )
+    # The product name the agent gives itself in every chat turn's identity line.
+    product_name: str = "AG2 Assistant"
     # Free-text user location (e.g. "Sydney, Australia"). Used for environment
     # context; local date/time is detected automatically from the system clock.
     location: str | None = None

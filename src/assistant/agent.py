@@ -453,12 +453,18 @@ GOOGLE_GUIDANCE = (
 )
 
 
+# Who the universal agent is, named by the deployment's product name.
+IDENTITY_GUIDANCE = (
+    "You are {product_name} — ONE assistant the user works with everywhere: a web chat, a "
+    "task's own page, and messaging channels (Telegram, etc.). It must always feel "
+    "like the same entity."
+)
+
+
 # Describes the whole system to the one universal agent, so it knows what it can
 # do and reaches for its system tools to find things / act — on any surface.
-CAPABILITY_GUIDANCE = (
-    "You are AG2 Assistant — ONE assistant the user works with everywhere: a web chat, a "
-    "task's own page, and messaging channels (Telegram, etc.). It must always feel "
-    "like the same entity. You can:\n"
+CAPABILITY_GUIDANCE = IDENTITY_GUIDANCE + (
+    " You can:\n"
     "- Chat and use your tools (web search/fetch, code, local files, and the user's "
     "Google when connected) to answer or act directly for small things.\n"
     "- Run background TASKS for substantial or multi-step work: create them, schedule "
@@ -708,7 +714,13 @@ def turn_prompt(
 
 
 def universal_turn_prompt(
-    config: Config, surface: str = "", *, google: bool | None = None, open_questions: bool = True
+    config: Config,
+    surface: str = "",
+    *,
+    google: bool | None = None,
+    open_questions: bool = True,
+    capabilities: list[str] | None = None,
+    memory: bool = True,
 ) -> list[str]:
     """Per-turn prompt for the universal agent: behaviour + capability map + (Google
     when signed in) + the SURFACE it's being addressed on + stable env. It follows the
@@ -717,17 +729,29 @@ def universal_turn_prompt(
     `surface` is a short paragraph the caller builds describing where the user is
     (web chat / new-task box / a specific task + its state / a channel) so the one
     agent has the right local context without changing identity.
+
+    `capabilities`, when given, is the turn's tool scope: the turn gets its identity
+    line instead of the capability map and turn-budget guidance, and the workspace only
+    with "files". `memory=False` drops the memory guidance and the shared "who the user
+    is" section, whatever the profile's ``memory.shared``.
     """
-    parts = [
-        BEHAVIOR_GUIDANCE,
-        CAPABILITY_GUIDANCE.format(
-            open_questions=", and list/answer open questions" if open_questions else ""
-        ),
-        chat_turn_timeout_guidance(config),
-        MEMORY_GUIDANCE,
-        workspace_guidance(config),  # the universal agent always has the file tools
-    ]
-    universal = universal_memory_guidance(config)  # shared "who the user is" (root/user.db)
+    name = config.agent.product_name
+    if capabilities is None:
+        parts = [
+            BEHAVIOR_GUIDANCE,
+            CAPABILITY_GUIDANCE.format(
+                product_name=name,
+                open_questions=", and list/answer open questions" if open_questions else "",
+            ),
+            chat_turn_timeout_guidance(config),
+        ]
+    else:
+        parts = [BEHAVIOR_GUIDANCE, IDENTITY_GUIDANCE.format(product_name=name)]
+    if memory:
+        parts.append(MEMORY_GUIDANCE)
+    if capabilities is None or "files" in capabilities:
+        parts.append(workspace_guidance(config))
+    universal = universal_memory_guidance(config) if memory else ""  # root/user.db
     if universal:
         parts.append(universal)
     focuses = focuses_guidance(config)  # per-profile persona attribute (settings.json)

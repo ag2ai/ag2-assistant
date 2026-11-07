@@ -25,6 +25,7 @@ from assistant.gateway.routes.deps import GatewayDeps
 from assistant.gateway.schemas import Ok
 from assistant.gateway.schemas.agui import FeedResponse
 from assistant.gateway.uploads import decode_attachments, persist_uploads
+from assistant.tools import CAPABILITIES
 
 _STREAM_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
@@ -65,8 +66,17 @@ def build_profile_router(d: GatewayDeps, get_runtime, *, surfaces: Mapping[str, 
     runs = ChatRuns()
 
     async def resolve(runtime: ProfileRuntime, chat_id: str, body: RunAgentInput) -> TurnRequest:
-        """The server's own turn from a client's input: uploads saved, surface chosen."""
+        """The server's own turn from a client's input: uploads saved, surface chosen,
+        tools and memory scoped."""
         props = body.forwarded_props if isinstance(body.forwarded_props, dict) else {}
+        capabilities = props.get("capabilities")
+        if capabilities is not None and (
+            not isinstance(capabilities, list) or not all(c in CAPABILITIES for c in capabilities)
+        ):
+            raise HTTPException(status_code=422, detail="capabilities must name tool groups")
+        memory = props.get("memory", True)
+        if not isinstance(memory, bool):
+            raise HTTPException(status_code=422, detail="memory must be true or false")
         raw = props.get("attachments")
         attachments = decode_attachments(raw)
         text = user_text(body)
@@ -88,6 +98,8 @@ def build_profile_router(d: GatewayDeps, get_runtime, *, surfaces: Mapping[str, 
             surface=surface,
             uploads=tuple(saved),
             chat_model=str(props.get("model") or ""),
+            capabilities=capabilities,
+            memory=memory,
         )
 
     @r.post("/chats/{chat_id}/agui")

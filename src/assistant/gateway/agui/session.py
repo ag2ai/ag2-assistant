@@ -42,6 +42,9 @@ class TurnRequest:
     surface: str = ""
     uploads: tuple[tuple[str, str], ...] = ()
     chat_model: str = ""
+    # The tool groups the Turn may use (None: all), and whether it reads and feeds memory.
+    capabilities: list[str] | None = None
+    memory: bool = True
 
 
 def user_text(body: RunAgentInput) -> str:
@@ -154,6 +157,8 @@ class ChatRuns:
             surface=request.surface,
             attachment_names=tuple(name for _, name in request.uploads),
             chat_model=request.chat_model,
+            capabilities=request.capabilities,
+            memory=request.memory,
         )
 
     def start(self, gateway: Any, chat_id: str, request: TurnRequest) -> asyncio.Task:

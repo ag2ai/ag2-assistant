@@ -162,6 +162,12 @@ host bridge; `list_coding_agents` remains available for diagnostics. Google requ
 sign-in and its libraries, and disabled MCP servers contribute no tools. Gateway
 rebuilds the tool schemas before each Turn, so settings changes apply to the next message.
 
+An AG-UI run may scope its Turn through `forwardedProps`: `capabilities` (a list of groups)
+keeps only those groups, with no self or system tools and the skills plugin only with
+`skills`, so `[]` leaves only the agent's own `read_compaction_source` (and `remember` with
+memory on); `memory: false` runs it without onboarding, the profile's memory or its update,
+`remember`, and the shared "who the user is" notes.
+
 | Tool / group     | File                         | Notes                                             |
 | ---------------- | ---------------------------- | ------------------------------------------------- |
 | Web search       | `tools/__init__.py`          | native AG2 `DuckDuckSearchTool`                    |

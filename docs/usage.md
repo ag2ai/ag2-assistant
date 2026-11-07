@@ -395,6 +395,7 @@ llm:
 agent:
   name: ag2-assistant
   system_prompt: You are AG2 Assistant, a helpful personal AI assistant.
+  product_name: AG2 Assistant   # the name every chat turn's identity line gives the agent
 gateway:
   reply_timeout_s: 600
 tools:
