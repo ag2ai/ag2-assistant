@@ -995,3 +995,38 @@ async def test_a_cancelled_schedule_change_leaves_an_unknown_hold_that_republish
     (hold,) = activity.holds()
     assert hold["count"] == 1
     await tasks.close()
+
+
+async def test_a_task_saved_by_a_turn_cancelled_at_shutdown_is_still_published(paths, tmp_path):
+    """Runtime close order: the task service closes, then the gateway cancels turns, then
+    the service's final read publishes what those turns left on disk."""
+    saved = asyncio.Event()
+    gate = asyncio.Event()
+
+    class _GatedStore(TaskStore):
+        async def create_task(self, **fields):
+            task = await super().create_task(**fields)
+            saved.set()
+            await gate.wait()
+            return task
+
+    activity = Activity()
+    tasks = TaskService(
+        config=Config.for_paths(paths),
+        store=_GatedStore(path=tmp_path / "tasks.db"),
+        inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
+        activity=activity,
+    )
+    await tasks.start(scheduler=False)
+    creating = asyncio.ensure_future(
+        tasks.create_task(name="A", prompt="p", schedule={"kind": "cron", "cron": "@daily"})
+    )
+    await asyncio.wait_for(saved.wait(), 5)
+    await tasks.close()  # 1. the service freezes
+    creating.cancel()  # 2. the gateway cancels the turn that was saving
+    with pytest.raises(asyncio.CancelledError):
+        await creating
+    assert activity.holds() == [{"kind": "scheduled"}]  # unknown rather than idle
+    await tasks.refresh_scheduled(final=True)  # 3. the runtime's last word
+    (hold,) = activity.holds()
+    assert hold["count"] == 1 and "next" in hold

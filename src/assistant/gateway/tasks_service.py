@@ -315,11 +315,13 @@ class TaskService:
                 await self._scheduler.start()
         await self.refresh_scheduled()
 
-    async def refresh_scheduled(self) -> None:
+    async def refresh_scheduled(self, *, final: bool = False) -> None:
         """Report this profile's unpaused tasks with a future slot as a scheduled hold.
-        A read that fails leaves the hold unknown (sleep-blocking) and retries by itself."""
+        A read that fails leaves the hold unknown (sleep-blocking) and retries by itself.
+        After close only a ``final`` read publishes: the runtime's last word once every
+        turn that could still save a task has been cancelled."""
         key = self._config.data_dir.name
-        if self._closed:
+        if self._closed and not final:
             return
         try:
             # strict: a record that cannot be read must not turn into "not scheduled"
@@ -328,12 +330,12 @@ class TaskService:
             from assistant.observability import log_suppressed
 
             log_suppressed("scheduled activity refresh", exc)
-            if self._closed:
+            if self._closed and not final:
                 return
             self._activity.set_scheduled_unknown(key)
             self._schedule_refresh_retry()
             return
-        if self._closed:
+        if self._closed and not final:
             return  # archived or stopped while reading: the close decided the hold
         slots = [dt for t in tasks if not t.paused and (dt := parse_dt(t.next_run_at)) is not None]
         self._activity.set_scheduled(key, len(slots), iso_utc(min(slots)) if slots else None)
@@ -367,9 +369,9 @@ class TaskService:
             yield
             await self.refresh_scheduled()
         except BaseException:
-            if not self._closed:
-                self._activity.set_scheduled_unknown(self._config.data_dir.name)
-                self._schedule_refresh_retry()
+            # Also after close: the runtime's final read, or the next start, resolves it.
+            self._activity.set_scheduled_unknown(self._config.data_dir.name)
+            self._schedule_refresh_retry()
             raise
 
     async def _migrate_recall(self) -> None:
