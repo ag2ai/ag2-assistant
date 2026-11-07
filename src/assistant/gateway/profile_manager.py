@@ -136,10 +136,12 @@ class ProfileRuntime:
         environment_factory: Callable | None = None,
         plugins: Iterable[Plugin] = (),
         activity: Activity | None = None,
+        voice_factory: Callable | None = None,
     ) -> None:
         self.meta = meta
         self.paths = paths
         self._activity = activity
+        self._voice_factory = voice_factory
         self._registry = ProfileRegistry(paths)
         self._env = env
         self._memory = memory
@@ -271,6 +273,7 @@ class ProfileRuntime:
             environment_factory=self._environment_factory,
             plugins=self._plugins,
             activity=self._activity,
+            voice_factory=self._voice_factory,
         )
         await self.gateway.start()
         self.gateway.set_mirror(self._mirror)  # completed turns -> the Attached Peer
@@ -320,6 +323,7 @@ class ProfileManager:
         environment_factory: Callable | None = None,
         plugins: Iterable[Plugin] = (),
         activity: Activity | None = None,
+        voice_factory: Callable | None = None,
     ) -> None:
         # Install-level layout + config; the pair always agrees. Given neither, both come
         # from the entry-point boundary so ``serve`` needs no wiring; given ``paths``, the
@@ -336,6 +340,9 @@ class ProfileManager:
         # One install-wide tally of open work, shared by every profile's gateway and
         # task service; AG2ASSISTANT_ACTIVITY_FILE mirrors it to disk for a host.
         self.activity = activity or Activity((env or {}).get("AG2ASSISTANT_ACTIVITY_FILE"))
+        self._voice_factory = (
+            voice_factory  # how a voice call's LiveAgent is built; None = production
+        )
         self._memory = memory
         self._persist = persist
         # A host's async (profile_id, task, text, *, failed, run_id) -> delivered, tried first.
@@ -455,6 +462,7 @@ class ProfileManager:
             environment_factory=self._environment_factory,
             plugins=self._plugins,
             activity=self.activity,
+            voice_factory=self._voice_factory,
         )
         await runtime.start()
         self.boot_errors.pop(meta.id, None)

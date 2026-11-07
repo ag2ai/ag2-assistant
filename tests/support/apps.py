@@ -82,6 +82,7 @@ def make_manager(
     model_factory=None,
     environment_factory=None,
     plugins=(),
+    voice_factory=None,
 ):
     """A ProfileManager over ``paths`` (or the HOME-isolated layout) whose every
     network-touching collaborator is a fake unless the caller injects its own.
@@ -101,6 +102,7 @@ def make_manager(
         title_factory=title_factory or fake_title_factory(),
         summary_factory=summary_factory or fake_summary_factory(),
         plugins=plugins,
+        voice_factory=voice_factory,
     )
 
 
@@ -116,6 +118,7 @@ def make_profile_app(
     channel_factory=None,
     title_factory=None,
     summary_factory=None,
+    voice_factory=None,
     **app_kwargs,
 ):
     """Build a create_app FastAPI app around a ProfileManager with ONE profile.
@@ -141,6 +144,7 @@ def make_profile_app(
         channel_factory=channel_factory,
         title_factory=title_factory,
         summary_factory=summary_factory,
+        voice_factory=voice_factory,
     )
     app = create_app(
         manager,

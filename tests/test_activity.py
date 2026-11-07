@@ -2,6 +2,7 @@
 post-turn work and ACP turns; the state file written on flips only."""
 
 import asyncio
+import contextlib
 import json
 import time
 from datetime import datetime, timedelta, timezone
@@ -550,3 +551,33 @@ def test_a_poll_flushes_a_failed_write(tmp_path):
     stamp = path.stat().st_mtime_ns
     a.flush()  # nothing to recover: no rewrite
     assert path.stat().st_mtime_ns == stamp
+
+
+class _FakeLiveAgent:
+    """A realtime session that opens and waits: enough for the voice socket to run."""
+
+    def __init__(self):
+        from ag2.context import ConversationContext
+        from ag2.stream import MemoryStream
+
+        self.context = ConversationContext(stream=MemoryStream())
+
+    @contextlib.asynccontextmanager
+    async def run(self):
+        yield self.context
+
+
+def test_a_voice_call_holds_work_until_the_socket_closes(paths):
+    from tests.support.apps import api
+    from tests.support.chat import wait_for
+
+    app, pid = make_profile_app(paths, voice_factory=lambda *args, **kwargs: _FakeLiveAgent())
+    with TestClient(app) as client:
+
+        def voice_holds():
+            return [h for h in client.get("/api/activity").json()["holds"] if h["kind"] == "work"]
+
+        with client.websocket_connect(api(pid, "/voice")) as ws:
+            assert ws.receive_json() == {"type": "ready"}
+            assert voice_holds() == [{"kind": "work", "count": 1, "detail": "voice"}]
+        wait_for(lambda: voice_holds() == [])

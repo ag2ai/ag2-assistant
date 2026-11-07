@@ -263,6 +263,7 @@ class Gateway:
         google: GoogleAuth | None = None,
         plugins: Iterable[Plugin] = (),
         activity: Activity | None = None,
+        voice_factory: Callable | None = None,
     ) -> None:
         self._config = config or load_config()
         self._memory = memory
@@ -322,6 +323,7 @@ class Gateway:
         self._streaming: dict[str, list[ModelMessageChunk]] = {}
         self._invocations: set[asyncio.Task] = set()
         self._activity = activity or Activity()
+        self._voice_factory = voice_factory or build_voice_agent
         self._background: set[asyncio.Task] = set()
         self._memory_lock = asyncio.Lock()
         self._memory_updating: set[str] = set()
@@ -653,6 +655,11 @@ class Gateway:
     def streaming_chunks(self, chat_id: str) -> list[ModelMessageChunk]:
         """The chunks of the model message being written now, which the log never keeps."""
         return list(self._streaming.get(chat_id, ()))
+
+    def track(self, detail: str):
+        """Hold ``work`` on the install's activity for a block the gateway does not
+        drive itself, such as a voice call."""
+        return self._activity.track(detail)
 
     def is_running(self, chat_id: str = "default") -> bool:
         """Whether a turn is in flight on this chat — what a message sent now would be
@@ -1449,7 +1456,7 @@ class Gateway:
             async with self._preparation_lock:
                 _, _, contributions, _ = await self._prepare_turn(lease, origin_chat or "voice")
             assistant_tools = [tool.name for tool in contributions["tools"] if tool.name]
-        return build_voice_agent(
+        return self._voice_factory(
             self._config,
             profile_settings(self._config.data_dir, voice_provider=self._config.voice_provider),
             tasks,
@@ -2065,6 +2072,7 @@ def build_gateway(
     environment_factory: Callable | None = None,
     plugins: Iterable[Plugin] = (),
     activity: Activity | None = None,
+    voice_factory: Callable | None = None,
 ) -> "tuple[Gateway, TaskService]":
     """Build a Gateway and TaskService sharing a Profile configuration resolver."""
     config = config or load_config()
@@ -2090,5 +2098,6 @@ def build_gateway(
         environment_factory=environment_factory,
         plugins=plugins,
         activity=activity,
+        voice_factory=voice_factory,
     )
     return gateway, tasks
