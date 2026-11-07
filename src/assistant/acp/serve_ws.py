@@ -24,7 +24,7 @@ from ag2.acp.sessions import SessionConfig
 from assistant.acp.approvals import install_owner_side_approvals
 from assistant.acp.auth import choose_auth
 from assistant.acp.chats import ChatBackedStorage, ChatTrackingACPAgent
-from assistant.acp.outbound import NOTIFY_METHOD
+from assistant.acp.outbound import WIRE_NOTIFY_METHOD
 from assistant.acp.sdk_watch import watch_send_loop
 from assistant.acp.serve import cold_start_agent
 from assistant.activity import Activity, holding_send
@@ -124,6 +124,14 @@ def response_ids(message: Any) -> list[str]:
     ]
 
 
+def notifications_sent(message: Any) -> int:
+    """How many outcome notifications (``ag2/notify``, as the SDK writes them) an
+    outgoing frame carries."""
+    if message.get("type") != "websocket.send":
+        return 0
+    return sum(1 for item in _items(message) if item.get("method") == WIRE_NOTIFY_METHOD)
+
+
 class RequestHolds:
     """One connection's in-flight JSON-RPC requests as ``work``: a request holds from
     the frame that brought it to the frame carrying its response, matched by id, so a
@@ -207,10 +215,9 @@ def build_ws_app(acp_agent: ACPAgent, token: str) -> AsgiApp:
             async def delivering(message: Any) -> None:
                 await held(message)
                 requests.on_send(message)
-                if outbound is not None and message.get("type") == "websocket.send":
-                    for item in _items(message):
-                        if item.get("method") == NOTIFY_METHOD:
-                            outbound.notification_sent()
+                if outbound is not None:
+                    for _ in range(notifications_sent(message)):
+                        outbound.notification_sent()
 
             try:
                 await conn_app(scope, receiving, delivering)

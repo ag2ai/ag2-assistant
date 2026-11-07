@@ -1292,8 +1292,8 @@ async def test_an_agui_run_is_work_until_its_last_event_is_taken(paths):
             pass
         assert _work(activity) == {"agui": 1, "turn": 1}
         agent.gate.set()
-        for _ in range(200):  # the turn ends while the client has not read on
-            if not gateway.is_running("c1"):
+        for _ in range(500):  # the turn ends (and persists) while the client has not read on
+            if _work(activity) == {"agui": 1}:
                 break
             await asyncio.sleep(0.01)
         assert _work(activity) == {"agui": 1}  # the answer is still being streamed
@@ -2106,3 +2106,26 @@ async def test_a_queued_acp_outcome_is_work_until_its_frame_leaves_the_socket(tm
     out.detach(client)  # the client went away before the frame left: nothing will send it
     assert activity.holds() == []
     await out.aclose()
+
+
+def test_the_outcome_frame_is_recognised_as_the_sdk_writes_it():
+    from assistant.acp.outbound import NOTIFY_METHOD, WIRE_NOTIFY_METHOD
+    from assistant.acp.serve_ws import notifications_sent
+
+    assert WIRE_NOTIFY_METHOD == "_ag2/notify"  # the SDK prefixes extension methods
+    wire = {
+        "type": "websocket.send",
+        "text": json.dumps(
+            {"jsonrpc": "2.0", "method": WIRE_NOTIFY_METHOD, "params": {"text": "done"}}
+        ),
+    }
+    bare = {
+        "type": "websocket.send",
+        "text": json.dumps({"jsonrpc": "2.0", "method": NOTIFY_METHOD, "params": {}}),
+    }
+    update = {
+        "type": "websocket.send",
+        "text": json.dumps({"jsonrpc": "2.0", "method": "session/update", "params": {}}),
+    }
+    assert [notifications_sent(m) for m in (wire, bare, update)] == [1, 0, 0]
+    assert notifications_sent({"type": "websocket.receive", "text": wire["text"]}) == 0

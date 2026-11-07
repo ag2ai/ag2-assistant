@@ -18,6 +18,9 @@ log = logging.getLogger("assistant.acp.outbound")
 
 # The extension method the notification travels as; the SDK adds the underscore.
 NOTIFY_METHOD = "ag2/notify"
+# What the SDK puts on the wire for an extension notification: it prefixes the
+# method with "_" (``AgentSideConnection.ext_notification``).
+WIRE_NOTIFY_METHOD = f"_{NOTIFY_METHOD}"
 # The ``_meta`` key a client sets on ``session/new`` to say where that session's
 # unsolicited messages belong: a string, or a mapping with ``chat_id``.
 DESTINATION_META_KEY = "ag2/destination"
