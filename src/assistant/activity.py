@@ -373,11 +373,15 @@ def holding_send(send: Callable[..., Any], activity: "Activity", detail: str) ->
 
 
 MONITORING_PATHS = frozenset({"/api/activity", "/api/health", "/api/status"})
+MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
 class ActivitySendMiddleware:
-    """Pure ASGI middleware wrapping every ``send`` with :func:`holding_send`, except
-    for the monitoring endpoints: a host's own poll must not read as work."""
+    """Pure ASGI middleware: a mutating HTTP request (POST/PUT/PATCH/DELETE) holds
+    ``work``/``request`` from arrival to completion, and every ``send`` goes through
+    :func:`holding_send`; the monitoring endpoints are left alone, since a host's own
+    poll must not read as work. A WebSocket connection is not held as a whole (an
+    idle client may stay connected for hours); its frames are."""
 
     def __init__(
         self,
@@ -395,7 +399,12 @@ class ActivitySendMiddleware:
         if scope["type"] not in ("http", "websocket") or scope.get("path") in self._skip:
             await self._app(scope, receive, send)
             return
-        await self._app(scope, receive, holding_send(send, self._activity, self._detail))
+        held = holding_send(send, self._activity, self._detail)
+        if scope["type"] == "http" and scope.get("method") in MUTATING_METHODS:
+            with self._activity.track("request"):
+                await self._app(scope, receive, held)
+            return
+        await self._app(scope, receive, held)
 
 
 class ActivityMiddleware:

@@ -1539,3 +1539,36 @@ async def test_a_passive_poll_s_reply_blocks_a_stop_but_does_not_restart_the_idl
     await poll
     assert activity.holds() == []
     assert activity.snapshot()["idle_since"] == "2026-11-07T10:00:00Z"
+
+
+async def test_a_mutating_request_is_work_while_its_handler_runs():
+    from assistant.activity import ActivitySendMiddleware
+
+    activity = Activity()
+    gate = asyncio.Event()
+    running = asyncio.Event()
+    seen: list = []
+
+    async def app(scope, receive, send):
+        running.set()
+        if scope["method"] == "POST":
+            await gate.wait()  # a skill install cloning a repository
+        seen.append(_work(activity))
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"{}"})
+
+    async def send(message):
+        pass
+
+    held = ActivitySendMiddleware(app, activity)
+    install = asyncio.ensure_future(
+        held({"type": "http", "method": "POST", "path": "/api/skills/install"}, None, send)
+    )
+    await asyncio.wait_for(running.wait(), 5)
+    assert _work(activity) == {"request": 1}
+    assert activity.snapshot()["idle_since"] is None  # real work, not a delivery
+    gate.set()
+    await install
+    assert activity.holds() == []
+    await held({"type": "http", "method": "GET", "path": "/api/usage"}, None, send)
+    assert seen[-1] == {}  # a read holds nothing while its handler runs

@@ -453,7 +453,8 @@ safe to. `GET /api/activity` answers with the open *holds*, install-wide:
 - `work` is anything running now, tallied by `detail`: a chat turn (`turn`, from any
   surface or channel, from the moment it is accepted), a task run (`run`, including its
   wait in the queue, summary and delivery), post-turn work (`background`: chat title,
-  turn summary, memory update), any reply still on its way to a client (`send`, which
+  turn summary, memory update), a mutating HTTP request from arrival to completion
+  (`request`: a POST/PUT/PATCH/DELETE such as a skill install), any reply still on its way to a client (`send`, which
   blocks a stop but, being delivery rather than activity, never restarts `idle_since`),
   an ACP request from admission to the delivered answer
   (`acp_prompt`, with the agent's own turn inside it as `acp_turn`), a voice call
