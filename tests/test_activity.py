@@ -693,7 +693,7 @@ async def test_a_failed_schedule_read_fails_closed_and_recovers_on_its_own(paths
     (hold,) = activity.holds()
     assert hold["count"] == 1 and "next" in hold
     await tasks.close()
-    assert activity.holds() == []
+    assert activity.holds() == [hold]  # still armed on disk: the next wake survives a stop
 
 
 async def test_a_profile_that_fails_to_boot_keeps_an_unknown_scheduled_hold(paths):
@@ -812,3 +812,33 @@ async def test_a_restore_that_fails_leaves_no_hold_behind(paths):
         assert manager.get(personal).require_gateway() is not None
     finally:
         await manager.close()
+
+
+async def test_naming_a_new_task_is_work_until_it_is_saved(paths, tmp_path):
+    from tests.support.fakes import FakeStructuredAgent, _canned
+
+    gate = asyncio.Event()
+    asked = asyncio.Event()
+
+    class _GatedNamer(FakeStructuredAgent):
+        async def ask(self, prompt, response_schema=None):
+            asked.set()
+            await gate.wait()
+            return await super().ask(prompt, response_schema)
+
+    activity = Activity()
+    tasks = TaskService(
+        config=Config.for_paths(paths),
+        store=TaskStore(path=tmp_path / "tasks.db"),
+        inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
+        summary_factory=lambda config: _GatedNamer(_canned(name="Named", description="")),
+        activity=activity,
+    )
+    await tasks.start(scheduler=False)
+    creating = asyncio.ensure_future(tasks.create_task(name="", prompt="p"))
+    await asyncio.wait_for(asked.wait(), 5)
+    assert _work(activity) == {"task_create": 1}
+    gate.set()
+    assert (await asyncio.wait_for(creating, 5))["name"] == "Named"
+    assert _work(activity) == {}
+    await tasks.close()

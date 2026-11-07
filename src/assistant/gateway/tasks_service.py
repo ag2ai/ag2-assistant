@@ -415,7 +415,8 @@ class TaskService:
         if self._refresh_timer is not None:
             self._refresh_timer.cancel()
             self._refresh_timer = None
-        self._activity.set_scheduled(self._config.data_dir.name, 0, None)
+        # The scheduled hold outlives an ordinary close: the tasks stay armed on disk,
+        # and a host reading the last file still needs the next wake. Archive clears it.
 
     async def _jobs_done(self) -> None:
         """Await all in-flight run jobs (tests + orderly shutdown)."""
@@ -450,28 +451,31 @@ class TaskService:
         cheap-model auto-naming (and, unless given, auto-description) from the
         prompt. A task's working folders are managed separately as task-scope
         Folder Grants (Folders UI), not stored on the task."""
-        self._validate_model(model)
-        _validate_recall(recall_depth)
-        name = (name or "").strip()
-        description = (description or "").strip()
-        if not name:
-            gen_name, gen_desc = await suggest_task_meta(
-                self._config, prompt, agent_factory=self._summary_factory
+        # Naming (one cheap-model call) and saving are work: a sleep host must not
+        # stop the process between accepting the request and persisting the task.
+        with self._activity.track("task_create"):
+            self._validate_model(model)
+            _validate_recall(recall_depth)
+            name = (name or "").strip()
+            description = (description or "").strip()
+            if not name:
+                gen_name, gen_desc = await suggest_task_meta(
+                    self._config, prompt, agent_factory=self._summary_factory
+                )
+                name = gen_name
+                description = description or gen_desc
+            task = await self._require_store().create_task(
+                name=name,
+                prompt=prompt,
+                model=model or None,
+                schedule=normalize_schedule(schedule),
+                origin_channel=origin_channel,
+                origin_chat=origin_chat,
+                description=description,
+                recall_depth=recall_depth,
             )
-            name = gen_name
-            description = description or gen_desc
-        task = await self._require_store().create_task(
-            name=name,
-            prompt=prompt,
-            model=model or None,
-            schedule=normalize_schedule(schedule),
-            origin_channel=origin_channel,
-            origin_chat=origin_chat,
-            description=description,
-            recall_depth=recall_depth,
-        )
-        await self.refresh_scheduled()
-        return _task_row(task, None, 0, False)
+            await self.refresh_scheduled()
+            return _task_row(task, None, 0, False)
 
     async def update_task(self, task_id: str, **patch) -> dict | None:
         if "schedule" in patch:
