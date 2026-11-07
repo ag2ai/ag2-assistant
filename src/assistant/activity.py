@@ -359,18 +359,56 @@ class Activity:
         self.flush()
 
 
-def holding_send(send: Callable[..., Any], activity: "Activity", detail: str) -> Callable[..., Any]:
-    """An ASGI ``send`` that holds ``work``/``detail`` while a response body or WebSocket
-    frame is on its way out: a backpressured client keeps the answer's delivery as work."""
+class HoldingSend:
+    """An ASGI ``send`` that holds ``work``/``detail`` while a reply is on its way out
+    (clockless: it protects delivery, it is not activity). A finite HTTP response is
+    held from its first body chunk to its last, so a download never looks idle
+    between chunks; an event stream, which may stay open for hours, and a WebSocket
+    frame are held per send. ``close()`` settles a response the app never finished."""
 
-    async def held(message: Any) -> None:
-        if message.get("type") not in ("http.response.body", "websocket.send"):
-            await send(message)
+    def __init__(self, send: Callable[..., Any], activity: "Activity", detail: str) -> None:
+        self._send = send
+        self._activity = activity
+        self._detail = detail
+        self._streaming = False
+        self._release: Callable[[], None] | None = None
+
+    async def __call__(self, message: Any) -> None:
+        kind = message.get("type")
+        if kind == "http.response.start":
+            self._streaming = _is_event_stream(message)
+            await self._send(message)
             return
-        with activity.track(detail, clock=False):  # protects delivery, not "activity"
-            await send(message)
+        if kind == "websocket.send" or (kind == "http.response.body" and self._streaming):
+            with self._activity.track(self._detail, clock=False):
+                await self._send(message)
+            return
+        if kind != "http.response.body":
+            await self._send(message)
+            return
+        if self._release is None:
+            self._release = self._activity.acquire(self._detail, clock=False)
+        try:
+            await self._send(message)
+        finally:
+            if not message.get("more_body", False):
+                self.close()
 
-    return held
+    def close(self) -> None:
+        if self._release is not None:
+            self._release()
+            self._release = None
+
+
+def _is_event_stream(start: Any) -> bool:
+    for name, value in start.get("headers", ()):
+        if name.lower() == b"content-type":
+            return value.lower().startswith(b"text/event-stream")
+    return False
+
+
+def holding_send(send: Callable[..., Any], activity: "Activity", detail: str) -> HoldingSend:
+    return HoldingSend(send, activity, detail)
 
 
 MONITORING_PATHS = frozenset({"/api/activity", "/api/health", "/api/status"})
@@ -401,11 +439,14 @@ class ActivitySendMiddleware:
             await self._app(scope, receive, send)
             return
         held = holding_send(send, self._activity, self._detail)
-        if scope["type"] == "http" and scope.get("method") in MUTATING_METHODS:
-            with self._activity.track("request"):
-                await self._app(scope, receive, held)
-            return
-        await self._app(scope, receive, held)
+        try:
+            if scope["type"] == "http" and scope.get("method") in MUTATING_METHODS:
+                with self._activity.track("request"):
+                    await self._app(scope, receive, held)
+                return
+            await self._app(scope, receive, held)
+        finally:
+            held.close()  # a response cut short (error, disconnect) is not still owed
 
 
 class ActivityMiddleware:

@@ -1756,3 +1756,72 @@ def test_a_null_method_frame_opens_no_acp_request_hold():
     frame = json.dumps({"jsonrpc": "2.0", "id": 99, "method": None, "result": {}})
     holds.on_receive({"type": "websocket.receive", "text": frame})
     assert activity.holds() == []  # the SDK treats it as a response and never answers it
+
+
+async def test_a_download_stays_work_between_its_chunks():
+    from assistant.activity import ActivitySendMiddleware
+
+    activity = Activity()
+    between: list = []
+
+    async def app(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        for last in (False, False, True):
+            await send({"type": "http.response.body", "body": b"x" * 10, "more_body": not last})
+            between.append(_work(activity))  # what a poll sees while the next chunk is read
+
+    async def send(message):
+        pass
+
+    await ActivitySendMiddleware(app, activity)(
+        {"type": "http", "method": "GET", "path": "/api/p/x/files/raw"}, None, send
+    )
+    assert between == [{"send": 1}, {"send": 1}, {}]
+    assert activity.holds() == []
+
+
+async def test_an_event_stream_is_held_per_chunk_only():
+    from assistant.activity import ActivitySendMiddleware
+
+    activity = Activity()
+    between: list = []
+
+    async def app(scope, receive, send):
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"text/event-stream; charset=utf-8")],
+            }
+        )
+        for _ in range(2):
+            await send({"type": "http.response.body", "body": b"data: {}\n\n", "more_body": True})
+            between.append(_work(activity))  # a subscriber may sit here for hours
+
+    async def send(message):
+        pass
+
+    await ActivitySendMiddleware(app, activity)(
+        {"type": "http", "method": "GET", "path": "/api/p/x/chats/c/agui/events"}, None, send
+    )
+    assert between == [{}, {}]
+
+
+async def test_a_response_cut_short_does_not_keep_its_delivery_hold():
+    from assistant.activity import ActivitySendMiddleware
+
+    activity = Activity()
+
+    async def app(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"x", "more_body": True})
+        raise ConnectionError("client went away")
+
+    async def send(message):
+        pass
+
+    with pytest.raises(ConnectionError):
+        await ActivitySendMiddleware(app, activity)(
+            {"type": "http", "method": "GET", "path": "/api/p/x/files/raw"}, None, send
+        )
+    assert activity.holds() == []

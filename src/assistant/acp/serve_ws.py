@@ -207,6 +207,7 @@ def build_ws_app(acp_agent: ACPAgent, token: str) -> AsgiApp:
                 await conn_app(scope, receiving, delivering)
             finally:
                 requests.close()
+                held.close()
                 # Close the connection's sessions and detach its outbound receiver.
                 for conn_scope in scopes:
                     with contextlib.suppress(Exception):
