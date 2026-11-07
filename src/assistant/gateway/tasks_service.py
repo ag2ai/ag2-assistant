@@ -358,6 +358,20 @@ class TaskService:
 
         self._refresh_timer = loop.call_later(delay, retry)
 
+    @contextlib.asynccontextmanager
+    async def _schedule_change(self):
+        """Around a change to what is scheduled: the new schedule is published on the way
+        out, and a cancellation in between leaves the hold unknown with a retry that
+        republishes on its own, so a saved task never sits behind an idle signal."""
+        try:
+            yield
+            await self.refresh_scheduled()
+        except BaseException:
+            if not self._closed:
+                self._activity.set_scheduled_unknown(self._config.data_dir.name)
+                self._schedule_refresh_retry()
+            raise
+
     async def _migrate_recall(self) -> None:
         """Pre-ADR-0027 tasks had an unconditional 3-run look-back; give the recurring
         ones ``_MIGRATED_RECALL`` so the upgrade changes nothing for them. Best-effort:
@@ -466,28 +480,50 @@ class TaskService:
         # Naming (one cheap-model call) and saving are work: a sleep host must not
         # stop the process between accepting the request and persisting the task.
         with self._activity.track("task_create"):
-            self._validate_model(model)
-            _validate_recall(recall_depth)
-            name = (name or "").strip()
-            description = (description or "").strip()
-            if not name:
-                gen_name, gen_desc = await suggest_task_meta(
-                    self._config, prompt, agent_factory=self._summary_factory
+            async with self._schedule_change():
+                return await self._create_task(
+                    name,
+                    prompt,
+                    model,
+                    schedule,
+                    origin_channel,
+                    origin_chat,
+                    description,
+                    recall_depth,
                 )
-                name = gen_name
-                description = description or gen_desc
-            task = await self._require_store().create_task(
-                name=name,
-                prompt=prompt,
-                model=model or None,
-                schedule=normalize_schedule(schedule),
-                origin_channel=origin_channel,
-                origin_chat=origin_chat,
-                description=description,
-                recall_depth=recall_depth,
+
+    async def _create_task(
+        self,
+        name: str,
+        prompt: str,
+        model: str | None,
+        schedule: dict | None,
+        origin_channel: str | None,
+        origin_chat: str | None,
+        description: str,
+        recall_depth: int,
+    ) -> dict:
+        self._validate_model(model)
+        _validate_recall(recall_depth)
+        name = (name or "").strip()
+        description = (description or "").strip()
+        if not name:
+            gen_name, gen_desc = await suggest_task_meta(
+                self._config, prompt, agent_factory=self._summary_factory
             )
-            await self.refresh_scheduled()
-            return _task_row(task, None, 0, False)
+            name = gen_name
+            description = description or gen_desc
+        task = await self._require_store().create_task(
+            name=name,
+            prompt=prompt,
+            model=model or None,
+            schedule=normalize_schedule(schedule),
+            origin_channel=origin_channel,
+            origin_chat=origin_chat,
+            description=description,
+            recall_depth=recall_depth,
+        )
+        return _task_row(task, None, 0, False)
 
     async def update_task(self, task_id: str, **patch) -> dict | None:
         if "schedule" in patch:
@@ -502,34 +538,34 @@ class TaskService:
             patch["description"] = (patch["description"] or "").strip()
         # Arming or unpausing a task is work until the new schedule is published.
         with self._activity.track("task_update"):
-            task = await self._require_store().update_task(task_id, **patch)
-            await self.refresh_scheduled()
+            async with self._schedule_change():
+                task = await self._require_store().update_task(task_id, **patch)
             return None if task is None else await self.get_task(task_id)
 
     async def delete_task(self, task_id: str) -> bool:
         """Delete a task, all its runs, and each run's chat stream. Stops any
         in-flight run first. Irreversible; the GUI gates it behind a confirm."""
-        task = await self._require_store().get_task(task_id)
-        if task is None:
-            return False
-        for r in await self._require_store().list_runs(task_id):
-            await self.stop_run(r.id)  # no-op on settled runs
-            await self._require_store().delete_run(r.id)
+        async with self._schedule_change():
+            task = await self._require_store().get_task(task_id)
+            if task is None:
+                return False
+            for r in await self._require_store().list_runs(task_id):
+                await self.stop_run(r.id)  # no-op on settled runs
+                await self._require_store().delete_run(r.id)
+                if self._gateway is not None:
+                    with contextlib.suppress(Exception):
+                        await self._gateway.delete_chat(r.stream_id)
+            await self._require_store().delete_task(task_id)
             if self._gateway is not None:
+                # Best-effort: a stub gateway in unit tests may have no `.permissions`
+                # at all, and a real deleted task's grants are gone either way once the
+                # task itself no longer exists.
                 with contextlib.suppress(Exception):
-                    await self._gateway.delete_chat(r.stream_id)
-        await self._require_store().delete_task(task_id)
-        if self._gateway is not None:
-            # Best-effort: a stub gateway in unit tests may have no `.permissions`
-            # at all, and a real deleted task's grants are gone either way once the
-            # task itself no longer exists.
-            with contextlib.suppress(Exception):
-                if (permissions := self._gateway.permissions) is not None:
-                    permissions.drop_task(task_id)
-            with contextlib.suppress(Exception):
-                if (folders := self._gateway.folders) is not None:
-                    folders.drop_task(task_id)
-        await self.refresh_scheduled()
+                    if (permissions := self._gateway.permissions) is not None:
+                        permissions.drop_task(task_id)
+                with contextlib.suppress(Exception):
+                    if (folders := self._gateway.folders) is not None:
+                        folders.drop_task(task_id)
         return True
 
     async def list_tasks(self) -> list[dict]:

@@ -944,3 +944,54 @@ async def test_a_refresh_that_lands_after_a_close_does_not_resurrect_the_hold(pa
     gate.set()
     await pending
     assert activity.holds() == []
+
+
+@pytest.mark.parametrize("change", ["create", "update"])
+async def test_a_cancelled_schedule_change_leaves_an_unknown_hold_that_republishes(
+    paths, tmp_path, change
+):
+    """A turn that saves a scheduled task and is stopped before the publish: the task is
+    on disk, so the hold stays (unknown) and the retry publishes it with no poll."""
+    saved = asyncio.Event()
+    gate = asyncio.Event()
+
+    class _GatedStore(TaskStore):
+        async def create_task(self, **fields):
+            task = await super().create_task(**fields)
+            saved.set()
+            await gate.wait()  # cancelled here: after persistence, before publication
+            return task
+
+        async def update_task(self, task_id, **fields):
+            task = await super().update_task(task_id, **fields)
+            saved.set()
+            await gate.wait()
+            return task
+
+    activity = Activity()
+    tasks = TaskService(
+        config=Config.for_paths(paths),
+        store=_GatedStore(path=tmp_path / "tasks.db"),
+        inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
+        activity=activity,
+        refresh_retry_s=0.05,
+    )
+    await tasks.start(scheduler=False)
+    daily = {"kind": "cron", "cron": "@daily"}
+    if change == "create":
+        changing = asyncio.ensure_future(tasks.create_task(name="A", prompt="p", schedule=daily))
+    else:
+        gate.set()
+        task = await tasks.create_task(name="A", prompt="p")
+        gate.clear()
+        saved.clear()
+        changing = asyncio.ensure_future(tasks.update_task(task["id"], schedule=daily))
+    await asyncio.wait_for(saved.wait(), 5)
+    changing.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await changing
+    assert activity.holds() == [{"kind": "scheduled"}]  # on disk, not yet published
+    await asyncio.sleep(0.3)
+    (hold,) = activity.holds()
+    assert hold["count"] == 1
+    await tasks.close()
