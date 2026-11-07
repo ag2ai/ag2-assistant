@@ -272,11 +272,15 @@ class DurableAsker(PendingGuard):
 
     async def ask(self, question: Question, timeout: float | None = None) -> str:
         with self.pending_guard():
-            return await self._ask(question, timeout)
+            try:
+                return await self._ask(question, timeout)
+            finally:
+                self.pending_until = None
 
     async def _ask(self, question: Question, timeout: float | None = None) -> str:
         to = timeout or self._timeout
         expires_at = time.time() + to
+        self.pending_until = expires_at
         # Surface on the explicit chat, else the task's stream (so a task's
         # inquiries render inline on its page exactly as before).
         chat = self._chat or (f"task:{self.task_id}" if self.task_id else None)

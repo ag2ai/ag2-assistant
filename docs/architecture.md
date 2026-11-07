@@ -388,6 +388,7 @@ WebSockets: `/api/stream` (event spine) and `/api/voice` (audio).
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
 | GET  | `/api/health` | gateway status |
+| GET  | `/api/activity` | open holds (work, scheduled, human) for a sleep/wake host |
 | GET  | `/api/chats` | list resumable chats (newest first) |
 | GET  | `/api/chats/{chat_id}` | display transcript for a chat |
 | POST | `/api/message` | send a message, blocking → `{reply, chat_id}` |

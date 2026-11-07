@@ -13,6 +13,7 @@ from ag2.events import ModelMessageChunk, TextInput, ToolCallsEvent
 
 from assistant import connections
 from assistant import pairing as pairing_mod
+from assistant.activity import Activity
 from assistant.channels.base import InboundMessage, should_respond
 from assistant.observability import log_suppressed
 from assistant.pairing import PairingStore
@@ -563,11 +564,19 @@ class ChannelRouter:
         paths: Paths,
         *,
         transcribe_client: "AsyncOpenAI | None" = None,
+        activity: Activity | None = None,
     ) -> None:
         self._directory = directory
         self._transcribe_client = transcribe_client
+        self._activity = activity or Activity()
         self._peers = PeerStore(paths)
         self._pairing = PairingStore(paths)
+
+    def hold(self):
+        """Hold ``work`` for one inbound message: an adapter wraps everything from the
+        attachment download to the delivered reply in it, so a sleep host never stops
+        the process while an answer is still on its way to the platform."""
+        return self._activity.track("channel")
 
     def accepts(self, inbound: InboundMessage) -> bool:
         """Whether this message runs a turn — an adapter's gate for showing platform

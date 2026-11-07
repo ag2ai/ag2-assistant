@@ -213,17 +213,18 @@ class DiscordChannel(Channel):
         if inbound is None or not self._require_router().accepts(inbound):
             return
 
-        async with message.channel.typing():
-            attachments, files = await _download_attachments(message)
-            outcome = await self._require_router().handle(
-                inbound,
-                asker=self._asker_for(channel_id),
-                attachments=attachments,
-                files=files,
-            )
+        with self._request_hold():  # through the delivered reply
+            async with message.channel.typing():
+                attachments, files = await _download_attachments(message)
+                outcome = await self._require_router().handle(
+                    inbound,
+                    asker=self._asker_for(channel_id),
+                    attachments=attachments,
+                    files=files,
+                )
 
-        spoken = spoken_text(outcome)
-        if spoken is None:
-            return
-        for chunk in split_for_limit(self.format_outbound(spoken), self._message_limit):
-            await message.channel.send(chunk)
+            spoken = spoken_text(outcome)
+            if spoken is None:
+                return
+            for chunk in split_for_limit(self.format_outbound(spoken), self._message_limit):
+                await message.channel.send(chunk)

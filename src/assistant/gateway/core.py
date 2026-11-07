@@ -55,6 +55,7 @@ from assistant.a2ui import (
     tolerant_a2ui_middleware,
 )
 from assistant.a2ui_skill import a2ui_available
+from assistant.activity import Activity, ActivityMiddleware
 from assistant.agent import (
     ACP_PROVIDERS,
     BEHAVIOR_GUIDANCE,
@@ -86,7 +87,7 @@ from assistant.events import (
 from assistant.folders import FolderStore
 from assistant.gateway.chat_activity import ChatActivity
 from assistant.gateway.history import ChatEventLog
-from assistant.gateway.repair import repair_stream_history, wait_reply
+from assistant.gateway.repair import MAX_HITL_PAUSE, repair_stream_history, wait_reply
 from assistant.gateway.tasks_service import TaskService
 from assistant.gateway.wire import is_binary_event
 from assistant.hitl import Asker, build_hitl_hook
@@ -261,6 +262,8 @@ class Gateway:
         subscription_auth: CodexAuth | None = None,
         google: GoogleAuth | None = None,
         plugins: Iterable[Plugin] = (),
+        activity: Activity | None = None,
+        voice_factory: Callable | None = None,
     ) -> None:
         self._config = config or load_config()
         self._memory = memory
@@ -319,6 +322,8 @@ class Gateway:
         # chat_id -> streamed chunks of the model message still being written
         self._streaming: dict[str, list[ModelMessageChunk]] = {}
         self._invocations: set[asyncio.Task] = set()
+        self._activity = activity or Activity()
+        self._voice_factory = voice_factory or build_voice_agent
         self._background: set[asyncio.Task] = set()
         self._memory_lock = asyncio.Lock()
         self._memory_updating: set[str] = set()
@@ -406,6 +411,7 @@ class Gateway:
                         return self._acp_generation.agent
                     config, _, extra, runtime = await self._prepare_turn(lease, "acp-listener")
                     middleware = _build_middleware(config)
+                    middleware.append(ActivityMiddleware(self._activity))
                     if runtime is not None:
                         middleware.extend(runtime.middleware_factories())
                     agent = self._agent_factory(
@@ -649,6 +655,16 @@ class Gateway:
     def streaming_chunks(self, chat_id: str) -> list[ModelMessageChunk]:
         """The chunks of the model message being written now, which the log never keeps."""
         return list(self._streaming.get(chat_id, ()))
+
+    @property
+    def activity(self) -> Activity:
+        """The install's activity registry this gateway reports into."""
+        return self._activity
+
+    def track(self, detail: str):
+        """Hold ``work`` on the install's activity for a block the gateway does not
+        drive itself, such as a voice call."""
+        return self._activity.track(detail)
 
     def is_running(self, chat_id: str = "default") -> bool:
         """Whether a turn is in flight on this chat — what a message sent now would be
@@ -999,21 +1015,22 @@ class Gateway:
         if task is not None:
             self._invocations.add(task)
         try:
-            reply = await self._send_message(
-                text,
-                chat_id,
-                asker,
-                attachments,
-                surface,
-                on_event,
-                llm_config_id,
-                task_id,
-                origin,
-                attachment_names,
-                chat_model,
-                on_text,
-            )
-            self._schedule_memory_update(chat_id)
+            with self._activity.track("turn"):
+                reply = await self._send_message(
+                    text,
+                    chat_id,
+                    asker,
+                    attachments,
+                    surface,
+                    on_event,
+                    llm_config_id,
+                    task_id,
+                    origin,
+                    attachment_names,
+                    chat_model,
+                    on_text,
+                )
+                self._schedule_memory_update(chat_id)
             return reply
         finally:
             if task is not None:
@@ -1089,6 +1106,14 @@ class Gateway:
                 effective = self._config
                 usage_handle = self._watch_usage(stream)
                 hitl_pending = getattr(asker, "has_pending", None)
+                human_watch = None
+                if hitl_pending is not None:
+                    human_watch = self._activity.human_watch(
+                        hitl_pending,
+                        lambda: getattr(asker, "pending_until", None),
+                        fallback_s=MAX_HITL_PAUSE,
+                    )
+                    hitl_pending = human_watch
                 try:
                     turn_id = new_id("turn")
                     await self.emit_event(chat_id, TurnStarted(chat_id, turn_id=turn_id))
@@ -1187,6 +1212,8 @@ class Gateway:
                     await self._mirror_turn(chat_id, text, reply.body, origin, attachment_names)
                     return reply.body
                 finally:
+                    if human_watch is not None:
+                        human_watch.close()
                     self._active.pop(chat_id, None)
                     self._streaming.pop(chat_id, None)
                     if a2ui_handle is not None:
@@ -1206,10 +1233,18 @@ class Gateway:
             logger.warning("turn summary dropped: chat=%s turn=%s", chat_id, dropped.turn_id)
         queue.append(_PendingSummary(turn_id, text, reply))
         if chat_id not in self._summary_workers:
-            task = asyncio.create_task(self._summarize_turns(chat_id))
-            self._summary_workers[chat_id] = task
-            self._background.add(task)
-            task.add_done_callback(self._background.discard)
+            self._summary_workers[chat_id] = self.background_task(self._summarize_turns(chat_id))
+
+    def background_task(self, coro) -> "asyncio.Task":
+        """Run ``coro`` as a task that holds ``work`` from now until it is done, including
+        a cancellation that lands before its first step: post-turn work, and any job a
+        route starts on the user's behalf (feedback learning)."""
+        release = self._activity.acquire("background")
+        task = asyncio.create_task(coro)
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
+        task.add_done_callback(lambda _task: release())
+        return task
 
     async def _summarize_turns(self, chat_id: str) -> None:
         """Summarise this Chat's queued Turns one at a time until the queue is empty."""
@@ -1427,7 +1462,7 @@ class Gateway:
             async with self._preparation_lock:
                 _, _, contributions, _ = await self._prepare_turn(lease, origin_chat or "voice")
             assistant_tools = [tool.name for tool in contributions["tools"] if tool.name]
-        return build_voice_agent(
+        return self._voice_factory(
             self._config,
             profile_settings(self._config.data_dir, voice_provider=self._config.voice_provider),
             tasks,
@@ -1563,18 +1598,14 @@ class Gateway:
         # like ChatGPT/Claude). A single revision: only when there's no title yet.
         titled = self._config.gateway.chat_titles
         if titled and len(doc["messages"]) == 2 and not doc.get("title"):
-            task = asyncio.create_task(self._title_chat(chat_id, user_text, reply_text))
-            self._background.add(task)
-            task.add_done_callback(self._background.discard)
+            self.background_task(self._title_chat(chat_id, user_text, reply_text))
 
     def _schedule_memory_update(self, chat_id: str) -> None:
         """Start the profile update for a finished turn; a chat has one at a time."""
         if not self._memory or chat_id in self._memory_updating:
             return
         self._memory_updating.add(chat_id)
-        task = asyncio.create_task(self._update_memory(chat_id))
-        self._background.add(task)
-        task.add_done_callback(self._background.discard)
+        self.background_task(self._update_memory(chat_id))
 
     async def _update_memory(self, chat_id: str) -> None:
         """Merge the chat into the profile on every Nth turn, one chat at a time, without
@@ -2046,11 +2077,17 @@ def build_gateway(
     model_factory: Callable | None = None,
     environment_factory: Callable | None = None,
     plugins: Iterable[Plugin] = (),
+    activity: Activity | None = None,
+    voice_factory: Callable | None = None,
 ) -> "tuple[Gateway, TaskService]":
     """Build a Gateway and TaskService sharing a Profile configuration resolver."""
     config = config or load_config()
+    activity = activity or Activity()
     tasks = TaskService(
-        config=config, config_factory=config_factory, summary_factory=summary_factory
+        config=config,
+        config_factory=config_factory,
+        summary_factory=summary_factory,
+        activity=activity,
     )
     gateway = Gateway(
         config=config,
@@ -2066,5 +2103,7 @@ def build_gateway(
         model_factory=model_factory,
         environment_factory=environment_factory,
         plugins=plugins,
+        activity=activity,
+        voice_factory=voice_factory,
     )
     return gateway, tasks

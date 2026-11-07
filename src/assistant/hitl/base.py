@@ -37,6 +37,8 @@ class PendingGuard:
     paused on such a wait."""
 
     _inflight: int = 0
+    # Epoch seconds the open wait lapses at, when the asker knows it.
+    pending_until: float | None = None
 
     def has_pending(self) -> bool:
         return self._inflight > 0

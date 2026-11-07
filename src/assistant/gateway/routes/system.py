@@ -30,6 +30,7 @@ from assistant.gateway.profile_manager import ProfileRuntime
 from assistant.gateway.routes.common import refresh_all
 from assistant.gateway.routes.deps import GatewayDeps
 from assistant.gateway.schemas import (
+    ActivityResponse,
     CodexLoginUrlResponse,
     CodexStatusResponse,
     CodingAgentsResponse,
@@ -138,6 +139,16 @@ def build_router(d: GatewayDeps, *, code_reader: Callable[[str], str]) -> APIRou
         if runtime is None or runtime.gateway is None:
             return {"status": "ok", "profiles": 0}
         return runtime.gateway.status()
+
+    @r.get("/api/activity", response_model=ActivityResponse, response_model_exclude_unset=True)
+    async def activity():
+        """What the install is doing now, for a host deciding whether it may sleep:
+        open work, scheduled slots, turns parked on a human. Pod-wide, all profiles."""
+        for runtime in d.manager.runtimes():
+            if runtime.tasks is not None:
+                await runtime.tasks.refresh_scheduled()
+        d.manager.activity.flush()
+        return d.manager.activity.snapshot()
 
     @r.get(
         "/api/coding/agents",

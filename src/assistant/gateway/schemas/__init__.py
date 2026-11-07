@@ -134,6 +134,8 @@ from .skill import (
     SkillSearchResultsResponse,
 )
 from .system import (
+    ActivityHoldOut,
+    ActivityResponse,
     CatalogModelOut,
     CodexLoginUrlResponse,
     CodexStatusResponse,
@@ -230,6 +232,8 @@ __all__ = [
     "HealthChannelOut",
     "HealthCheckOut",
     "HealthMcpServerOut",
+    "ActivityHoldOut",
+    "ActivityResponse",
     "HealthResponse",
     "HealthStateOut",
     "HitlPendingResponse",

@@ -209,14 +209,17 @@ def build_profile_router(d: GatewayDeps, get_runtime, *, surfaces: Mapping[str, 
                 ),
             )
         if reason:
-            learner = feedback_learner.learn(
-                runtime.require_config(),
-                sentiment=sentiment,
-                reason=reason,
-                content=req.content,
-                request=req.request,
+            # One cheap-model call and a memory write: tracked as work so a sleep host
+            # does not stop the process before the preference is saved.
+            runtime.require_gateway().background_task(
+                feedback_learner.learn(
+                    runtime.require_config(),
+                    sentiment=sentiment,
+                    reason=reason,
+                    content=req.content,
+                    request=req.request,
+                )
             )
-            runs.keep(asyncio.ensure_future(learner))
         return {"ok": True}
 
     @r.post("/chats/{chat_id}/feedback/clear", response_model=Ok)

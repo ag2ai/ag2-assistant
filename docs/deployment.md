@@ -244,6 +244,7 @@ Notes:
 | `TZ` | IANA timezone for scheduled tasks (wall-clock local) — **set this** | unset → `UTC` |
 | `AG2ASSISTANT_ACP_BRIDGE` | `host:port` of the ACP host bridge; unset = spawn coding agents locally | — |
 | `AG2ASSISTANT_ACP_BRIDGE_TOKEN` | shared secret for the bridge (must match `acp-bridge --token`) | — |
+| `AG2ASSISTANT_ACTIVITY_FILE` | mirror of `GET /api/activity` for a host that sleeps idle installs (see [usage](usage.md#activity)) | — |
 | `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | provider keys | — |
 
 See `.env.example` for the full list.

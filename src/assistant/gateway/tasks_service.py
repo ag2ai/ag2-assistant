@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from ag2 import Agent
 
+from assistant.activity import Activity, iso_utc
 from assistant.config import Config, load_config
 from assistant.connections import ConnectionStore
 from assistant.hitl import NullAsker
@@ -210,8 +211,17 @@ class TaskService:
         scheduler_interval: float = 30.0,
         config_factory: Callable[[], Config] | None = None,
         summary_factory: Callable[[Config], Agent] | None = None,
+        activity: Activity | None = None,
+        refresh_retry_s: float = 1.0,
     ) -> None:
         self._config = config or load_config()
+        self._activity = activity or Activity()
+        # A failed schedule read retries on its own, doubling from here up to 30 s.
+        self._refresh_retry_s = refresh_retry_s
+        self._refresh_delay = refresh_retry_s
+        self._refresh_timer: asyncio.TimerHandle | None = None
+        self._refresh_lock = asyncio.Lock()  # one read-and-publish at a time, in order
+        self._closed = False  # a refresh that lands after close publishes nothing
         self._config_factory = config_factory or (lambda: self._config)
         # How the cheap-model distiller (run summaries, task auto-naming) is built.
         self._summary_factory = summary_factory or default_summarizer
@@ -304,6 +314,55 @@ class TaskService:
                     self._require_store(), self._fire, interval=self._scheduler_interval
                 )
                 await self._scheduler.start()
+        await self.refresh_scheduled()
+
+    async def refresh_scheduled(self, *, final: bool = False) -> None:
+        """Report this profile's unpaused tasks with a future slot as a scheduled hold.
+        A read that fails leaves the hold unknown (sleep-blocking) and retries by itself.
+        After close only a ``final`` read publishes: the runtime's last word once every
+        turn that could still save a task has been cancelled."""
+        async with self._refresh_lock:
+            key = self._config.data_dir.name
+            if self._closed and not final:
+                return
+            try:
+                # strict: a record that cannot be read must not turn into "not scheduled"
+                tasks = await self._require_store().list_tasks(strict=True)
+            except Exception as exc:
+                from assistant.observability import log_suppressed
+
+                log_suppressed("scheduled activity refresh", exc)
+                if self._closed and not final:
+                    return
+                self._activity.set_scheduled_unknown(key)
+                self._schedule_refresh_retry()
+                return
+            if self._closed and not final:
+                return  # archived or stopped while reading: the close decided the hold
+            slots = [
+                dt for t in tasks if not t.paused and (dt := parse_dt(t.next_run_at)) is not None
+            ]
+            self._activity.set_scheduled(key, len(slots), iso_utc(min(slots)) if slots else None)
+            self._refresh_delay = self._refresh_retry_s
+            if self._refresh_timer is not None:
+                self._refresh_timer.cancel()
+                self._refresh_timer = None
+
+    def _schedule_refresh_retry(self) -> None:
+        if self._refresh_timer is not None or self._closed:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        delay = self._refresh_delay
+        self._refresh_delay = min(delay * 2, 30.0)
+
+        def retry() -> None:
+            self._refresh_timer = None
+            asyncio.ensure_future(self.refresh_scheduled())
+
+        self._refresh_timer = loop.call_later(delay, retry)
 
     async def _migrate_recall(self) -> None:
         """Pre-ADR-0027 tasks had an unconditional 3-run look-back; give the recurring
@@ -363,9 +422,19 @@ class TaskService:
         if self._scheduler_lock is not None:
             self._scheduler_lock.release()
             self._scheduler_lock = None
-        for job in list(self._jobs.values()):
+        self._closed = True
+        jobs = list(self._jobs.values())
+        for job in jobs:
             job.cancel()
+        # Await them: a job's hold is released from its done callback, and the final
+        # activity write after this close must not still show a run.
+        await asyncio.gather(*jobs, return_exceptions=True)
         self._jobs.clear()
+        if self._refresh_timer is not None:
+            self._refresh_timer.cancel()
+            self._refresh_timer = None
+        # The scheduled hold outlives an ordinary close: the tasks stay armed on disk,
+        # and a host reading the last file still needs the next wake. Archive clears it.
 
     async def _jobs_done(self) -> None:
         """Await all in-flight run jobs (tests + orderly shutdown)."""
@@ -420,6 +489,7 @@ class TaskService:
             description=description,
             recall_depth=recall_depth,
         )
+        await self.refresh_scheduled()
         return _task_row(task, None, 0, False)
 
     async def update_task(self, task_id: str, **patch) -> dict | None:
@@ -434,6 +504,7 @@ class TaskService:
         if "description" in patch:
             patch["description"] = (patch["description"] or "").strip()
         task = await self._require_store().update_task(task_id, **patch)
+        await self.refresh_scheduled()
         return None if task is None else await self.get_task(task_id)
 
     async def delete_task(self, task_id: str) -> bool:
@@ -459,6 +530,7 @@ class TaskService:
             with contextlib.suppress(Exception):
                 if (folders := self._gateway.folders) is not None:
                     folders.drop_task(task_id)
+        await self.refresh_scheduled()
         return True
 
     async def list_tasks(self) -> list[dict]:
@@ -525,9 +597,20 @@ class TaskService:
     # ---- execution ----
 
     async def _fire(self, task_id: str) -> None:
-        """Scheduler callback: start a run and re-arm (cron) / disarm (once)."""
+        """Scheduler callback: start a run and re-arm (cron) / disarm (once). The slot
+        is work from this moment, so the host never sees a gap between the scheduled
+        hold going and the run's hold opening."""
+        release = self._activity.acquire("run")
+        try:
+            await self._fire_held(task_id, release)
+        except BaseException:
+            release()
+            raise
+
+    async def _fire_held(self, task_id: str, release) -> None:
         t = await self._require_store().get_task(task_id)
         if t is None or t.paused or not t.next_run_at:
+            release()
             return
         once = t.schedule.get("kind") == ScheduleKind.ONCE
         # Re-arm base = max(now, slot). Plain `now` re-arms onto the SAME slot when
@@ -548,17 +631,29 @@ class TaskService:
         if once:
             rearm["schedule"] = manual_schedule()  # exhausted → back to on-demand
         await self._require_store().update_task(task_id, **rearm)
-        await self.start_run(task_id, trigger="once" if once else "schedule")
+        await self.refresh_scheduled()
+        await self.start_run(task_id, trigger="once" if once else "schedule", hold=release)
 
-    async def start_run(self, task_id: str, trigger: RunTrigger = "manual") -> Run | None:
-        t = await self._require_store().get_task(task_id)
-        if t is None:
-            return None
-        run = await self._require_store().create_run(task_id, trigger=trigger)
+    async def start_run(
+        self, task_id: str, trigger: RunTrigger = "manual", *, hold=None
+    ) -> Run | None:
+        """Create a run and its job. The job holds ``work`` from now until it is done,
+        however it ends; ``hold`` hands over a hold the caller already opened."""
+        release = hold or self._activity.acquire("run")
+        try:
+            t = await self._require_store().get_task(task_id)
+            if t is None:
+                release()
+                return None
+            run = await self._require_store().create_run(task_id, trigger=trigger)
+        except BaseException:
+            release()
+            raise
         job = asyncio.create_task(self._execute(run.id))
         self._jobs[run.id] = job
         run_id = run.id  # bound here, not as a lambda default, so the closure is typed
         job.add_done_callback(lambda _j: self._jobs.pop(run_id, None))
+        job.add_done_callback(lambda _j: release())
         return run
 
     async def _execute(self, run_id: str) -> None:

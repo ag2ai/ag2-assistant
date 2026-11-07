@@ -12,6 +12,24 @@ export const Health = z.object({
 })
 export type Health = z.infer<typeof Health>
 
+// GET /api/activity — activity.py snapshot(): open holds for a host deciding
+// whether the process may sleep. A hold carries only the fields its kind uses.
+export const ActivityHold = z.object({
+  kind: z.string(),
+  count: z.number().optional(),
+  detail: z.string().optional(),
+  next: z.string().optional(),
+  until: z.string().optional(),
+})
+export type ActivityHold = z.infer<typeof ActivityHold>
+
+export const Activity = z.object({
+  ts: z.string(),
+  idle_since: z.string().nullable(),
+  holds: z.array(ActivityHold),
+})
+export type Activity = z.infer<typeof Activity>
+
 // One model's slice of a day's spend (usage.py _blank minus by_model).
 export const UsageTotals = z.object({
   prompt: z.number(),

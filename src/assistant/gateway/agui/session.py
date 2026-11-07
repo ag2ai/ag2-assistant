@@ -181,44 +181,48 @@ class ChatRuns:
         answer: Callable[[ResumeEntry], Any],
     ) -> AsyncIterator[Event]:
         """One AG-UI run: a new Turn from ``request``, or the running one after ``resume``."""
-        run_id = body.run_id or uuid.uuid4().hex
-        async with ChatListener(gateway, chat_id) as listener:
-            yield started(chat_id, run_id)
-            turn: asyncio.Task | None = None
-            if body.resume:
-                for out in listener.written:
-                    yield out
-                for entry in body.resume:
-                    await answer(entry)
-            elif request is not None:
-                turn = self.start(gateway, chat_id, request)
-            while True:
-                event = await listener.next()
-                if event is None:
-                    idle = turn.done() if turn is not None else not gateway.is_running(chat_id)
-                    if idle:
-                        break
-                    continue
-                if isinstance(event, InquiryRaised):
-                    for out in listener.projector.close():
+        # The turn's own hold ends when it answers, but this response is still being
+        # streamed; hold work until the client has the terminal event (or hangs up).
+        hold = getattr(gateway, "track", None)
+        with hold("agui") if hold is not None else contextlib.nullcontext():
+            run_id = body.run_id or uuid.uuid4().hex
+            async with ChatListener(gateway, chat_id) as listener:
+                yield started(chat_id, run_id)
+                turn: asyncio.Task | None = None
+                if body.resume:
+                    for out in listener.written:
                         yield out
-                    yield RunFinishedEvent(
-                        thread_id=chat_id,
-                        run_id=run_id,
-                        outcome=RunFinishedInterruptOutcome(interrupts=[interrupt_of(event)]),
-                    )
-                    return
-                for out in listener.feed(event):
+                    for entry in body.resume:
+                        await answer(entry)
+                elif request is not None:
+                    turn = self.start(gateway, chat_id, request)
+                while True:
+                    event = await listener.next()
+                    if event is None:
+                        idle = turn.done() if turn is not None else not gateway.is_running(chat_id)
+                        if idle:
+                            break
+                        continue
+                    if isinstance(event, InquiryRaised):
+                        for out in listener.projector.close():
+                            yield out
+                        yield RunFinishedEvent(
+                            thread_id=chat_id,
+                            run_id=run_id,
+                            outcome=RunFinishedInterruptOutcome(interrupts=[interrupt_of(event)]),
+                        )
+                        return
+                    for out in listener.feed(event):
+                        yield out
+                while (event := await listener.next(0)) is not None:
+                    for out in listener.feed(event):
+                        yield out
+                for out in listener.projector.close():
                     yield out
-            while (event := await listener.next(0)) is not None:
-                for out in listener.feed(event):
-                    yield out
-            for out in listener.projector.close():
-                yield out
-            if turn is not None and not turn.cancelled() and (error := turn.exception()):
-                yield RunErrorEvent(message=str(error) or repr(error))
-            else:
-                yield finished(chat_id, run_id)
+                if turn is not None and not turn.cancelled() and (error := turn.exception()):
+                    yield RunErrorEvent(message=str(error) or repr(error))
+                else:
+                    yield finished(chat_id, run_id)
 
     async def watch(
         self, gateway: Any, chat_id: str, stop: asyncio.Event | None = None

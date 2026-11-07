@@ -29,6 +29,7 @@ from assistant.acp.approvals import install_owner_side_approvals
 from assistant.acp.auth import choose_auth
 from assistant.acp.chats import ChatBackedStorage
 from assistant.acp.outbound import Outbound
+from assistant.activity import Activity
 from assistant.config import Config, load_config, resolve_config
 from assistant.config_migrations import migrate_anthropic_sampling
 from assistant.connections import ConnectionStore
@@ -134,9 +135,13 @@ class ProfileRuntime:
         model_factory: Callable | None = None,
         environment_factory: Callable | None = None,
         plugins: Iterable[Plugin] = (),
+        activity: Activity | None = None,
+        voice_factory: Callable | None = None,
     ) -> None:
         self.meta = meta
         self.paths = paths
+        self._activity = activity
+        self._voice_factory = voice_factory
         self._registry = ProfileRegistry(paths)
         self._env = env
         self._memory = memory
@@ -267,6 +272,8 @@ class ProfileRuntime:
             model_factory=self._model_factory,
             environment_factory=self._environment_factory,
             plugins=self._plugins,
+            activity=self._activity,
+            voice_factory=self._voice_factory,
         )
         await self.gateway.start()
         self.gateway.set_mirror(self._mirror)  # completed turns -> the Attached Peer
@@ -292,6 +299,10 @@ class ProfileRuntime:
             await self.tasks.close()
         if self.gateway is not None:
             await self.gateway.close()
+        if self.tasks is not None:
+            # Every turn that could still have saved a task is cancelled now: what is on
+            # disk is this runtime's last word on its schedule.
+            await self.tasks.refresh_scheduled(final=True)
 
 
 class ProfileManager:
@@ -315,6 +326,8 @@ class ProfileManager:
         model_factory: Callable | None = None,
         environment_factory: Callable | None = None,
         plugins: Iterable[Plugin] = (),
+        activity: Activity | None = None,
+        voice_factory: Callable | None = None,
     ) -> None:
         # Install-level layout + config; the pair always agrees. Given neither, both come
         # from the entry-point boundary so ``serve`` needs no wiring; given ``paths``, the
@@ -328,6 +341,21 @@ class ProfileManager:
         self._env = env
         self._registry = ProfileRegistry(self.paths)
         self._connections = ConnectionStore(self.paths, env)
+        # One install-wide tally of open work, shared by every profile's gateway and
+        # task service; AG2ASSISTANT_ACTIVITY_FILE mirrors it to disk for a host.
+        self.activity = activity or Activity(
+            (env or {}).get("AG2ASSISTANT_ACTIVITY_FILE"), initial_hold="startup"
+        )
+        # Held until start() has discovered every profile, read each schedule and
+        # brought the channels and listeners up.
+        self._release_startup = (
+            self.activity.release_initial_hold
+            if activity is None
+            else self.activity.acquire("startup")
+        )
+        self._voice_factory = (
+            voice_factory  # how a voice call's LiveAgent is built; None = production
+        )
         self._memory = memory
         self._persist = persist
         # A host's async (profile_id, task, text, *, failed, run_id) -> delivered, tried first.
@@ -370,7 +398,7 @@ class ProfileManager:
         # The one router every adapter is handed. It resolves the profile per inbound
         # message through the directory methods below, so changing a Channel's default
         # profile — or a Peer's own selection — needs no restart.
-        self.router = channels.ChannelRouter(self, self.paths)
+        self.router = channels.ChannelRouter(self, self.paths, activity=self.activity)
 
     # ---- the router's ProfileDirectory (read fresh on every message) ----
 
@@ -415,7 +443,12 @@ class ProfileManager:
         migrate_anthropic_sampling(self.paths.config_yaml)
         setup_logging(self.config)
         self._connections.adopt_peer_senders()
-        for meta in self._registry.list_profiles(include_archived=False):
+        profiles = self._registry.list_profiles(include_archived=False)
+        for meta in profiles:
+            # Until its task service reads the schedule, a profile may hold scheduled
+            # work; one that fails to boot keeps that unknown hold.
+            self.activity.set_scheduled_unknown(meta.id)
+        for meta in profiles:
             try:
                 await self._boot(meta)
             except Exception as exc:
@@ -426,8 +459,16 @@ class ProfileManager:
         for listener in self._connections.list_acp_connections():
             if listener.port is not None:
                 await self.start_acp_listener(listener.connection.id)
+        self._release_startup()  # from here the holds speak for themselves
 
     async def _boot(self, meta: ProfileMeta) -> ProfileRuntime:
+        # Booting is work, and the schedule is unknown until the task service reads it:
+        # restore and create take this path too, not only start().
+        self.activity.set_scheduled_unknown(meta.id)
+        with self.activity.track("boot"):
+            return await self._boot_held(meta)
+
+    async def _boot_held(self, meta: ProfileMeta) -> ProfileRuntime:
         runtime = ProfileRuntime(
             meta,
             self.paths,
@@ -446,6 +487,8 @@ class ProfileManager:
             model_factory=self._model_factory,
             environment_factory=self._environment_factory,
             plugins=self._plugins,
+            activity=self.activity,
+            voice_factory=self._voice_factory,
         )
         await runtime.start()
         self.boot_errors.pop(meta.id, None)
@@ -472,7 +515,9 @@ class ProfileManager:
 
     def _outbound(self, connection: str) -> Outbound:
         if connection not in self.acp_outbound:
-            self.acp_outbound[connection] = Outbound(connection, self.paths.root / "acp_outbox")
+            self.acp_outbound[connection] = Outbound(
+                connection, self.paths.root / "acp_outbox", activity=self.activity
+            )
         return self.acp_outbound[connection]
 
     async def push_task_outcome(
@@ -662,6 +707,7 @@ class ProfileManager:
                 connection_id=cid,
                 auth=auth,
                 outbound=outbound,
+                activity=self.activity,
             )
         except asyncio.CancelledError:
             raise
@@ -712,6 +758,7 @@ class ProfileManager:
         self.acp_outbound.clear()
         self.channel_errors.clear()
         self.acp_listener_errors.clear()
+        self.activity.shutdown()  # the last file state is the settled one
 
     def get(self, pid: str) -> ProfileRuntime:
         """Registry-first lookup (§4.1): unknown → UnknownProfile; archived →
@@ -802,6 +849,7 @@ class ProfileManager:
             self._runtimes.pop(pid, None)
 
         self._registry.archive_profile(pid)
+        self.activity.set_scheduled(pid, 0, None)  # also a profile that never booted
 
     async def restore(self, pid: str) -> ProfileRuntime:
         """Un-archive a profile and boot its runtime live (§4.9, ADR 0003).
@@ -824,6 +872,7 @@ class ProfileManager:
             # Roll back the flag so the invariant "unarchived ⟺ running" holds.
             self._registry.archive_profile(pid)
             self._runtimes.pop(pid, None)
+            self.activity.set_scheduled(pid, 0, None)  # archived again: nothing pending
             raise
 
     async def purge(self, pid: str) -> None:
