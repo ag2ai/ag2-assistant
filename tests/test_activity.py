@@ -522,3 +522,31 @@ async def test_closing_the_gateway_before_post_turn_work_starts_releases_its_hol
     assert _work(activity) == {"background": 1}  # the title job, not yet started
     await gateway.close()  # cancels it before its first step
     assert activity.holds() == []
+
+
+async def test_a_failed_write_is_retried_until_the_file_tells_the_truth(tmp_path):
+    blocker = tmp_path / "state"
+    blocker.write_text("")  # the parent is a file, so every write fails
+    path = blocker / "activity.json"
+    a = Activity(path, idle_grace_s=0, retry_s=0.05)
+    release = a.acquire("turn")
+    assert not path.exists() and a.busy
+    blocker.unlink()  # storage recovers; nothing else changes
+    await asyncio.sleep(0.2)
+    assert json.loads(path.read_text())["holds"] == [{"kind": "work", "count": 1, "detail": "turn"}]
+    release()
+    assert json.loads(path.read_text())["holds"] == []
+
+
+def test_a_poll_flushes_a_failed_write(tmp_path):
+    blocker = tmp_path / "state"
+    blocker.write_text("")
+    path = blocker / "activity.json"
+    a = Activity(path, idle_grace_s=0)
+    a.acquire("turn")
+    blocker.unlink()
+    a.flush()
+    assert json.loads(path.read_text())["holds"] == [{"kind": "work", "count": 1, "detail": "turn"}]
+    stamp = path.stat().st_mtime_ns
+    a.flush()  # nothing to recover: no rewrite
+    assert path.stat().st_mtime_ns == stamp

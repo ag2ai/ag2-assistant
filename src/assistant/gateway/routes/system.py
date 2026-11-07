@@ -147,6 +147,7 @@ def build_router(d: GatewayDeps, *, code_reader: Callable[[str], str]) -> APIRou
         for runtime in d.manager.runtimes():
             if runtime.tasks is not None:
                 await runtime.tasks.refresh_scheduled()
+        d.manager.activity.flush()
         return d.manager.activity.snapshot()
 
     @r.get(

@@ -465,7 +465,10 @@ With `AG2ASSISTANT_ACTIVITY_FILE=/path/activity.json` the same snapshot is writt
 (atomically, tmp + rename) on every change of the holds, the write that reports no
 `work` left waiting 2.5 s so back-to-back turns do not flap. The file is never read
 back; a process starts with no holds and `idle_since` = its start time, and writes that
-state at once, so a crashed predecessor's file never outlives it.
+state at once, so a crashed predecessor's file never outlives it. A write that fails is
+retried with backoff (1 s doubling to 30 s) and on the next `GET /api/activity`, so a
+transient storage fault cannot leave the file saying idle while work runs. `ts` is the
+time of the last write, not a heartbeat: an idle install's file does not change.
 
 Both describe the gateway process, which owns every profile's turns, runs and ACP
 listeners. `ag2-assistant acp-serve` is a separate per-client stdio process an editor

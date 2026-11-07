@@ -35,6 +35,8 @@ WORK = "work"
 SCHEDULED = "scheduled"
 HUMAN = "human"
 IDLE_GRACE_S = 2.5
+RETRY_S = 1.0  # first retry after a failed file write; doubles up to RETRY_MAX_S
+RETRY_MAX_S = 30.0
 
 
 def iso_utc(dt: datetime) -> str:
@@ -80,10 +82,15 @@ class Activity:
         file: str | os.PathLike[str] | None = None,
         *,
         idle_grace_s: float = IDLE_GRACE_S,
+        retry_s: float = RETRY_S,
         clock: Callable[[], datetime] = _utcnow,
     ) -> None:
         self._file = Path(file) if file else None
         self._grace = idle_grace_s
+        self._retry_s = retry_s
+        self._retry_delay = retry_s
+        self._retry_timer: asyncio.TimerHandle | None = None
+        self._dirty = False  # the file does not hold the latest state (a write failed)
         self._clock = clock
         self._work: dict[str, int] = {}
         self._human: dict[int, float] = {}
@@ -186,6 +193,11 @@ class Activity:
         )
         return out
 
+    def flush(self) -> None:
+        """Rewrite the file now if a write failed earlier (a poll is a chance to recover)."""
+        if self._dirty and self._idle_timer is None:
+            self._write()
+
     def snapshot(self) -> dict:
         return {
             "ts": iso_utc(self._clock()),
@@ -235,8 +247,30 @@ class Activity:
             os.replace(tmp, self._file)
         except Exception as exc:
             log_suppressed("activity file write", exc, path=str(self._file))
+            self._dirty = True
+            self._schedule_retry()
             return
         self._last_written = snapshot["holds"]
+        self._dirty = False
+        self._retry_delay = self._retry_s
+        if self._retry_timer is not None:
+            self._retry_timer.cancel()
+            self._retry_timer = None
+
+    def _schedule_retry(self) -> None:
+        if self._retry_timer is not None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # no loop to wait on; the next change or flush retries
+        delay = self._retry_delay
+        self._retry_delay = min(delay * 2, RETRY_MAX_S)
+        self._retry_timer = loop.call_later(delay, self._retry_write)
+
+    def _retry_write(self) -> None:
+        self._retry_timer = None
+        self.flush()
 
 
 class ActivityMiddleware:
