@@ -107,6 +107,7 @@ from fastapi.responses import (
 
 from assistant import (
     __version__,
+    feedback,
     provider_catalog,
     voice_providers,
 )
@@ -261,6 +262,7 @@ def create_app(
     skills_client: SkillsClient | None = None,
     card_source_tools: dict[str, Callable] | None = None,
     card_source_executor: Callable | None = None,
+    feedback_learn: Callable = feedback.learn,
 ) -> FastAPI:
     """Build the FastAPI app around a (constructed-but-not-started) ``ProfileManager``.
 
@@ -478,7 +480,9 @@ def create_app(
     # task-scoped permission pair — in its own module because a module follows its
     # zod twin (TaskRules is declared in permission.ts).
     p.include_router(chat.build_profile_router(deps, get_runtime))
-    p.include_router(agui.build_profile_router(deps, get_runtime, surfaces=_SURFACES))
+    p.include_router(
+        agui.build_profile_router(deps, get_runtime, surfaces=_SURFACES, learn=feedback_learn)
+    )
     p.include_router(card.build_profile_router(deps, get_runtime))
     p.include_router(card_instance.build_profile_router(deps, get_runtime))
     p.include_router(screen.build_profile_router(get_runtime))

@@ -1233,11 +1233,12 @@ class Gateway:
             logger.warning("turn summary dropped: chat=%s turn=%s", chat_id, dropped.turn_id)
         queue.append(_PendingSummary(turn_id, text, reply))
         if chat_id not in self._summary_workers:
-            self._summary_workers[chat_id] = self._background_task(self._summarize_turns(chat_id))
+            self._summary_workers[chat_id] = self.background_task(self._summarize_turns(chat_id))
 
-    def _background_task(self, coro) -> "asyncio.Task":
-        """Run post-turn work as a task that holds ``work`` from now until it is done,
-        including a cancellation that lands before its first step."""
+    def background_task(self, coro) -> "asyncio.Task":
+        """Run ``coro`` as a task that holds ``work`` from now until it is done, including
+        a cancellation that lands before its first step: post-turn work, and any job a
+        route starts on the user's behalf (feedback learning)."""
         release = self._activity.acquire("background")
         task = asyncio.create_task(coro)
         self._background.add(task)
@@ -1597,14 +1598,14 @@ class Gateway:
         # like ChatGPT/Claude). A single revision: only when there's no title yet.
         titled = self._config.gateway.chat_titles
         if titled and len(doc["messages"]) == 2 and not doc.get("title"):
-            self._background_task(self._title_chat(chat_id, user_text, reply_text))
+            self.background_task(self._title_chat(chat_id, user_text, reply_text))
 
     def _schedule_memory_update(self, chat_id: str) -> None:
         """Start the profile update for a finished turn; a chat has one at a time."""
         if not self._memory or chat_id in self._memory_updating:
             return
         self._memory_updating.add(chat_id)
-        self._background_task(self._update_memory(chat_id))
+        self.background_task(self._update_memory(chat_id))
 
     async def _update_memory(self, chat_id: str) -> None:
         """Merge the chat into the profile on every Nth turn, one chat at a time, without

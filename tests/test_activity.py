@@ -1134,3 +1134,27 @@ async def test_delivering_queued_acp_outcomes_on_reconnect_is_work(tmp_path):
     await asyncio.sleep(0)  # the drain task's done callback
     assert activity.holds() == []
     await out.aclose()
+
+
+def test_learning_from_feedback_is_work_until_the_preference_is_saved(paths):
+    import threading
+
+    from tests.support.apps import api
+    from tests.support.chat import wait_for
+
+    started = threading.Event()
+    gate = asyncio.Event()
+
+    async def learn(config, **kwargs):
+        started.set()
+        await gate.wait()
+
+    app, pid = make_profile_app(paths, feedback_learn=learn)
+    with TestClient(app) as client:
+        activity = app.state.profiles.activity
+        body = {"target_id": "m1", "sentiment": "down", "reason": "too long"}
+        assert client.post(api(pid, "/chats/c1/feedback"), json=body).json() == {"ok": True}
+        assert started.wait(5)
+        assert _work(activity) == {"background": 1}
+        client.portal.call(gate.set)  # the Event lives on the app's loop
+        wait_for(lambda: activity.holds() == [])
