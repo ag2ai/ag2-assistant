@@ -24,6 +24,7 @@ from ag2.acp.sessions import SessionConfig
 from assistant.acp.approvals import install_owner_side_approvals
 from assistant.acp.auth import choose_auth
 from assistant.acp.chats import ChatBackedStorage, ChatTrackingACPAgent
+from assistant.acp.outbound import NOTIFY_METHOD
 from assistant.acp.sdk_watch import watch_send_loop
 from assistant.acp.serve import cold_start_agent
 from assistant.activity import Activity, holding_send
@@ -201,9 +202,15 @@ def build_ws_app(acp_agent: ACPAgent, token: str) -> AsgiApp:
                 requests.on_receive(message)
                 return message
 
+            outbound = getattr(acp_agent, "outbound", None)
+
             async def delivering(message: Any) -> None:
                 await held(message)
                 requests.on_send(message)
+                if outbound is not None and message.get("type") == "websocket.send":
+                    for item in _items(message):
+                        if item.get("method") == NOTIFY_METHOD:
+                            outbound.notification_sent()
 
             try:
                 await conn_app(scope, receiving, delivering)

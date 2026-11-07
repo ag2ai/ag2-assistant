@@ -1142,6 +1142,8 @@ async def test_delivering_queued_acp_outcomes_on_reconnect_is_work(tmp_path):
     gate.set()
     await asyncio.wait_for(out.flush(), 5)
     await asyncio.sleep(0)  # the drain task's done callback
+    assert _work(activity) == {"acp_notify": 1}  # delivered to the SDK's queue, not yet sent
+    out.notification_sent()  # the frame leaves the socket
     assert activity.holds() == []
     await out.aclose()
 
@@ -2081,3 +2083,26 @@ async def test_a_write_started_by_a_turn_cancelled_at_close_settles_before_the_l
     activity.set_scheduled(tasks._config.data_dir.name, 0, None)  # archive clears
     await asyncio.sleep(0.1)
     assert activity.holds() == []  # and nothing late brings it back
+
+
+async def test_a_queued_acp_outcome_is_work_until_its_frame_leaves_the_socket(tmp_path):
+    from assistant.acp.outbound import Outbound
+
+    activity = Activity()
+
+    class _Enqueuing:  # the SDK's client handle: ext_notification only queues the frame
+        async def ext_notification(self, method, params):
+            pass
+
+    out = Outbound("cn-1", tmp_path / "outbox", activity=activity)
+    client = _Enqueuing()
+    out.attach(client)
+    assert await out.notify("room", "done") is True
+    assert out.pending() == []  # the durable entry is gone ...
+    assert _work(activity) == {"acp_notify": 1}  # ... so the queued frame is held
+    out.notification_sent()  # the WebSocket server saw the ag2/notify frame go out
+    assert activity.holds() == []
+    await out.notify("room", "another")
+    out.detach(client)  # the client went away before the frame left: nothing will send it
+    assert activity.holds() == []
+    await out.aclose()
