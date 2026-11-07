@@ -251,6 +251,7 @@ class Activity:
             if timer is not None:
                 timer.cancel()
         self._idle_timer = self._retry_timer = self._heartbeat_timer = None
+        self._human.clear()  # whatever was waited on lives in this process, which is ending
         self._pending = None
         if self._file is not None and (self._dirty or self.holds() != self._last_written):
             self._write()

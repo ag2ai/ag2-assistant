@@ -264,6 +264,7 @@ def create_app(
     card_source_tools: dict[str, Callable] | None = None,
     card_source_executor: Callable | None = None,
     feedback_learn: Callable = feedback.learn,
+    google_flow_ttl_s: float = 600.0,
 ) -> FastAPI:
     """Build the FastAPI app around a (constructed-but-not-started) ``ProfileManager``.
 
@@ -349,6 +350,7 @@ def create_app(
     )
     app.state.profiles = manager
     app.state.google_flows = {}  # state token -> in-progress OAuth flow
+    app.state.google_flow_holds = {}  # state token -> the activity's human hold for it
     app.state.codex_flows = {}  # state token -> PKCE verifier (ChatGPT-subscription login)
 
     @app.middleware("http")
@@ -416,7 +418,9 @@ def create_app(
 
     # The install-wide status surfaces (health, usage, activity, coding agents,
     # the folder picker, memory, identity) live in gateway/routes/system.py.
-    app.include_router(system.build_router(deps, code_reader=code_reader))
+    app.include_router(
+        system.build_router(deps, code_reader=code_reader, google_flow_ttl_s=google_flow_ttl_s)
+    )
 
     # Secrets (named reusable API keys) live in gateway/routes/secret.py; the named
     # LLM and live (voice) configurations in gateway/routes/llm.py. Both are included

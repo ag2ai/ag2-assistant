@@ -12,6 +12,7 @@ web/src/schemas/system.ts (their zod twins) — same file name in all three tree
 
 import asyncio
 import secrets as _secrets
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -121,7 +122,9 @@ async def _activity(runtime: ProfileRuntime) -> tuple[int, int]:
         return 0, 0
 
 
-def build_router(d: GatewayDeps, *, code_reader: Callable[[str], str]) -> APIRouter:
+def build_router(
+    d: GatewayDeps, *, code_reader: Callable[[str], str], google_flow_ttl_s: float = 600.0
+) -> APIRouter:
     """The install-level routes. Registration order below is the order these
     handlers had in app.py — see the plan's constraint on route order.
 
@@ -383,7 +386,20 @@ def build_router(d: GatewayDeps, *, code_reader: Callable[[str], str]) -> APIRou
             auth_url, state, flow = await asyncio.to_thread(d.google.make_login_flow, redirect_uri)
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
-        request.app.state.google_flows[state] = flow
+        flows = request.app.state.google_flows
+        holds = request.app.state.google_flow_holds
+        flows[state] = flow
+        # The user is at Google's consent screen: a human hold, bounded by the flow's
+        # own lifetime, keeps a sleep host from dropping the in-memory flow meanwhile.
+        holds[state] = d.manager.activity.open_human(time.time() + google_flow_ttl_s)
+
+        def expire() -> None:
+            flows.pop(state, None)
+            token = holds.pop(state, None)
+            if token is not None:
+                d.manager.activity.close_human(token)
+
+        asyncio.get_running_loop().call_later(google_flow_ttl_s, expire)
         return {"ok": True, "auth_url": auth_url}
 
     @r.get("/api/google/callback", response_class=HTMLResponse)
@@ -403,6 +419,9 @@ def build_router(d: GatewayDeps, *, code_reader: Callable[[str], str]) -> APIRou
         # runtime refresh are held so a sleep host cannot stop the process mid sign-in.
         with d.manager.activity.track("google_signin"):
             flow = request.app.state.google_flows.pop(state, None)
+            token = request.app.state.google_flow_holds.pop(state, None)
+            if token is not None:
+                d.manager.activity.close_human(token)  # the user came back, either way
             if flow is None or not code:
                 return HTMLResponse(_page("Expired", "This sign-in link is no longer valid."))
             try:

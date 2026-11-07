@@ -1609,3 +1609,52 @@ def test_completing_a_google_sign_in_is_work(paths):
             gate.set()
             assert "Connected" in page.result(10).text
         wait_for(lambda: activity.holds() == [])
+
+
+def test_a_pending_google_consent_is_a_bounded_human_hold(paths):
+    from assistant.integrations.google_auth import GoogleAuth
+
+    class _Auth(GoogleAuth):
+        def is_configured(self):
+            return True
+
+        def make_login_flow(self, redirect_uri):
+            return "https://accounts.google.com/o/oauth2/auth?x=1", "st8", object()
+
+        def complete_login(self, flow, code):
+            return "me@example.com"
+
+    app, pid = make_profile_app(paths, google=_Auth(paths, finder=lambda name: object()))
+    with TestClient(app) as client:
+        activity = app.state.profiles.activity
+        before = time.time()
+        assert client.post("/api/google/login_url").json()["ok"] is True
+        (hold,) = activity.holds()
+        until = datetime.fromisoformat(hold["until"].replace("Z", "+00:00")).timestamp()
+        assert hold["kind"] == "human" and before + 599 <= until <= time.time() + 601
+        page = client.get("/api/google/callback", params={"state": "st8", "code": "abc"})
+        assert "Connected" in page.text
+        assert activity.holds() == []
+
+
+def test_a_google_consent_nobody_finishes_lapses_with_its_flow(paths):
+    from assistant.integrations.google_auth import GoogleAuth
+    from tests.support.chat import wait_for
+
+    class _Auth(GoogleAuth):
+        def is_configured(self):
+            return True
+
+        def make_login_flow(self, redirect_uri):
+            return "https://accounts.google.com/o/oauth2/auth?x=1", "st8", object()
+
+    app, pid = make_profile_app(
+        paths, google=_Auth(paths, finder=lambda name: object()), google_flow_ttl_s=0.1
+    )
+    with TestClient(app) as client:
+        activity = app.state.profiles.activity
+        assert client.post("/api/google/login_url").json()["ok"] is True
+        assert [h["kind"] for h in activity.holds()] == ["human"]
+        wait_for(lambda: activity.holds() == [])
+        page = client.get("/api/google/callback", params={"state": "st8", "code": "abc"})
+        assert "Expired" in page.text
