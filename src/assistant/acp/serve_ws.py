@@ -109,8 +109,8 @@ def request_ids(message: Any) -> list[str]:
         item = json.loads(raw)
     except Exception:
         return []
-    if not isinstance(item, dict) or "method" not in item or "id" not in item:
-        return []
+    if not isinstance(item, dict) or item.get("method") is None or "id" not in item:
+        return []  # a null method is dispatched as a response, never answered
     return [_key(item)]
 
 
@@ -119,7 +119,7 @@ def response_ids(message: Any) -> list[str]:
     return [
         _key(item)
         for item in _items(message)
-        if "id" in item and "method" not in item and ("result" in item or "error" in item)
+        if "id" in item and item.get("method") is None and ("result" in item or "error" in item)
     ]
 
 

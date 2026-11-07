@@ -272,21 +272,23 @@ class TelegramChannel(Channel):
         # answer a question, spend a picker, or see the button acknowledged.
         if not self._require_router().paired(self._from_callback(query)):
             return
-        await query.answer()
-        chat_id = str(message.chat.id)
-        if query.data.startswith(_CB_PREFIX):
-            answer = query.data[len(_CB_PREFIX) :]
-            self._pending.resolve(chat_id, answer)
-            # The prompt is a transient modal — remove it once answered so it
-            # doesn't linger below the reply.
-            await self._delete(message)
-        elif query.data.startswith(_CHOICE_PREFIX):
-            token = query.data[len(_CHOICE_PREFIX) :]
-            outcome = await self._require_router().choose(self._from_callback(query), token)
-            await self._delete(message)  # the picker is spent
-            spoken = spoken_text(outcome)
-            if spoken:
-                await self._send(chat_id, spoken)
+        # A tap is work through its effect (an answer, a /clear) and its reply.
+        with self._request_hold():
+            await query.answer()
+            chat_id = str(message.chat.id)
+            if query.data.startswith(_CB_PREFIX):
+                answer = query.data[len(_CB_PREFIX) :]
+                self._pending.resolve(chat_id, answer)
+                # The prompt is a transient modal — remove it once answered so it
+                # doesn't linger below the reply.
+                await self._delete(message)
+            elif query.data.startswith(_CHOICE_PREFIX):
+                token = query.data[len(_CHOICE_PREFIX) :]
+                outcome = await self._require_router().choose(self._from_callback(query), token)
+                await self._delete(message)  # the picker is spent
+                spoken = spoken_text(outcome)
+                if spoken:
+                    await self._send(chat_id, spoken)
 
     async def _delete(self, message: "MaybeInaccessibleMessage") -> None:
         """Remove a message this bot put up, by chat and id, tolerating a refusal.

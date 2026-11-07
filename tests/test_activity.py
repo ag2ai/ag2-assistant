@@ -1694,3 +1694,65 @@ def test_an_acp_request_is_work_from_its_frame_to_the_frame_with_its_answer():
     holds.on_receive({"type": "websocket.receive", "text": batch})
     holds.on_receive({"type": "websocket.receive", "text": "not json"})
     assert activity.holds() == []
+
+
+async def test_a_telegram_button_tap_is_work_until_its_reply_is_delivered():
+    from types import SimpleNamespace
+
+    from assistant.channels.router import Reply
+    from assistant.channels.telegram import TelegramChannel
+
+    activity = Activity()
+    sending = asyncio.Event()
+    gate = asyncio.Event()
+
+    class _Router:
+        def hold(self):
+            return activity.track("channel")
+
+        def paired(self, inbound):
+            return True
+
+        async def choose(self, inbound, token):
+            return Reply("Now talking to Home.")
+
+    class _Bot:
+        async def send_message(self, chat_id, text, reply_markup=None):
+            sending.set()
+            await gate.wait()  # Telegram is slow to take the reply
+
+        async def delete_message(self, chat_id, message_id):
+            pass
+
+    async def answered():
+        pass
+
+    channel = TelegramChannel(token="fake-token")
+    channel._bot_username = "ag2assistantbot"
+    channel._bot_id = 999
+    channel._router = _Router()
+    channel._app = SimpleNamespace(bot=_Bot())
+    query = SimpleNamespace(
+        data="acc:home",
+        message=SimpleNamespace(
+            chat=SimpleNamespace(type="private", PRIVATE="private", id=42), message_id=101
+        ),
+        from_user=SimpleNamespace(id=7, full_name="Test User", username="tester"),
+        answer=answered,
+    )
+    tap = asyncio.ensure_future(channel._on_callback(SimpleNamespace(callback_query=query), None))
+    await asyncio.wait_for(sending.wait(), 5)
+    assert _work(activity) == {"channel": 1}
+    gate.set()
+    await asyncio.wait_for(tap, 5)
+    assert activity.holds() == []
+
+
+def test_a_null_method_frame_opens_no_acp_request_hold():
+    from assistant.acp.serve_ws import RequestHolds
+
+    activity = Activity()
+    holds = RequestHolds(activity)
+    frame = json.dumps({"jsonrpc": "2.0", "id": 99, "method": None, "result": {}})
+    holds.on_receive({"type": "websocket.receive", "text": frame})
+    assert activity.holds() == []  # the SDK treats it as a response and never answers it
