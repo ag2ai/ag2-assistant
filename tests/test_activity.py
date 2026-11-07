@@ -1344,3 +1344,26 @@ async def test_startup_work_lasts_until_the_message_listeners_are_up(paths):
         assert _work(manager.activity) == {}
     finally:
         await manager.close()
+
+
+async def test_a_failed_busy_write_takes_the_stale_idle_file_away(tmp_path):
+    from assistant.activity import atomic_write
+
+    path = tmp_path / "activity.json"
+    broken = {"now": False}
+
+    def write(target, text):
+        if broken["now"]:
+            raise OSError("disk full")
+        atomic_write(target, text)
+
+    a = Activity(path, idle_grace_s=0, retry_s=0.05, write=write)
+    assert json.loads(path.read_text())["holds"] == []  # the idle snapshot a host may read
+    broken["now"] = True
+    release = a.acquire("turn")  # work starts, the busy write fails
+    assert not path.exists()  # no file: a host must not take the old idle one for truth
+    broken["now"] = False
+    await asyncio.sleep(0.2)  # the retry lands
+    assert json.loads(path.read_text())["holds"] == [{"kind": "work", "count": 1, "detail": "turn"}]
+    release()
+    assert json.loads(path.read_text())["holds"] == []

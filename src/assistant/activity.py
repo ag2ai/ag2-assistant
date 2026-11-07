@@ -47,6 +47,14 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def atomic_write(path: Path, text: str) -> None:
+    """Replace ``path`` with ``text`` in one step (tmp file + rename)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
+
+
 class _HumanWatch:
     """Wraps an asker's ``has_pending`` so polling it opens and closes a human hold."""
 
@@ -85,8 +93,10 @@ class Activity:
         retry_s: float = RETRY_S,
         clock: Callable[[], datetime] = _utcnow,
         initial_hold: str | None = None,
+        write: Callable[[Path, str], None] = atomic_write,
     ) -> None:
         self._file = Path(file) if file else None
+        self._write_file = write
         self._grace = idle_grace_s
         self._retry_s = retry_s
         self._retry_delay = retry_s
@@ -280,12 +290,15 @@ class Activity:
             return
         snapshot = self.snapshot()
         try:
-            self._file.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self._file.with_name(f".{self._file.name}.{os.getpid()}.tmp")
-            tmp.write_text(json.dumps(snapshot))
-            os.replace(tmp, self._file)
+            self._write_file(self._file, json.dumps(snapshot))
         except Exception as exc:
             log_suppressed("activity file write", exc, path=str(self._file))
+            # Whatever the file says now is stale, and an idle snapshot standing in
+            # for live work is the one lie a host must not read: take the file away
+            # (no file = unknown) until a write succeeds again.
+            with contextlib.suppress(Exception):
+                self._file.unlink()
+            self._last_written = None
             self._dirty = True
             self._schedule_retry()
             return
