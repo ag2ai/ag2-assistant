@@ -166,7 +166,9 @@ An AG-UI run may scope its Turn through `forwardedProps`: `capabilities` (a list
 keeps only those groups, with no self or system tools and the skills plugin only with
 `skills`, so `[]` leaves only the agent's own `read_compaction_source` (and `remember` with
 memory on); `memory: false` runs it without onboarding, the profile's memory or its update,
-`remember`, and the shared "who the user is" notes.
+`remember`, and the shared "who the user is" notes. The profile update merges a whole Chat,
+so such a Turn also marks its Chat (in `chats.db`), and no later Turn on that Chat, with
+memory or not, feeds the profile.
 
 | Tool / group     | File                         | Notes                                             |
 | ---------------- | ---------------------------- | ------------------------------------------------- |

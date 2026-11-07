@@ -129,6 +129,8 @@ from assistant.usage import UsageLedger
 from assistant.voice import build_voice_agent
 
 _TRANSCRIPT_PREFIX = "/transcript/"
+# A Chat a Turn ran on without memory: marked in chats.db, never in profile.db.
+_WITHOUT_MEMORY_PREFIX = "/without-memory/"
 _NATIVE_ONLY_TOOLS = {
     "ask_user",
     "answer_question",
@@ -331,6 +333,7 @@ class Gateway:
         self._background: set[asyncio.Task] = set()
         self._memory_lock = asyncio.Lock()
         self._memory_updating: set[str] = set()
+        self._chats_without_memory: set[str] = set()
         self._closing = False
         # Per-profile daily token/cost tally for the activity HUD.
         self._usage = UsageLedger(
@@ -1141,7 +1144,8 @@ class Gateway:
         `on_text` is an optional async callback given the turn's streamed `ModelMessageChunk`
         and `ModelResponse` events, so a channel can show the reply as it is written.
         `capabilities` scopes the turn's tools (see `_prepare_turn`). `memory=False` runs it
-        without onboarding, profile memory, its update or the shared "who the user is" notes.
+        without onboarding, profile memory, its update or the shared "who the user is" notes,
+        and keeps the whole chat out of the profile's memory from then on.
         """
         if self._agent is None:
             raise RuntimeError("Gateway not started")
@@ -1163,6 +1167,8 @@ class Gateway:
             # the web page's local state and vanishes on a profile switch (full-page
             # nav). The completed-turn write below stays the authority (§_persist_turn).
             await self._ensure_transcript_stub(chat_id, text, chat_model)
+            if not memory:
+                await self._keep_out_of_memory(chat_id)
             async with self._resources.lease() as lease:
                 invocation = asyncio.current_task()
                 assert invocation is not None
@@ -1683,6 +1689,23 @@ class Gateway:
         if titled and len(doc["messages"]) == 2 and not doc.get("title"):
             self.background_task(self._title_chat(chat_id, user_text, reply_text))
 
+    def _without_memory_path(self, chat_id: str) -> str:
+        return f"{_WITHOUT_MEMORY_PREFIX}{quote(chat_id, safe='')}"
+
+    async def _keep_out_of_memory(self, chat_id: str) -> None:
+        """Mark a Chat a Turn runs on without memory, before that Turn writes anything:
+        the merge reads a whole Chat, so none of it may reach the profile again, even
+        through a later Turn with memory or after a restart."""
+        self._chats_without_memory.add(chat_id)
+        if self._event_store is not None:
+            await self._event_store.write(self._without_memory_path(chat_id), "1")
+
+    async def _kept_out_of_memory(self, chat_id: str) -> bool:
+        if chat_id in self._chats_without_memory:
+            return True
+        store = self._event_store
+        return store is not None and await store.exists(self._without_memory_path(chat_id))
+
     def _schedule_memory_update(self, chat_id: str) -> None:
         """Start the profile update for a finished turn; a chat has one at a time."""
         if not self._memory or chat_id in self._memory_updating:
@@ -1718,9 +1741,12 @@ class Gateway:
         assert store is not None
         path = bookmark_path(chat_id)
         bookmark = await store.read(path)
-        unread, start = unread_events(
-            await stream.history.get_events(), bookmark, config.memory.aggregate_every_n_turns
-        )
+        events = await stream.history.get_events()
+        # Asked after the read: a Turn without memory marks its Chat before it writes,
+        # so events of one read here always come with the mark.
+        if await self._kept_out_of_memory(chat_id):
+            return
+        unread, start = unread_events(events, bookmark, config.memory.aggregate_every_n_turns)
         if not unread:
             return
         if start and start != bookmark:

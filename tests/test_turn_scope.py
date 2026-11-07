@@ -167,6 +167,60 @@ def test_a_turn_without_memory_neither_reads_nor_updates_the_profile(paths):
         assert "OWNER-IDENTITY" not in prompt and WHO not in prompt
 
 
+def _merges(models):
+    """The profile merges sent to the cheap model, prompt and conversation as text."""
+    out = []
+    for _, prompt, _, messages, selected in models.requests:
+        parts = [part for m in messages for part in getattr(m, "parts", ())]
+        text = "\n".join([*prompt, *(str(getattr(p, "content", "")) for p in parts)])
+        if selected is not None and "Update the profile below" in text:
+            out.append(text)
+    return out
+
+
+def test_a_chat_that_ran_without_memory_never_feeds_the_profile(paths):
+    """A later turn WITH memory on the same chat, before and after a restart, merges
+    none of it: the merge works per chat, so the whole chat stays out."""
+    models = ScriptedModels(script=lambda config, model: ["LEARNED"] if model else ["reply"])
+    env = {"AG2ASSISTANT_AGGREGATE_EVERY_N": "1"}
+    app, pid = _app(paths, models, memory=True, env=env)
+    with TestClient(app) as client:
+        client.portal.call(write_universal, "- OWNER-IDENTITY", paths.root / "user.db")
+        run(client, pid, text="owner hello", chat="c", run_id="r1")
+        _settle(client, app, pid)
+        run(client, pid, text="GUEST-SECRET-42", chat="c", run_id="r2", props=NO_TOOLS)
+        _settle(client, app, pid)
+        run(client, pid, text="owner again", chat="c", run_id="r3")
+        _settle(client, app, pid)
+    manager = make_manager(paths, env=env, persist=True, memory=True, model_factory=models)
+    app = create_app(manager)
+    with TestClient(app) as client:
+        run(client, pid, text="owner after restart", chat="c", run_id="r4")
+        _settle(client, app, pid)
+        run(client, pid, text="another chat", chat="d", run_id="r5")
+        _settle(client, app, pid)
+    merges = _merges(models)
+    assert any("owner hello" in m for m in merges)
+    assert any("another chat" in m for m in merges)
+    assert not [m for m in merges if "GUEST-SECRET-42" in m]
+    assert not [m for m in merges if "owner again" in m or "owner after restart" in m]
+
+
+def test_turns_without_memory_stay_out_of_the_default_merge(paths):
+    """With the default cadence the fourth turn merges the last four, the three before
+    it run without memory among them."""
+    models = ScriptedModels(script=lambda config, model: ["LEARNED"] if model else ["reply"])
+    app, pid = _app(paths, models, memory=True)
+    with TestClient(app) as client:
+        client.portal.call(write_universal, "- OWNER-IDENTITY", paths.root / "user.db")
+        for n in range(3):
+            run(client, pid, text=f"GUEST-SECRET-{n}", chat="c", run_id=f"g{n}", props=NO_TOOLS)
+            _settle(client, app, pid)
+        run(client, pid, text="owner", chat="c", run_id="o")
+        _settle(client, app, pid)
+    assert not [m for m in _merges(models) if "GUEST-SECRET" in m]
+
+
 @pytest.mark.parametrize("shared", ["read_write", "read"])
 def test_a_turn_without_memory_has_no_who_the_user_is_section(paths, shared):
     models = ScriptedModels()
