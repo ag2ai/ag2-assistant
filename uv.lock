@@ -73,7 +73,7 @@ name = "ag2-assistant"
 version = "0.6.1"
 source = { editable = "." }
 dependencies = [
-    { name = "ag2", extra = ["acp", "ag-ui", "ddgs", "gemini", "openai"] },
+    { name = "ag2", extra = ["acp", "ag-ui", "ddgs"] },
     { name = "beautifulsoup4" },
     { name = "cron-descriptor" },
     { name = "cronsim" },
@@ -93,10 +93,18 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+all = [
+    { name = "ag2", extra = ["anthropic", "gemini", "ollama", "openai"] },
+    { name = "google-api-python-client" },
+    { name = "google-auth" },
+    { name = "google-auth-oauthlib" },
+    { name = "pypdf" },
+]
 anthropic = [
     { name = "ag2", extra = ["anthropic"] },
 ]
 dev = [
+    { name = "ag2", extra = ["gemini", "openai"] },
     { name = "mypy" },
     { name = "pre-commit" },
     { name = "pyrefly" },
@@ -108,6 +116,9 @@ dev = [
     { name = "types-jsonschema" },
     { name = "types-pyyaml" },
 ]
+gemini = [
+    { name = "ag2", extra = ["gemini"] },
+]
 google = [
     { name = "google-api-python-client" },
     { name = "google-auth" },
@@ -117,12 +128,19 @@ google = [
 ollama = [
     { name = "ag2", extra = ["ollama"] },
 ]
+openai = [
+    { name = "ag2", extra = ["openai"] },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "ag2", extras = ["anthropic"], marker = "extra == 'anthropic'", specifier = ">=1.3.0" },
-    { name = "ag2", extras = ["gemini", "ddgs", "openai", "acp", "ag-ui"], specifier = ">=1.3.0" },
+    { name = "ag2", extras = ["ddgs", "acp", "ag-ui"], specifier = ">=1.3.0" },
+    { name = "ag2", extras = ["gemini"], marker = "extra == 'gemini'", specifier = ">=1.3.0" },
+    { name = "ag2", extras = ["gemini", "openai"], marker = "extra == 'dev'", specifier = ">=1.3.0" },
     { name = "ag2", extras = ["ollama"], marker = "extra == 'ollama'", specifier = ">=1.3.0" },
+    { name = "ag2", extras = ["openai"], marker = "extra == 'openai'", specifier = ">=1.3.0" },
+    { name = "ag2-assistant", extras = ["gemini", "openai", "anthropic", "ollama", "google"], marker = "extra == 'all'" },
     { name = "beautifulsoup4", specifier = ">=4.12.0" },
     { name = "cron-descriptor", specifier = ">=1.4" },
     { name = "cronsim", specifier = ">=2.7" },
@@ -154,7 +172,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
     { name = "websockets", specifier = ">=15" },
 ]
-provides-extras = ["dev", "anthropic", "ollama", "google"]
+provides-extras = ["dev", "gemini", "anthropic", "ollama", "openai", "google", "all"]
 
 [[package]]
 name = "agent-client-protocol"

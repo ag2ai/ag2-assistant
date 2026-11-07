@@ -3,7 +3,13 @@
 import pytest
 from ag2.acp import ClaudeCodeConfig
 
-from assistant.agent import _build_middleware, ask, create_agent, model_config
+from assistant.agent import (
+    MissingProviderModelConfig,
+    _build_middleware,
+    ask,
+    create_agent,
+    model_config,
+)
 from assistant.config import Config
 from assistant.middleware import LLMRetryMiddleware, LLMTimeoutMiddleware
 
@@ -95,3 +101,25 @@ def test_build_middleware_codex_skips_llm_timeout(paths):
     mw = _build_middleware(cfg)
     assert not any(isinstance(m, LLMTimeoutMiddleware) for m in mw)
     assert any(isinstance(m, LLMRetryMiddleware) for m in mw)
+
+
+def test_create_agent_boots_without_the_provider_library(paths):
+    """A missing provider library defers to the first model call, so the profile
+    base still builds and the install hint reaches the user from the turn."""
+    from assistant.llm_configs import ProviderLibraryMissing
+
+    hint = ProviderLibraryMissing(
+        'the gemini provider library is not installed; run pip install "x"'
+    )
+
+    def absent(config, model=None):
+        raise hint
+
+    config = Config.for_paths(paths)
+    assert create_agent(config, memory=True, invocation_only=True, model_factory=absent)
+    deferred = MissingProviderModelConfig(config, None, hint)
+    assert (deferred.provider, deferred.model) == ("gemini", config.llm.model)
+    with pytest.raises(ProviderLibraryMissing, match="not installed"):
+        deferred.create()
+    with pytest.raises(ProviderLibraryMissing):
+        create_agent(config, model_factory=absent)  # a turn-time build reports it

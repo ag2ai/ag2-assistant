@@ -8,12 +8,12 @@
 #
 # Environment overrides:
 #   AG2_ASSISTANT_REF     git branch or tag to install (default: main)
-#   AG2_ASSISTANT_EXTRAS  optional extras, e.g. "google" (default: none)
+#   AG2_ASSISTANT_EXTRAS  extras, e.g. "gemini,google" or "all" (default: gemini)
 #   AG2_ASSISTANT_REPO    git URL to install from, e.g. a fork (default: the ag2ai repo)
 $ErrorActionPreference = "Stop"
 
 $Ref = if ($env:AG2_ASSISTANT_REF) { $env:AG2_ASSISTANT_REF } else { "main" }
-$Extras = if ($env:AG2_ASSISTANT_EXTRAS) { "[$($env:AG2_ASSISTANT_EXTRAS)]" } else { "" }
+$Extras = if ($env:AG2_ASSISTANT_EXTRAS) { "[$($env:AG2_ASSISTANT_EXTRAS)]" } else { "[gemini]" }
 $Repo = if ($env:AG2_ASSISTANT_REPO) { $env:AG2_ASSISTANT_REPO } else { "https://github.com/ag2ai/ag2-assistant.git" }
 $Spec = "ag2-assistant$Extras @ git+$Repo@$Ref"
 
