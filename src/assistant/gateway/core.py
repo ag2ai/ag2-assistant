@@ -656,6 +656,11 @@ class Gateway:
         """The chunks of the model message being written now, which the log never keeps."""
         return list(self._streaming.get(chat_id, ()))
 
+    @property
+    def activity(self) -> Activity:
+        """The install's activity registry this gateway reports into."""
+        return self._activity
+
     def track(self, detail: str):
         """Hold ``work`` on the install's activity for a block the gateway does not
         drive itself, such as a voice call."""

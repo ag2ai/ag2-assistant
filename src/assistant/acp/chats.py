@@ -41,6 +41,7 @@ from ag2.events._serialization import import_event_class, qualified_name
 from ag2.knowledge import SqliteKnowledgeStore
 
 from assistant.acp.outbound import Outbound, destination_of, wants_delivery
+from assistant.activity import Activity
 from assistant.paths import Paths
 from assistant.peers import PeerStore
 from assistant.storage import SerialStore, now_iso
@@ -503,12 +504,15 @@ class ChatTrackingACPAgent(ACPAgent):
         chat_storage: ChatBackedStorage,
         connection_id: str,
         outbound: Outbound | None = None,
+        activity: Activity | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
         self._chat_storage = chat_storage
         self._connection_id = connection_id
         self.outbound = outbound
+        # Each prompt is work from admission to the final delivery (see _LinkedScope).
+        self.activity = activity or Activity()
 
     def bind(self, client: "acp.Client | None") -> "_ConnectionScope":
         # Upstream's bind, over a scope that also reports the Client handle to the
@@ -551,6 +555,14 @@ class _LinkedScope(_ConnectionScope):
         if outbound is not None and self._client is not None and wants_delivery(dict(kwargs)):
             outbound.attach(self._client)
         return response
+
+    async def prompt(self, session_id: str, prompt: Any, **kwargs: Any) -> Any:
+        # The agent's own turn holds work through its middleware scope, but the
+        # answer is delivered to the client after that scope ends; hold the whole
+        # request so a host never sees idle while the reply is still on its way.
+        activity: Activity = getattr(self._owner, "activity", None) or Activity()
+        with activity.track("acp_prompt"):
+            return await super().prompt(session_id, prompt, **kwargs)
 
     async def aclose(self) -> None:
         outbound = getattr(self._owner, "outbound", None)

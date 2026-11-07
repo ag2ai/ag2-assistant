@@ -1030,3 +1030,35 @@ async def test_a_task_saved_by_a_turn_cancelled_at_shutdown_is_still_published(p
     await tasks.refresh_scheduled(final=True)  # 3. the runtime's last word
     (hold,) = activity.holds()
     assert hold["count"] == 1 and "next" in hold
+
+
+async def test_an_acp_request_is_work_until_its_answer_is_delivered(paths):
+    import acp
+    from ag2.acp.testing import RecordingClient
+
+    from assistant.profiles import ProfileRegistry
+    from tests.support.apps import make_acp_agent
+
+    delivering = asyncio.Event()
+    gate = asyncio.Event()
+
+    class _SlowClient(RecordingClient):
+        async def session_update(self, *, session_id, update, **kwargs):
+            await super().session_update(session_id=session_id, update=update, **kwargs)
+            delivering.set()
+            await gate.wait()  # the client is slow to take the answer
+
+    activity = Activity()
+    pid = ProfileRegistry(paths).create_profile("ACP", "#109e91").id
+    served, storage, _ = make_acp_agent(paths, pid, activity=activity)
+    client = _SlowClient()
+    scope = served.bind(client)
+    await scope.initialize(protocol_version=1)
+    session = await scope.new_session(cwd=".", mcp_servers=[])
+    turn = asyncio.ensure_future(scope.prompt(session.session_id, [acp.text_block("hi")]))
+    await asyncio.wait_for(delivering.wait(), 5)
+    assert _work(activity) == {"acp_prompt": 1}  # the agent is done; delivery is not
+    gate.set()
+    await asyncio.wait_for(turn, 5)
+    assert activity.holds() == []
+    await scope.aclose()

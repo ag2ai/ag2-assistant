@@ -704,6 +704,7 @@ class ProfileManager:
                 connection_id=cid,
                 auth=auth,
                 outbound=outbound,
+                activity=self.activity,
             )
         except asyncio.CancelledError:
             raise

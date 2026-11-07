@@ -197,7 +197,7 @@ def real_gateway(config, **kwargs):
     return Gateway(config, title_factory=fake_title_factory(), **kwargs)
 
 
-def make_acp_agent(paths, pid: str, *, connection_id: str = "acp:test"):
+def make_acp_agent(paths, pid: str, *, connection_id: str = "acp:test", activity=None):
     """Build a chat-tracking ACP agent over a local scripted model."""
     _, config, _ = resolve_active_profile(pid, paths=paths, env={})
     storage = ChatBackedStorage(paths=paths, data_dir=config.data_dir, profile=pid)
@@ -209,6 +209,7 @@ def make_acp_agent(paths, pid: str, *, connection_id: str = "acp:test"):
         sessions=SessionConfig(storage=storage, retain_history=True),
         chat_storage=storage,
         connection_id=connection_id,
+        activity=activity,
     )
     return served, storage, config
 

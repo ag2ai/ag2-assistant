@@ -453,7 +453,9 @@ safe to. `GET /api/activity` answers with the open *holds*, install-wide:
 - `work` is anything running now, tallied by `detail`: a chat turn (`turn`, from any
   surface or channel, from the moment it is accepted), a task run (`run`, including its
   wait in the queue, summary and delivery), post-turn work (`background`: chat title,
-  turn summary, memory update) and an ACP turn (`acp_turn`). `idle_since` is when the
+  turn summary, memory update), an ACP request from admission to the delivered answer
+  (`acp_prompt`, with the agent's own turn inside it as `acp_turn`), a voice call
+  (`voice`), and a task being created or re-armed (`task_create`, `task_update`). `idle_since` is when the
   last `work` hold closed, and null while one is open.
 - `scheduled` counts unpaused tasks with a future slot; `next` is the earliest. A slot
   that passes while the process is down is skipped, not caught up, so a host must be
