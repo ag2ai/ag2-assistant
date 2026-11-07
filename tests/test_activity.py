@@ -1682,3 +1682,47 @@ async def test_an_acp_answer_stays_work_until_its_response_frame_has_left(paths)
     await scope.prompt(session.session_id, [acp.text_block("again")])
     await scope.aclose()  # the connection goes away with the response still queued
     assert activity.holds() == []
+
+
+def test_only_a_terminal_response_frame_frees_an_acp_answer_s_hold():
+    from assistant.acp.serve_ws import terminal_responses
+
+    notification = {
+        "type": "websocket.send",
+        "text": json.dumps({"jsonrpc": "2.0", "method": "session/update", "params": {}}),
+    }
+    request = {
+        "type": "websocket.send",
+        "text": json.dumps(
+            {"jsonrpc": "2.0", "id": 7, "method": "session/request_permission", "params": {}}
+        ),
+    }
+    response = {
+        "type": "websocket.send",
+        "text": json.dumps({"jsonrpc": "2.0", "id": 3, "result": {"stopReason": "end_turn"}}),
+    }
+    error = {
+        "type": "websocket.send",
+        "bytes": json.dumps(
+            {"jsonrpc": "2.0", "id": 4, "error": {"code": -32603, "message": "x"}}
+        ).encode(),
+    }
+    batch = {
+        "type": "websocket.send",
+        "text": json.dumps(
+            [
+                {"jsonrpc": "2.0", "method": "session/update", "params": {}},
+                {"jsonrpc": "2.0", "id": 5, "result": {}},
+                {"jsonrpc": "2.0", "id": 6, "result": {}},
+            ]
+        ),
+    }
+    assert [terminal_responses(m) for m in (notification, request, response, error, batch)] == [
+        0,
+        0,
+        1,
+        1,
+        2,
+    ]
+    assert terminal_responses({"type": "websocket.send", "text": "not json"}) == 0
+    assert terminal_responses({"type": "websocket.send"}) == 0

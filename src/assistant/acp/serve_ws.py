@@ -10,6 +10,7 @@ mount into the shared gateway app, which serves every profile.
 
 import asyncio
 import contextlib
+import json
 import secrets
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
@@ -78,6 +79,29 @@ def _token_authorized(scope: Scope, token: str) -> bool:
     return presented is not None and secrets.compare_digest(presented, token)
 
 
+def terminal_responses(message: Any) -> int:
+    """How many JSON-RPC responses (a result or error for a request id, not a
+    notification) an outgoing WebSocket frame carries; 0 when it cannot be read."""
+    raw = message.get("text")
+    if raw is None:
+        raw = message.get("bytes")
+    if raw is None:
+        return 0
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        return 0
+    items = payload if isinstance(payload, list) else [payload]
+    return sum(
+        1
+        for item in items
+        if isinstance(item, dict)
+        and "id" in item
+        and "method" not in item
+        and ("result" in item or "error" in item)
+    )
+
+
 def build_ws_app(acp_agent: ACPAgent, token: str) -> AsgiApp:
     """The listener's whole ASGI front door: WebSocket-only, token at the upgrade,
     and per-connection session teardown.
@@ -117,8 +141,12 @@ def build_ws_app(acp_agent: ACPAgent, token: str) -> AsgiApp:
 
             async def delivering(message: Any) -> None:
                 await held(message)
-                if message.get("type") == "websocket.send":
-                    for conn_scope in scopes:  # a frame left: a handed-over hold is done
+                if message.get("type") != "websocket.send":
+                    return
+                # Only a terminal response frees a handed-over hold: a notification in
+                # between must not release the hold of the answer still queued behind it.
+                for _ in range(terminal_responses(message)):
+                    for conn_scope in scopes:
                         deliver = getattr(conn_scope, "deliver_one", None)
                         if deliver is not None:
                             deliver()
