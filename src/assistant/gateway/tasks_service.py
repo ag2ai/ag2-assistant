@@ -373,6 +373,29 @@ class TaskService:
 
         self._refresh_timer = loop.call_later(delay, retry)
 
+    async def _settling(self, coro):
+        """Await a store mutation so that a cancellation of the caller does not lose
+        track of it: the write keeps running (SQLite works in a thread), and when it
+        settles the schedule is republished, with work held until then."""
+        write = asyncio.ensure_future(coro)
+        try:
+            return await asyncio.shield(write)
+        except asyncio.CancelledError:
+            if not write.done():
+                release = self._activity.acquire("task_write")
+
+                def settled(_task: asyncio.Task) -> None:
+                    async def republish() -> None:
+                        try:
+                            await self.refresh_scheduled(final=self._closed)
+                        finally:
+                            release()
+
+                    asyncio.ensure_future(republish())
+
+                write.add_done_callback(settled)
+            raise
+
     @contextlib.asynccontextmanager
     async def _schedule_change(self):
         """Around a change to what is scheduled: the new schedule is published on the way
@@ -530,15 +553,17 @@ class TaskService:
             )
             name = gen_name
             description = description or gen_desc
-        task = await self._require_store().create_task(
-            name=name,
-            prompt=prompt,
-            model=model or None,
-            schedule=normalize_schedule(schedule),
-            origin_channel=origin_channel,
-            origin_chat=origin_chat,
-            description=description,
-            recall_depth=recall_depth,
+        task = await self._settling(
+            self._require_store().create_task(
+                name=name,
+                prompt=prompt,
+                model=model or None,
+                schedule=normalize_schedule(schedule),
+                origin_channel=origin_channel,
+                origin_chat=origin_chat,
+                description=description,
+                recall_depth=recall_depth,
+            )
         )
         return _task_row(task, None, 0, False)
 
@@ -556,7 +581,7 @@ class TaskService:
         # Arming or unpausing a task is work until the new schedule is published.
         with self._activity.track("task_update"):
             async with self._schedule_change():
-                task = await self._require_store().update_task(task_id, **patch)
+                task = await self._settling(self._require_store().update_task(task_id, **patch))
             return None if task is None else await self.get_task(task_id)
 
     async def delete_task(self, task_id: str) -> bool:
@@ -572,7 +597,7 @@ class TaskService:
                 if self._gateway is not None:
                     with contextlib.suppress(Exception):
                         await self._gateway.delete_chat(r.stream_id)
-            await self._require_store().delete_task(task_id)
+            await self._settling(self._require_store().delete_task(task_id))
             if self._gateway is not None:
                 # Best-effort: a stub gateway in unit tests may have no `.permissions`
                 # at all, and a real deleted task's grants are gone either way once the

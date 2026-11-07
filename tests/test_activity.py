@@ -990,7 +990,12 @@ async def test_a_cancelled_schedule_change_leaves_an_unknown_hold_that_republish
     changing.cancel()
     with pytest.raises(asyncio.CancelledError):
         await changing
-    assert activity.holds() == [{"kind": "scheduled"}]  # on disk, not yet published
+    # The write's thread is still busy: work until it settles, and the schedule unknown.
+    assert activity.holds() == [
+        {"kind": "work", "count": 1, "detail": "task_write"},
+        {"kind": "scheduled"},
+    ]
+    gate.set()  # the write settles; the service republishes on its own
     await asyncio.sleep(0.3)
     (hold,) = activity.holds()
     assert hold["count"] == 1
@@ -1026,7 +1031,12 @@ async def test_a_task_saved_by_a_turn_cancelled_at_shutdown_is_still_published(p
     creating.cancel()  # 2. the gateway cancels the turn that was saving
     with pytest.raises(asyncio.CancelledError):
         await creating
-    assert activity.holds() == [{"kind": "scheduled"}]  # unknown rather than idle
+    assert activity.holds() == [
+        {"kind": "work", "count": 1, "detail": "task_write"},  # the write is settling
+        {"kind": "scheduled"},  # unknown rather than idle
+    ]
+    gate.set()
+    await asyncio.sleep(0.05)  # the write lands and republishes (final: the service is closed)
     await tasks.refresh_scheduled(final=True)  # 3. the runtime's last word
     (hold,) = activity.holds()
     assert hold["count"] == 1 and "next" in hold
@@ -1225,7 +1235,11 @@ async def test_a_stale_scan_cannot_clear_a_cancelled_mutation_s_safeguard(paths,
     arming = asyncio.ensure_future(
         tasks.update_task(task["id"], schedule={"kind": "cron", "cron": "@daily"})
     )
-    await asyncio.sleep(0.01)  # persisted; now waiting for the lock to publish
+    for _ in range(500):  # persisted; now waiting for the lock to publish
+        if (await tasks._require_store().get_task(task["id"])).next_run_at:
+            break
+        await asyncio.sleep(0.01)
+    await asyncio.sleep(0)
     arming.cancel()
     with pytest.raises(asyncio.CancelledError):
         await arming
@@ -1944,3 +1958,46 @@ async def test_a_telegram_pairing_reply_is_work_until_it_is_delivered():
     gate.set()
     await asyncio.wait_for(handling, 5)
     assert activity.holds() == []
+
+
+async def test_a_write_outliving_its_cancelled_caller_stays_work_until_published(paths, tmp_path):
+    """SQLite writes run in a thread: cancelling the coroutine does not stop them. The
+    task lands after the cancel, so neither a poll in between nor the landing itself
+    may leave the armed task behind an idle signal."""
+    gate = asyncio.Event()
+    writing = asyncio.Event()
+
+    class _SlowStore(TaskStore):
+        async def create_task(self, **fields):
+            writing.set()
+            await gate.wait()  # the thread is still busy writing
+            return await super().create_task(**fields)
+
+    activity = Activity()
+    tasks = TaskService(
+        config=Config.for_paths(paths),
+        store=_SlowStore(path=tmp_path / "tasks.db"),
+        inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
+        activity=activity,
+        refresh_retry_s=0.05,
+    )
+    await tasks.start(scheduler=False)
+    creating = asyncio.ensure_future(
+        tasks.create_task(name="A", prompt="p", schedule={"kind": "cron", "cron": "@daily"})
+    )
+    await asyncio.wait_for(writing.wait(), 5)
+    creating.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await creating
+    assert _work(activity) == {"task_write": 1}  # the write is still in flight
+    await tasks.refresh_scheduled()  # a poll reads the pre-write state ...
+    assert _work(activity) == {"task_write": 1}  # ... and still cannot authorize a stop
+    gate.set()
+    for _ in range(200):
+        if _work(activity) == {} and activity.holds():
+            break
+        await asyncio.sleep(0.01)
+    (hold,) = activity.holds()
+    assert hold["kind"] == "scheduled" and hold["count"] == 1  # landed and published
+    assert len(await tasks.list_tasks()) == 1
+    await tasks.close()
