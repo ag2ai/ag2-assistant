@@ -1766,6 +1766,7 @@ async def test_a_download_stays_work_between_its_chunks():
 
     async def app(scope, receive, send):
         await send({"type": "http.response.start", "status": 200, "headers": []})
+        between.append(_work(activity))  # the first read from disk happens here
         for last in (False, False, True):
             await send({"type": "http.response.body", "body": b"x" * 10, "more_body": not last})
             between.append(_work(activity))  # what a poll sees while the next chunk is read
@@ -1776,7 +1777,7 @@ async def test_a_download_stays_work_between_its_chunks():
     await ActivitySendMiddleware(app, activity)(
         {"type": "http", "method": "GET", "path": "/api/p/x/files/raw"}, None, send
     )
-    assert between == [{"send": 1}, {"send": 1}, {}]
+    assert between == [{"send": 1}, {"send": 1}, {"send": 1}, {}]
     assert activity.holds() == []
 
 

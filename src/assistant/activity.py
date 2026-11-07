@@ -362,9 +362,10 @@ class Activity:
 class HoldingSend:
     """An ASGI ``send`` that holds ``work``/``detail`` while a reply is on its way out
     (clockless: it protects delivery, it is not activity). A finite HTTP response is
-    held from its first body chunk to its last, so a download never looks idle
-    between chunks; an event stream, which may stay open for hours, and a WebSocket
-    frame are held per send. ``close()`` settles a response the app never finished."""
+    held from its headers to its last body chunk, so a download never looks idle
+    while a chunk is read; an event stream, which may stay open for hours, and a
+    WebSocket frame are held per send. ``close()`` settles a response the app never
+    finished."""
 
     def __init__(self, send: Callable[..., Any], activity: "Activity", detail: str) -> None:
         self._send = send
@@ -377,6 +378,10 @@ class HoldingSend:
         kind = message.get("type")
         if kind == "http.response.start":
             self._streaming = _is_event_stream(message)
+            if not self._streaming and self._release is None:
+                # Held from the headers on: the body's first read (a file from disk)
+                # is part of the delivery, not a gap in it.
+                self._release = self._activity.acquire(self._detail, clock=False)
             await self._send(message)
             return
         if kind == "websocket.send" or (kind == "http.response.body" and self._streaming):
