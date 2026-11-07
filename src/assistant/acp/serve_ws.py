@@ -113,8 +113,18 @@ def build_ws_app(acp_agent: ACPAgent, token: str) -> AsgiApp:
                 return conn_scope
 
             conn_app = create_asgi_app(tracked_bind)
+            held = holding_send(send, activity, "acp_send")
+
+            async def delivering(message: Any) -> None:
+                await held(message)
+                if message.get("type") == "websocket.send":
+                    for conn_scope in scopes:  # a frame left: a handed-over hold is done
+                        deliver = getattr(conn_scope, "deliver_one", None)
+                        if deliver is not None:
+                            deliver()
+
             try:
-                await conn_app(scope, receive, holding_send(send, activity, "acp_send"))
+                await conn_app(scope, receive, delivering)
             finally:
                 # Close the connection's sessions and detach its outbound receiver.
                 for conn_scope in scopes:

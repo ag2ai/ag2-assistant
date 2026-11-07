@@ -1060,6 +1060,8 @@ async def test_an_acp_request_is_work_until_its_answer_is_delivered(paths):
     assert _work(activity) == {"acp_prompt": 1}  # the agent is done; delivery is not
     gate.set()
     await asyncio.wait_for(turn, 5)
+    assert _work(activity) == {"acp_response": 1}  # handed to the send path
+    scope.deliver_one()
     assert activity.holds() == []
     await scope.aclose()
 
@@ -1658,3 +1660,25 @@ def test_a_google_consent_nobody_finishes_lapses_with_its_flow(paths):
         wait_for(lambda: activity.holds() == [])
         page = client.get("/api/google/callback", params={"state": "st8", "code": "abc"})
         assert "Expired" in page.text
+
+
+async def test_an_acp_answer_stays_work_until_its_response_frame_has_left(paths):
+    import acp
+    from ag2.acp.testing import RecordingClient
+
+    from assistant.profiles import ProfileRegistry
+    from tests.support.apps import make_acp_agent
+
+    activity = Activity()
+    pid = ProfileRegistry(paths).create_profile("ACP", "#109e91").id
+    served, storage, _ = make_acp_agent(paths, pid, activity=activity)
+    scope = served.bind(RecordingClient())
+    await scope.initialize(protocol_version=1)
+    session = await scope.new_session(cwd=".", mcp_servers=[])
+    await scope.prompt(session.session_id, [acp.text_block("hi")])
+    assert _work(activity) == {"acp_response": 1}  # the handler is done; the frame is not out
+    scope.deliver_one()  # what the WebSocket server does after the frame is sent
+    assert activity.holds() == []
+    await scope.prompt(session.session_id, [acp.text_block("again")])
+    await scope.aclose()  # the connection goes away with the response still queued
+    assert activity.holds() == []

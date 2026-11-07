@@ -27,6 +27,7 @@ gateway's chat routes read to show a "live" badge and offer a close button.
 
 import contextlib
 import json
+from collections import deque
 from collections.abc import Awaitable, Callable, Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -536,9 +537,23 @@ class ChatTrackingACPAgent(ACPAgent):
 
 
 class _LinkedScope(_ConnectionScope):
-    """Attach declared ACP receivers during initialization and detach them on close."""
+    """Attach declared ACP receivers during initialization and detach them on close.
 
-    __slots__ = ()
+    A prompt's hold outlives the handler: the SDK queues the terminal response after
+    ``prompt()`` returns, so the hold is handed to ``_pending_deliveries`` and released
+    by the connection's send path once the next frame has gone out (``deliver_one``),
+    or by ``aclose`` when the connection is torn down."""
+
+    __slots__ = ("_pending_deliveries",)
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._pending_deliveries: deque[Callable[[], None]] = deque()
+
+    def deliver_one(self) -> None:
+        """A frame left the socket: the oldest handed-over hold is done."""
+        if self._pending_deliveries:
+            self._pending_deliveries.popleft()()
 
     async def initialize(
         self,
@@ -562,9 +577,14 @@ class _LinkedScope(_ConnectionScope):
         # request so a host never sees idle while the reply is still on its way.
         activity: Activity = getattr(self._owner, "activity", None) or Activity()
         with activity.track("acp_prompt"):
-            return await super().prompt(session_id, prompt, **kwargs)
+            response = await super().prompt(session_id, prompt, **kwargs)
+        # The terminal response is queued from here; hold until it has been sent.
+        self._pending_deliveries.append(activity.acquire("acp_response"))
+        return response
 
     async def aclose(self) -> None:
+        while self._pending_deliveries:
+            self._pending_deliveries.popleft()()  # nothing more will be delivered
         outbound = getattr(self._owner, "outbound", None)
         if outbound is not None and self._client is not None:
             outbound.detach(self._client)
