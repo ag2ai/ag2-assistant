@@ -1426,9 +1426,11 @@ async def test_a_rest_reply_on_its_way_out_is_work():
             await gate.wait()  # the caller's socket is backpressured
 
     held = ActivitySendMiddleware(app, activity)
-    request = asyncio.ensure_future(held({"type": "http", "path": "/api/p/x/message"}, None, send))
+    request = asyncio.ensure_future(
+        held({"type": "http", "method": "POST", "path": "/api/p/x/message"}, None, send)
+    )
     await asyncio.wait_for(sending.wait(), 5)
-    assert _work(activity) == {"send": 1}  # the turn is over; the answer is not delivered
+    assert _work(activity) == {"request": 1, "send": 1}  # the turn is over; the answer is not out
     gate.set()
     await request
     assert activity.holds() == []
@@ -1505,9 +1507,11 @@ def test_a_reply_blocked_at_the_server_s_send_is_work_through_the_whole_stack(pa
             await app(scope, receive, send)
 
         done = client.portal.start_task_soon(call)
-        assert blocked.wait(5)
-        assert _work(activity) == {"send": 1}
-        client.portal.call(gate.set)
+        try:
+            assert blocked.wait(5)
+            assert _work(activity) == {"send": 1}  # the read's own hold ended at the headers
+        finally:
+            client.portal.call(gate.set)
         done.result(5)
         assert activity.holds() == []
 
@@ -1571,7 +1575,8 @@ async def test_a_mutating_request_is_work_while_its_handler_runs():
     await install
     assert activity.holds() == []
     await held({"type": "http", "method": "GET", "path": "/api/usage"}, None, send)
-    assert seen[-1] == {}  # a read holds nothing while its handler runs
+    assert seen[-1] == {"request": 1}  # a read is held too, clocklessly, until it answers
+    assert activity.holds() == []
 
 
 def test_completing_a_google_sign_in_is_work(paths):
@@ -1605,7 +1610,7 @@ def test_completing_a_google_sign_in_is_work(paths):
                 client.get, "/api/google/callback", params={"state": "st8", "code": "abc"}
             )
             assert exchanging.wait(5)
-            assert _work(activity) == {"google_signin": 1}
+            assert _work(activity) == {"google_signin": 1, "request": 1}
             gate.set()
             assert "Connected" in page.result(10).text
         wait_for(lambda: activity.holds() == [])
@@ -1826,3 +1831,35 @@ async def test_a_response_cut_short_does_not_keep_its_delivery_hold():
             {"type": "http", "method": "GET", "path": "/api/p/x/files/raw"}, None, send
         )
     assert activity.holds() == []
+
+
+async def test_a_read_that_does_work_is_held_without_touching_the_idle_clock():
+    from assistant.activity import ActivitySendMiddleware
+
+    clock = _Clock()
+    activity = Activity(clock=clock)
+    gate = asyncio.Event()
+    running = asyncio.Event()
+
+    async def app(scope, receive, send):
+        running.set()
+        await gate.wait()  # a GET that rotates and persists an expired credential
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"[]"})
+
+    async def send(message):
+        pass
+
+    clock.now = T0 + timedelta(minutes=10)
+    refresh = asyncio.ensure_future(
+        ActivitySendMiddleware(app, activity)(
+            {"type": "http", "method": "GET", "path": "/api/llm-configs/models"}, None, send
+        )
+    )
+    await asyncio.wait_for(running.wait(), 5)
+    assert _work(activity) == {"request": 1}  # a stop here would lose the rotated token
+    assert activity.snapshot()["idle_since"] == "2026-11-07T10:00:00Z"  # but a read is not activity
+    gate.set()
+    await refresh
+    assert activity.holds() == []
+    assert activity.snapshot()["idle_since"] == "2026-11-07T10:00:00Z"

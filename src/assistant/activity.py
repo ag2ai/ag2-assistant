@@ -373,10 +373,15 @@ class HoldingSend:
         self._detail = detail
         self._streaming = False
         self._release: Callable[[], None] | None = None
+        # Called once when the response starts: the handler's own work is over.
+        self.on_start: Callable[[], None] | None = None
 
     async def __call__(self, message: Any) -> None:
         kind = message.get("type")
         if kind == "http.response.start":
+            if self.on_start is not None:
+                self.on_start()
+                self.on_start = None
             self._streaming = _is_event_stream(message)
             if not self._streaming and self._release is None:
                 # Held from the headers on: the body's first read (a file from disk)
@@ -421,11 +426,14 @@ MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
 class ActivitySendMiddleware:
-    """Pure ASGI middleware: a mutating HTTP request (POST/PUT/PATCH/DELETE) holds
-    ``work``/``request`` from arrival to completion, and every ``send`` goes through
+    """Pure ASGI middleware. A mutating HTTP request (POST/PUT/PATCH/DELETE) holds
+    ``work``/``request`` from arrival to completion. A read holds it clocklessly only
+    until its response starts: the handler's work (a GET that refreshes a credential)
+    must not be cut short, but a poll is not activity, and an event-stream
+    subscription may then stay open for hours. Every ``send`` goes through
     :func:`holding_send`; the monitoring endpoints are left alone, since a host's own
-    poll must not read as work. A WebSocket connection is not held as a whole (an
-    idle client may stay connected for hours); its frames are."""
+    poll must not read as work. A WebSocket connection is not held as a whole; its
+    frames are."""
 
     def __init__(
         self,
@@ -445,11 +453,18 @@ class ActivitySendMiddleware:
             return
         held = holding_send(send, self._activity, self._detail)
         try:
-            if scope["type"] == "http" and scope.get("method") in MUTATING_METHODS:
+            if scope["type"] != "http":
+                await self._app(scope, receive, held)
+            elif scope.get("method") in MUTATING_METHODS:
                 with self._activity.track("request"):
                     await self._app(scope, receive, held)
-                return
-            await self._app(scope, receive, held)
+            else:
+                release = self._activity.acquire("request", clock=False)
+                held.on_start = release  # the read's work ends where its response begins
+                try:
+                    await self._app(scope, receive, held)
+                finally:
+                    release()
         finally:
             held.close()  # a response cut short (error, disconnect) is not still owed
 
