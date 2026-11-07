@@ -514,7 +514,9 @@ class ProfileManager:
 
     def _outbound(self, connection: str) -> Outbound:
         if connection not in self.acp_outbound:
-            self.acp_outbound[connection] = Outbound(connection, self.paths.root / "acp_outbox")
+            self.acp_outbound[connection] = Outbound(
+                connection, self.paths.root / "acp_outbox", activity=self.activity
+            )
         return self.acp_outbound[connection]
 
     async def push_task_outcome(

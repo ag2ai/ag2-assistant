@@ -11,6 +11,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from assistant.activity import Activity
+
 log = logging.getLogger("assistant.acp.outbound")
 
 # The extension method the notification travels as; the SDK adds the underscore.
@@ -44,12 +46,16 @@ def wants_delivery(meta: Any) -> bool:
 class Outbound:
     """One listener's outbound side: the clients it can reach and what waits for one."""
 
-    def __init__(self, connection_id: str, outbox_dir: Path) -> None:
+    def __init__(
+        self, connection_id: str, outbox_dir: Path, activity: Activity | None = None
+    ) -> None:
         self.connection_id = connection_id
         self._path = outbox_dir / f"{_SAFE.sub('_', connection_id) or 'listener'}.json"
         self._clients: list[Any] = []
         self._lock = asyncio.Lock()
         self._flush_task: asyncio.Task[int] | None = None
+        # A reconnect drain is work: queued outcomes are being delivered.
+        self._activity = activity or Activity()
 
     # ---- clients -------------------------------------------------------------
 
@@ -59,8 +65,10 @@ class Outbound:
             return
         self._clients.append(client)
         if self.pending() and (self._flush_task is None or self._flush_task.done()):
+            release = self._activity.acquire("acp_outbox")
             self._flush_task = asyncio.create_task(self.flush())
             self._flush_task.add_done_callback(self._flushed)
+            self._flush_task.add_done_callback(lambda _task: release())
 
     def detach(self, client: Any) -> None:
         if client in self._clients:

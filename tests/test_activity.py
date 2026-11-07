@@ -1109,3 +1109,28 @@ async def test_a_channel_message_is_work_until_its_reply_is_delivered():
     gate.set()
     await asyncio.wait_for(handling, 5)
     assert activity.holds() == []
+
+
+async def test_delivering_queued_acp_outcomes_on_reconnect_is_work(tmp_path):
+    from assistant.acp.outbound import Outbound
+
+    activity = Activity()
+    sending = asyncio.Event()
+    gate = asyncio.Event()
+
+    class _SlowReceiver:
+        async def ext_notification(self, method, params):
+            sending.set()
+            await gate.wait()
+
+    out = Outbound("cn-1", tmp_path / "outbox", activity=activity)
+    await out.notify("room", "a result nobody was there for")
+    assert activity.holds() == []  # queued, not delivering
+    out.attach(_SlowReceiver())  # a receiver reconnects: the drain starts
+    await asyncio.wait_for(sending.wait(), 5)
+    assert _work(activity) == {"acp_outbox": 1}
+    gate.set()
+    await asyncio.wait_for(out.flush(), 5)
+    await asyncio.sleep(0)  # the drain task's done callback
+    assert activity.holds() == []
+    await out.aclose()
