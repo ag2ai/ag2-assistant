@@ -191,11 +191,12 @@ class Activity:
             for detail, count in sorted(self._work.items())
         ]
         known = [value for value in self._scheduled.values() if value is not None]
-        total = sum(count for count, _ in known)
-        if total or len(known) < len(self._scheduled):
-            hold: dict = {"kind": SCHEDULED}
-            if total:
-                hold["count"] = total  # omitted while a profile's schedule is unknown
+        if len(known) < len(self._scheduled):
+            # Some profile's schedule is unreadable: neither count nor next can be
+            # trusted, so the hold carries no claim beyond "scheduled work may exist".
+            out.append({"kind": SCHEDULED})
+        elif total := sum(count for count, _ in known):
+            hold: dict = {"kind": SCHEDULED, "count": total}
             nexts = [nxt for _, nxt in known if nxt]
             if nexts:
                 hold["next"] = min(nexts)

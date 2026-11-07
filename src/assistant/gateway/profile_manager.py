@@ -430,7 +430,12 @@ class ProfileManager:
         migrate_anthropic_sampling(self.paths.config_yaml)
         setup_logging(self.config)
         self._connections.adopt_peer_senders()
-        for meta in self._registry.list_profiles(include_archived=False):
+        profiles = self._registry.list_profiles(include_archived=False)
+        for meta in profiles:
+            # Until its task service reads the schedule, a profile may hold scheduled
+            # work; one that fails to boot keeps that unknown hold.
+            self.activity.set_scheduled_unknown(meta.id)
+        for meta in profiles:
             try:
                 await self._boot(meta)
             except Exception as exc:
@@ -819,6 +824,7 @@ class ProfileManager:
             self._runtimes.pop(pid, None)
 
         self._registry.archive_profile(pid)
+        self.activity.set_scheduled(pid, 0, None)  # also a profile that never booted
 
     async def restore(self, pid: str) -> ProfileRuntime:
         """Un-archive a profile and boot its runtime live (§4.9, ADR 0003).

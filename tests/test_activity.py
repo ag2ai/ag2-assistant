@@ -655,9 +655,9 @@ def test_an_unknown_schedule_is_a_scheduled_hold_without_a_count():
     a = Activity()
     a.set_scheduled("p1", 2, "2026-11-08T09:00:00Z")
     a.set_scheduled_unknown("p2")
-    assert a.holds() == [{"kind": "scheduled", "count": 2, "next": "2026-11-08T09:00:00Z"}]
+    assert a.holds() == [{"kind": "scheduled"}]  # p2 may hold an earlier slot: no claim
     a.set_scheduled("p1", 0, None)
-    assert a.holds() == [{"kind": "scheduled"}]  # p2 may still hold work: no count
+    assert a.holds() == [{"kind": "scheduled"}]
     a.set_scheduled("p2", 0, None)
     assert a.holds() == []
 
@@ -689,3 +689,23 @@ async def test_a_failed_schedule_read_fails_closed_and_recovers_on_its_own(paths
     assert hold["count"] == 1 and "next" in hold
     await tasks.close()
     assert activity.holds() == []
+
+
+async def test_a_profile_that_fails_to_boot_keeps_an_unknown_scheduled_hold(paths):
+    from assistant.profiles import ProfileRegistry
+    from tests.support.apps import make_manager
+    from tests.support.fakes import failing_agent_factory
+
+    registry = ProfileRegistry(paths)
+    healthy = registry.create_profile("Healthy", "#109e91").id
+    broken = registry.create_profile("Broken", "#ffa000").id
+    manager = make_manager(paths, agent_factory=failing_agent_factory({broken}))
+    await manager.start()
+    try:
+        assert broken in manager.boot_errors
+        assert manager.activity.holds() == [{"kind": "scheduled"}]  # never read: no claim
+        await manager.archive(broken)
+        assert manager.activity.holds() == []
+        assert manager.get(healthy).require_tasks() is not None
+    finally:
+        await manager.close()
