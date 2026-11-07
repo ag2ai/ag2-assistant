@@ -399,15 +399,18 @@ def build_router(d: GatewayDeps, *, code_reader: Callable[[str], str]) -> APIRou
 
         if error:
             return HTMLResponse(_page("Cancelled", f"Google returned: {error}"))
-        flow = request.app.state.google_flows.pop(state, None)
-        if flow is None or not code:
-            return HTMLResponse(_page("Expired", "This sign-in link is no longer valid."))
-        try:
-            email = await asyncio.to_thread(d.google.complete_login, flow, code)
-        except Exception as exc:
-            return HTMLResponse(_page("Sign-in failed", str(exc)))
-        # Refresh consumers of the install-wide Google connection.
-        await refresh_all(d.manager)
+        # A GET that does real work: the token exchange, credential persistence and
+        # runtime refresh are held so a sleep host cannot stop the process mid sign-in.
+        with d.manager.activity.track("google_signin"):
+            flow = request.app.state.google_flows.pop(state, None)
+            if flow is None or not code:
+                return HTMLResponse(_page("Expired", "This sign-in link is no longer valid."))
+            try:
+                email = await asyncio.to_thread(d.google.complete_login, flow, code)
+            except Exception as exc:
+                return HTMLResponse(_page("Sign-in failed", str(exc)))
+            # Refresh consumers of the install-wide Google connection.
+            await refresh_all(d.manager)
         return HTMLResponse(_page("Connected ✓", f"AG2 Assistant is now connected to {email}."))
 
     @r.post("/api/google/logout", response_model=Ok)

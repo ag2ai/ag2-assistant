@@ -1572,3 +1572,40 @@ async def test_a_mutating_request_is_work_while_its_handler_runs():
     assert activity.holds() == []
     await held({"type": "http", "method": "GET", "path": "/api/usage"}, None, send)
     assert seen[-1] == {}  # a read holds nothing while its handler runs
+
+
+def test_completing_a_google_sign_in_is_work(paths):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from assistant.integrations.google_auth import GoogleAuth
+    from tests.support.chat import wait_for
+
+    exchanging = threading.Event()
+    gate = threading.Event()
+
+    class _SlowAuth(GoogleAuth):
+        def is_configured(self):
+            return True
+
+        def make_login_flow(self, redirect_uri):
+            return "https://accounts.google.com/o/oauth2/auth?x=1", "st8", object()
+
+        def complete_login(self, flow, code):  # runs in a worker thread
+            exchanging.set()
+            gate.wait(5)
+            return "me@example.com"
+
+    app, pid = make_profile_app(paths, google=_SlowAuth(paths, finder=lambda name: object()))
+    with TestClient(app) as client:
+        activity = app.state.profiles.activity
+        assert client.post("/api/google/login_url").json()["ok"] is True
+        with ThreadPoolExecutor() as pool:
+            page = pool.submit(
+                client.get, "/api/google/callback", params={"state": "st8", "code": "abc"}
+            )
+            assert exchanging.wait(5)
+            assert _work(activity) == {"google_signin": 1}
+            gate.set()
+            assert "Connected" in page.result(10).text
+        wait_for(lambda: activity.holds() == [])
