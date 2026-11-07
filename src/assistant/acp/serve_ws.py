@@ -10,6 +10,7 @@ mount into the shared gateway app, which serves every profile.
 
 import asyncio
 import contextlib
+import json
 import secrets
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
@@ -25,6 +26,7 @@ from assistant.acp.auth import choose_auth
 from assistant.acp.chats import ChatBackedStorage, ChatTrackingACPAgent
 from assistant.acp.sdk_watch import watch_send_loop
 from assistant.acp.serve import cold_start_agent
+from assistant.activity import Activity, holding_send
 from assistant.gateway.core import Gateway
 from assistant.gateway.profile_manager import (
     ArchivedProfile,
@@ -77,6 +79,85 @@ def _token_authorized(scope: Scope, token: str) -> bool:
     return presented is not None and secrets.compare_digest(presented, token)
 
 
+def _items(message: Any) -> list[dict]:
+    """The JSON-RPC objects a WebSocket frame carries (none when it cannot be read)."""
+    raw = message.get("text")
+    if raw is None:
+        raw = message.get("bytes")
+    if raw is None:
+        return []
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        return []
+    items = payload if isinstance(payload, list) else [payload]
+    return [item for item in items if isinstance(item, dict)]
+
+
+def _key(item: dict) -> str:
+    return json.dumps(item["id"])  # 1 and "1" are different JSON-RPC ids
+
+
+def request_ids(message: Any) -> list[str]:
+    """The ids of the requests (not notifications) an incoming frame carries, admitted
+    the way the SDK's inbound pump admits them: one JSON object in a text frame. A
+    binary frame or a batch is ignored by the SDK, so it would never be answered."""
+    raw = message.get("text")
+    if not isinstance(raw, str):
+        return []
+    try:
+        item = json.loads(raw)
+    except Exception:
+        return []
+    if not isinstance(item, dict) or item.get("method") is None or "id" not in item:
+        return []  # a null method is dispatched as a response, never answered
+    return [_key(item)]
+
+
+def response_ids(message: Any) -> list[str]:
+    """The ids answered (result or error) by an outgoing frame."""
+    return [
+        _key(item)
+        for item in _items(message)
+        if "id" in item and item.get("method") is None and ("result" in item or "error" in item)
+    ]
+
+
+class RequestHolds:
+    """One connection's in-flight JSON-RPC requests as ``work``: a request holds from
+    the frame that brought it to the frame carrying its response, matched by id, so a
+    backpressured or interleaved frame for another request never frees it."""
+
+    def __init__(self, activity: Activity, detail: str = "acp_request") -> None:
+        self._activity = activity
+        self._detail = detail
+        # id -> one release per request still in flight under it: the SDK dispatches
+        # concurrently, so a reused id means two requests and two answers.
+        self._pending: dict[str, list[Callable[[], None]]] = {}
+
+    def on_receive(self, message: Any) -> None:
+        if message.get("type") != "websocket.receive":
+            return
+        for rid in request_ids(message):
+            self._pending.setdefault(rid, []).append(self._activity.acquire(self._detail))
+
+    def on_send(self, message: Any) -> None:
+        if message.get("type") != "websocket.send":
+            return
+        for rid in response_ids(message):
+            releases = self._pending.get(rid)
+            if releases:
+                releases.pop(0)()
+                if not releases:
+                    del self._pending[rid]
+
+    def close(self) -> None:
+        """The connection is gone: nothing more will be answered."""
+        while self._pending:
+            for release in self._pending.popitem()[1]:
+                release()
+
+
 def build_ws_app(acp_agent: ACPAgent, token: str) -> AsgiApp:
     """The listener's whole ASGI front door: WebSocket-only, token at the upgrade,
     and per-connection session teardown.
@@ -95,6 +176,7 @@ def build_ws_app(acp_agent: ACPAgent, token: str) -> AsgiApp:
       (and the chat's live badge) alive forever.
     """
     base = create_asgi_app(acp_agent.bind)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]  # lifespan passthrough only
+    activity: Activity = getattr(acp_agent, "activity", None) or Activity()
 
     async def guarded(scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "websocket":
@@ -111,9 +193,23 @@ def build_ws_app(acp_agent: ACPAgent, token: str) -> AsgiApp:
                 return conn_scope
 
             conn_app = create_asgi_app(tracked_bind)
+            held = holding_send(send, activity, "acp_send")
+            requests = RequestHolds(activity)
+
+            async def receiving() -> Any:
+                message = await receive()
+                requests.on_receive(message)
+                return message
+
+            async def delivering(message: Any) -> None:
+                await held(message)
+                requests.on_send(message)
+
             try:
-                await conn_app(scope, receive, send)
+                await conn_app(scope, receiving, delivering)
             finally:
+                requests.close()
+                held.close()
                 # Close the connection's sessions and detach its outbound receiver.
                 for conn_scope in scopes:
                     with contextlib.suppress(Exception):

@@ -12,6 +12,7 @@ web/src/schemas/system.ts (their zod twins) — same file name in all three tree
 
 import asyncio
 import secrets as _secrets
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -30,6 +31,7 @@ from assistant.gateway.profile_manager import ProfileRuntime
 from assistant.gateway.routes.common import refresh_all
 from assistant.gateway.routes.deps import GatewayDeps
 from assistant.gateway.schemas import (
+    ActivityResponse,
     CodexLoginUrlResponse,
     CodexStatusResponse,
     CodingAgentsResponse,
@@ -120,7 +122,9 @@ async def _activity(runtime: ProfileRuntime) -> tuple[int, int]:
         return 0, 0
 
 
-def build_router(d: GatewayDeps, *, code_reader: Callable[[str], str]) -> APIRouter:
+def build_router(
+    d: GatewayDeps, *, code_reader: Callable[[str], str], google_flow_ttl_s: float = 600.0
+) -> APIRouter:
     """The install-level routes. Registration order below is the order these
     handlers had in app.py — see the plan's constraint on route order.
 
@@ -138,6 +142,16 @@ def build_router(d: GatewayDeps, *, code_reader: Callable[[str], str]) -> APIRou
         if runtime is None or runtime.gateway is None:
             return {"status": "ok", "profiles": 0}
         return runtime.gateway.status()
+
+    @r.get("/api/activity", response_model=ActivityResponse, response_model_exclude_unset=True)
+    async def activity():
+        """What the install is doing now, for a host deciding whether it may sleep:
+        open work, scheduled slots, turns parked on a human. Pod-wide, all profiles."""
+        for runtime in d.manager.runtimes():
+            if runtime.tasks is not None:
+                await runtime.tasks.refresh_scheduled()
+        d.manager.activity.flush()
+        return d.manager.activity.snapshot()
 
     @r.get(
         "/api/coding/agents",
@@ -372,7 +386,20 @@ def build_router(d: GatewayDeps, *, code_reader: Callable[[str], str]) -> APIRou
             auth_url, state, flow = await asyncio.to_thread(d.google.make_login_flow, redirect_uri)
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
-        request.app.state.google_flows[state] = flow
+        flows = request.app.state.google_flows
+        holds = request.app.state.google_flow_holds
+        flows[state] = flow
+        # The user is at Google's consent screen: a human hold, bounded by the flow's
+        # own lifetime, keeps a sleep host from dropping the in-memory flow meanwhile.
+        holds[state] = d.manager.activity.open_human(time.time() + google_flow_ttl_s)
+
+        def expire() -> None:
+            flows.pop(state, None)
+            token = holds.pop(state, None)
+            if token is not None:
+                d.manager.activity.close_human(token)
+
+        asyncio.get_running_loop().call_later(google_flow_ttl_s, expire)
         return {"ok": True, "auth_url": auth_url}
 
     @r.get("/api/google/callback", response_class=HTMLResponse)
@@ -388,15 +415,21 @@ def build_router(d: GatewayDeps, *, code_reader: Callable[[str], str]) -> APIRou
 
         if error:
             return HTMLResponse(_page("Cancelled", f"Google returned: {error}"))
-        flow = request.app.state.google_flows.pop(state, None)
-        if flow is None or not code:
-            return HTMLResponse(_page("Expired", "This sign-in link is no longer valid."))
-        try:
-            email = await asyncio.to_thread(d.google.complete_login, flow, code)
-        except Exception as exc:
-            return HTMLResponse(_page("Sign-in failed", str(exc)))
-        # Refresh consumers of the install-wide Google connection.
-        await refresh_all(d.manager)
+        # A GET that does real work: the token exchange, credential persistence and
+        # runtime refresh are held so a sleep host cannot stop the process mid sign-in.
+        with d.manager.activity.track("google_signin"):
+            flow = request.app.state.google_flows.pop(state, None)
+            token = request.app.state.google_flow_holds.pop(state, None)
+            if token is not None:
+                d.manager.activity.close_human(token)  # the user came back, either way
+            if flow is None or not code:
+                return HTMLResponse(_page("Expired", "This sign-in link is no longer valid."))
+            try:
+                email = await asyncio.to_thread(d.google.complete_login, flow, code)
+            except Exception as exc:
+                return HTMLResponse(_page("Sign-in failed", str(exc)))
+            # Refresh consumers of the install-wide Google connection.
+            await refresh_all(d.manager)
         return HTMLResponse(_page("Connected ✓", f"AG2 Assistant is now connected to {email}."))
 
     @r.post("/api/google/logout", response_model=Ok)
@@ -439,7 +472,9 @@ def build_router(d: GatewayDeps, *, code_reader: Callable[[str], str]) -> APIRou
                 return
             await refresh_all(d.manager)
 
-        asyncio.create_task(_complete())
+        # Waiting on the browser redirect and finishing the sign-in is work: a sleep
+        # host stopping here would strand the flow the user is in the middle of.
+        d.manager.background_task(_complete(), "codex_signin")
         return {"ok": True, "auth_url": url, "state": state}
 
     @r.post("/api/codex/submit", response_model=Ok)

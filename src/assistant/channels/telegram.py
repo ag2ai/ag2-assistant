@@ -272,21 +272,23 @@ class TelegramChannel(Channel):
         # answer a question, spend a picker, or see the button acknowledged.
         if not self._require_router().paired(self._from_callback(query)):
             return
-        await query.answer()
-        chat_id = str(message.chat.id)
-        if query.data.startswith(_CB_PREFIX):
-            answer = query.data[len(_CB_PREFIX) :]
-            self._pending.resolve(chat_id, answer)
-            # The prompt is a transient modal — remove it once answered so it
-            # doesn't linger below the reply.
-            await self._delete(message)
-        elif query.data.startswith(_CHOICE_PREFIX):
-            token = query.data[len(_CHOICE_PREFIX) :]
-            outcome = await self._require_router().choose(self._from_callback(query), token)
-            await self._delete(message)  # the picker is spent
-            spoken = spoken_text(outcome)
-            if spoken:
-                await self._send(chat_id, spoken)
+        # A tap is work through its effect (an answer, a /clear) and its reply.
+        with self._request_hold():
+            await query.answer()
+            chat_id = str(message.chat.id)
+            if query.data.startswith(_CB_PREFIX):
+                answer = query.data[len(_CB_PREFIX) :]
+                self._pending.resolve(chat_id, answer)
+                # The prompt is a transient modal — remove it once answered so it
+                # doesn't linger below the reply.
+                await self._delete(message)
+            elif query.data.startswith(_CHOICE_PREFIX):
+                token = query.data[len(_CHOICE_PREFIX) :]
+                outcome = await self._require_router().choose(self._from_callback(query), token)
+                await self._delete(message)  # the picker is spent
+                spoken = spoken_text(outcome)
+                if spoken:
+                    await self._send(chat_id, spoken)
 
     async def _delete(self, message: "MaybeInaccessibleMessage") -> None:
         """Remove a message this bot put up, by chat and id, tolerating a refusal.
@@ -436,40 +438,42 @@ class TelegramChannel(Channel):
         if not self._require_router().accepts(inbound):
             return
 
-        # Immediate, always-visible feedback: a placeholder we edit into the reply. A
-        # message fed into a running turn gets none — its answer lands in the
-        # placeholder of the message that started that turn.
-        steering = self._require_router().steers(inbound)
-        placeholder = None if steering else await msg.reply_text(WORKING_PLACEHOLDER)
+        # Everything from here to the delivered reply is work for a sleep host.
+        with self._request_hold():
+            # Immediate, always-visible feedback: a placeholder we edit into the reply. A
+            # message fed into a running turn gets none — its answer lands in the
+            # placeholder of the message that started that turn.
+            steering = self._require_router().steers(inbound)
+            placeholder = None if steering else await msg.reply_text(WORKING_PLACEHOLDER)
 
-        # The placeholder doubles as the turn's Tool trace while it runs; a steered
-        # message has none, and the turn it feeds is already tracing into its own.
-        tracer = TraceEditor(placeholder) if placeholder is not None else None
-        attachments, files = await _download_attachments(msg, context.bot)
-        draft = None
-        if inbound.is_direct and placeholder is not None:
+            # The placeholder doubles as the turn's Tool trace while it runs; a steered
+            # message has none, and the turn it feeds is already tracing into its own.
+            tracer = TraceEditor(placeholder) if placeholder is not None else None
+            attachments, files = await _download_attachments(msg, context.bot)
+            draft = None
+            if inbound.is_direct and placeholder is not None:
 
-            async def drop_placeholder() -> None:
-                # The draft shows the reply, so a placeholder still saying "working" goes;
-                # one holding a Tool trace stays, and the answer arrives beneath it.
-                if tracer is not None and not tracer.traced:
-                    with contextlib.suppress(Exception):
-                        await placeholder.delete()
+                async def drop_placeholder() -> None:
+                    # The draft shows the reply, so a placeholder still saying "working" goes;
+                    # one holding a Tool trace stays, and the answer arrives beneath it.
+                    if tracer is not None and not tracer.traced:
+                        with contextlib.suppress(Exception):
+                            await placeholder.delete()
 
-            draft = DraftStream(context.bot, msg.chat.id, drop_placeholder)
-        outcome = await self._require_router().handle(
-            inbound,
-            asker=self._asker_for(chat_id),
-            attachments=attachments,
-            files=files,
-            progress=tracer,
-            stream=draft,
-        )
-        if tracer is None:  # exactly the steered case: no placeholder to land in
-            await self._acknowledge(outcome, msg)
-            return
-        gone = draft is not None and draft.started and not tracer.traced
-        await self._render(outcome, placeholder, msg, traced=tracer.traced or gone)
+                draft = DraftStream(context.bot, msg.chat.id, drop_placeholder)
+            outcome = await self._require_router().handle(
+                inbound,
+                asker=self._asker_for(chat_id),
+                attachments=attachments,
+                files=files,
+                progress=tracer,
+                stream=draft,
+            )
+            if tracer is None:  # exactly the steered case: no placeholder to land in
+                await self._acknowledge(outcome, msg)
+                return
+            gone = draft is not None and draft.started and not tracer.traced
+            await self._render(outcome, placeholder, msg, traced=tracer.traced or gone)
 
     async def _acknowledge(self, outcome: Outcome, message) -> None:
         """Render an outcome that has no placeholder to land in: a reaction for a

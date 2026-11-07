@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from ag2 import Agent
 
+from assistant.activity import Activity, iso_utc
 from assistant.config import Config, load_config
 from assistant.connections import ConnectionStore
 from assistant.hitl import NullAsker
@@ -210,8 +211,18 @@ class TaskService:
         scheduler_interval: float = 30.0,
         config_factory: Callable[[], Config] | None = None,
         summary_factory: Callable[[Config], Agent] | None = None,
+        activity: Activity | None = None,
+        refresh_retry_s: float = 1.0,
     ) -> None:
         self._config = config or load_config()
+        self._activity = activity or Activity()
+        # A failed schedule read retries on its own, doubling from here up to 30 s.
+        self._refresh_retry_s = refresh_retry_s
+        self._refresh_delay = refresh_retry_s
+        self._refresh_timer: asyncio.TimerHandle | None = None
+        self._refresh_lock = asyncio.Lock()  # one read-and-publish at a time, in order
+        self._schedule_gen = 0  # bumped by every mutation; a scan from before it is stale
+        self._closed = False  # a refresh that lands after close publishes nothing
         self._config_factory = config_factory or (lambda: self._config)
         # How the cheap-model distiller (run summaries, task auto-naming) is built.
         self._summary_factory = summary_factory or default_summarizer
@@ -304,6 +315,79 @@ class TaskService:
                     self._require_store(), self._fire, interval=self._scheduler_interval
                 )
                 await self._scheduler.start()
+        await self.refresh_scheduled()
+
+    async def refresh_scheduled(self, *, final: bool = False) -> None:
+        """Report this profile's unpaused tasks with a future slot as a scheduled hold.
+        A read that fails leaves the hold unknown (sleep-blocking) and retries by itself.
+        After close only a ``final`` read publishes: the runtime's last word once every
+        turn that could still save a task has been cancelled."""
+        # Overlapping scans (polls, retries, mutations) publish in the order they ran,
+        # so an older read can never replace a newer hold.
+        async with self._refresh_lock:
+            key = self._config.data_dir.name
+            if self._closed and not final:
+                return
+            gen = self._schedule_gen
+            try:
+                # strict: a record that cannot be read must not turn into "not scheduled"
+                tasks = await self._require_store().list_tasks(strict=True)
+            except Exception as exc:
+                from assistant.observability import log_suppressed
+
+                log_suppressed("scheduled activity refresh", exc)
+                if self._closed and not final:
+                    return
+                self._activity.set_scheduled_unknown(key)
+                self._schedule_refresh_retry()
+                return
+            if self._closed and not final:
+                return  # archived or stopped while reading: the close decided the hold
+            if gen != self._schedule_gen:
+                # A mutation began (or was cancelled) while this scan ran: what it read
+                # is stale, so a fresh scan publishes instead.
+                self._schedule_refresh_retry()
+                return
+            slots = [
+                dt for t in tasks if not t.paused and (dt := parse_dt(t.next_run_at)) is not None
+            ]
+            self._activity.set_scheduled(key, len(slots), iso_utc(min(slots)) if slots else None)
+            self._refresh_delay = self._refresh_retry_s
+            if self._refresh_timer is not None:
+                self._refresh_timer.cancel()
+                self._refresh_timer = None
+
+    def _schedule_refresh_retry(self) -> None:
+        if self._refresh_timer is not None or self._closed:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        delay = self._refresh_delay
+        self._refresh_delay = min(delay * 2, 30.0)
+
+        def retry() -> None:
+            self._refresh_timer = None
+            asyncio.ensure_future(self.refresh_scheduled())
+
+        self._refresh_timer = loop.call_later(delay, retry)
+
+    @contextlib.asynccontextmanager
+    async def _schedule_change(self):
+        """Around a change to what is scheduled: the new schedule is published on the way
+        out, and a cancellation in between leaves the hold unknown with a retry that
+        republishes on its own, so a saved task never sits behind an idle signal."""
+        self._schedule_gen += 1
+        try:
+            yield
+            await self.refresh_scheduled()
+        except BaseException:
+            # Also after close: the runtime's final read, or the next start, resolves it.
+            self._schedule_gen += 1
+            self._activity.set_scheduled_unknown(self._config.data_dir.name)
+            self._schedule_refresh_retry()
+            raise
 
     async def _migrate_recall(self) -> None:
         """Pre-ADR-0027 tasks had an unconditional 3-run look-back; give the recurring
@@ -363,9 +447,19 @@ class TaskService:
         if self._scheduler_lock is not None:
             self._scheduler_lock.release()
             self._scheduler_lock = None
-        for job in list(self._jobs.values()):
+        self._closed = True
+        jobs = list(self._jobs.values())
+        for job in jobs:
             job.cancel()
+        # Await them: a job's hold is released from its done callback, and the final
+        # activity write after this close must not still show a run.
+        await asyncio.gather(*jobs, return_exceptions=True)
         self._jobs.clear()
+        if self._refresh_timer is not None:
+            self._refresh_timer.cancel()
+            self._refresh_timer = None
+        # The scheduled hold outlives an ordinary close: the tasks stay armed on disk,
+        # and a host reading the last file still needs the next wake. Archive clears it.
 
     async def _jobs_done(self) -> None:
         """Await all in-flight run jobs (tests + orderly shutdown)."""
@@ -400,6 +494,32 @@ class TaskService:
         cheap-model auto-naming (and, unless given, auto-description) from the
         prompt. A task's working folders are managed separately as task-scope
         Folder Grants (Folders UI), not stored on the task."""
+        # Naming (one cheap-model call) and saving are work: a sleep host must not
+        # stop the process between accepting the request and persisting the task.
+        with self._activity.track("task_create"):
+            async with self._schedule_change():
+                return await self._create_task(
+                    name,
+                    prompt,
+                    model,
+                    schedule,
+                    origin_channel,
+                    origin_chat,
+                    description,
+                    recall_depth,
+                )
+
+    async def _create_task(
+        self,
+        name: str,
+        prompt: str,
+        model: str | None,
+        schedule: dict | None,
+        origin_channel: str | None,
+        origin_chat: str | None,
+        description: str,
+        recall_depth: int,
+    ) -> dict:
         self._validate_model(model)
         _validate_recall(recall_depth)
         name = (name or "").strip()
@@ -433,32 +553,36 @@ class TaskService:
             patch["name"] = (patch["name"] or "").strip()
         if "description" in patch:
             patch["description"] = (patch["description"] or "").strip()
-        task = await self._require_store().update_task(task_id, **patch)
-        return None if task is None else await self.get_task(task_id)
+        # Arming or unpausing a task is work until the new schedule is published.
+        with self._activity.track("task_update"):
+            async with self._schedule_change():
+                task = await self._require_store().update_task(task_id, **patch)
+            return None if task is None else await self.get_task(task_id)
 
     async def delete_task(self, task_id: str) -> bool:
         """Delete a task, all its runs, and each run's chat stream. Stops any
         in-flight run first. Irreversible; the GUI gates it behind a confirm."""
-        task = await self._require_store().get_task(task_id)
-        if task is None:
-            return False
-        for r in await self._require_store().list_runs(task_id):
-            await self.stop_run(r.id)  # no-op on settled runs
-            await self._require_store().delete_run(r.id)
+        async with self._schedule_change():
+            task = await self._require_store().get_task(task_id)
+            if task is None:
+                return False
+            for r in await self._require_store().list_runs(task_id):
+                await self.stop_run(r.id)  # no-op on settled runs
+                await self._require_store().delete_run(r.id)
+                if self._gateway is not None:
+                    with contextlib.suppress(Exception):
+                        await self._gateway.delete_chat(r.stream_id)
+            await self._require_store().delete_task(task_id)
             if self._gateway is not None:
+                # Best-effort: a stub gateway in unit tests may have no `.permissions`
+                # at all, and a real deleted task's grants are gone either way once the
+                # task itself no longer exists.
                 with contextlib.suppress(Exception):
-                    await self._gateway.delete_chat(r.stream_id)
-        await self._require_store().delete_task(task_id)
-        if self._gateway is not None:
-            # Best-effort: a stub gateway in unit tests may have no `.permissions`
-            # at all, and a real deleted task's grants are gone either way once the
-            # task itself no longer exists.
-            with contextlib.suppress(Exception):
-                if (permissions := self._gateway.permissions) is not None:
-                    permissions.drop_task(task_id)
-            with contextlib.suppress(Exception):
-                if (folders := self._gateway.folders) is not None:
-                    folders.drop_task(task_id)
+                    if (permissions := self._gateway.permissions) is not None:
+                        permissions.drop_task(task_id)
+                with contextlib.suppress(Exception):
+                    if (folders := self._gateway.folders) is not None:
+                        folders.drop_task(task_id)
         return True
 
     async def list_tasks(self) -> list[dict]:
@@ -525,9 +649,20 @@ class TaskService:
     # ---- execution ----
 
     async def _fire(self, task_id: str) -> None:
-        """Scheduler callback: start a run and re-arm (cron) / disarm (once)."""
+        """Scheduler callback: start a run and re-arm (cron) / disarm (once). The slot
+        is work from this moment, so the host never sees a gap between the scheduled
+        hold going and the run's hold opening."""
+        release = self._activity.acquire("run")
+        try:
+            await self._fire_held(task_id, release)
+        except BaseException:
+            release()
+            raise
+
+    async def _fire_held(self, task_id: str, release) -> None:
         t = await self._require_store().get_task(task_id)
         if t is None or t.paused or not t.next_run_at:
+            release()
             return
         once = t.schedule.get("kind") == ScheduleKind.ONCE
         # Re-arm base = max(now, slot). Plain `now` re-arms onto the SAME slot when
@@ -548,17 +683,29 @@ class TaskService:
         if once:
             rearm["schedule"] = manual_schedule()  # exhausted → back to on-demand
         await self._require_store().update_task(task_id, **rearm)
-        await self.start_run(task_id, trigger="once" if once else "schedule")
+        await self.refresh_scheduled()
+        await self.start_run(task_id, trigger="once" if once else "schedule", hold=release)
 
-    async def start_run(self, task_id: str, trigger: RunTrigger = "manual") -> Run | None:
-        t = await self._require_store().get_task(task_id)
-        if t is None:
-            return None
-        run = await self._require_store().create_run(task_id, trigger=trigger)
+    async def start_run(
+        self, task_id: str, trigger: RunTrigger = "manual", *, hold=None
+    ) -> Run | None:
+        """Create a run and its job. The job holds ``work`` from now until it is done,
+        however it ends; ``hold`` hands over a hold the caller already opened."""
+        release = hold or self._activity.acquire("run")
+        try:
+            t = await self._require_store().get_task(task_id)
+            if t is None:
+                release()
+                return None
+            run = await self._require_store().create_run(task_id, trigger=trigger)
+        except BaseException:
+            release()
+            raise
         job = asyncio.create_task(self._execute(run.id))
         self._jobs[run.id] = job
         run_id = run.id  # bound here, not as a lambda default, so the closure is typed
         job.add_done_callback(lambda _j: self._jobs.pop(run_id, None))
+        job.add_done_callback(lambda _j: release())
         return run
 
     async def _execute(self, run_id: str) -> None:

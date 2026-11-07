@@ -1,0 +1,484 @@
+"""What the process is doing right now, for a host that decides whether it may sleep.
+
+``Activity`` tallies open holds: ``work`` (a chat turn, a task run, post-turn
+background work, an ACP turn), ``scheduled`` (tasks with a future ``next_run_at``)
+and ``human`` (a turn parked on a question). ``snapshot()`` is the wire shape of
+``GET /api/activity``; with a file path it is also written atomically on every change
+of the holds, after a short grace once the last work hold closes; a new process writes
+its state at once, so a crashed predecessor's file never outlives it.
+
+The registry describes one process: the gateway, which owns every profile's turns,
+runs and ACP listeners. ``ag2-assistant acp-serve`` is a separate per-client stdio
+process an editor launches on the same machine and is not part of this signal.
+"""
+
+import asyncio
+import contextlib
+import json
+import os
+import time
+from collections.abc import Callable, Generator
+from contextlib import AbstractAsyncContextManager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from ag2.middleware.base import BaseMiddleware
+
+from assistant.observability import log_suppressed
+
+if TYPE_CHECKING:
+    from ag2.annotations import Context
+    from ag2.events import BaseEvent
+
+WORK = "work"
+SCHEDULED = "scheduled"
+HUMAN = "human"
+IDLE_GRACE_S = 2.5
+RETRY_S = 1.0  # first retry after a failed file write; doubles up to RETRY_MAX_S
+RETRY_MAX_S = 30.0
+HEARTBEAT_S = 30.0  # the file is rewritten this often even when nothing changed
+
+
+def iso_utc(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def atomic_write(path: Path, text: str) -> None:
+    """Replace ``path`` with ``text`` in one step (tmp file + rename)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
+
+
+class _HumanWatch:
+    """Wraps an asker's ``has_pending`` so polling it opens and closes a human hold."""
+
+    def __init__(self, activity: "Activity", pending, deadline, fallback_s: float) -> None:
+        self._activity = activity
+        self._pending = pending
+        self._deadline = deadline
+        self._fallback_s = fallback_s
+        self._token: int | None = None
+
+    def __call__(self) -> bool:
+        pending = bool(self._pending())
+        if pending and self._token is None:
+            until = self._deadline()
+            if until is None:
+                until = time.time() + self._fallback_s
+            self._token = self._activity.open_human(until)
+        elif not pending and self._token is not None:
+            self.close()
+        return pending
+
+    def close(self) -> None:
+        if self._token is not None:
+            self._activity.close_human(self._token)
+            self._token = None
+
+
+class Activity:
+    """Open holds on the process, their snapshot, and the optional state file."""
+
+    def __init__(
+        self,
+        file: str | os.PathLike[str] | None = None,
+        *,
+        idle_grace_s: float = IDLE_GRACE_S,
+        retry_s: float = RETRY_S,
+        clock: Callable[[], datetime] = _utcnow,
+        initial_hold: str | None = None,
+        write: Callable[[Path, str], None] = atomic_write,
+        heartbeat_s: float = HEARTBEAT_S,
+    ) -> None:
+        self._file = Path(file) if file else None
+        self._write_file = write
+        self._heartbeat_s = heartbeat_s
+        self._heartbeat_timer: asyncio.TimerHandle | None = None
+        self._grace = idle_grace_s
+        self._retry_s = retry_s
+        self._retry_delay = retry_s
+        self._retry_timer: asyncio.TimerHandle | None = None
+        self._dirty = False  # the file does not hold the latest state (a write failed)
+        self._stopped = False  # after shutdown(): every change writes at once, no timers
+        self._clock = clock
+        self._work: dict[str, int] = {}
+        self._clock_work = 0  # open work holds that count for idle_since (not deliveries)
+        self._human: dict[int, float] = {}
+        self._next_token = 0
+        # key -> (count, earliest next) when known; None while a refresh has failed
+        self._scheduled: dict[str, tuple[int, str | None] | None] = {}
+        self._idle_since: datetime | None = clock()
+        self._was_busy = False
+        self._last_written: list[dict] | None = None
+        self._idle_timer: asyncio.TimerHandle | None = None
+        self._pending: list[dict] | None = None  # the holds the timed idle write carries
+        # A work hold open from the first write, for a process that is not yet in a
+        # state to say what it holds; the owner releases it once it is.
+        self._release_initial = self.acquire(initial_hold) if initial_hold else None
+        if self._file is not None:
+            self._write()  # a fresh process replaces whatever its predecessor left
+
+    def release_initial_hold(self) -> None:
+        if self._release_initial is not None:
+            self._release_initial()
+            self._release_initial = None
+
+    # ---- holds ----
+
+    def acquire(self, detail: str, *, clock: bool = True) -> Callable[[], None]:
+        """Open a ``work`` hold with this ``detail`` now; call the result once to close it.
+        ``clock=False`` is for a delivery still on its way out: it blocks a stop like any
+        work, but closing it does not restart the idle clock (a poll's reply is not work)."""
+        self._work[detail] = self._work.get(detail, 0) + 1
+        if clock:
+            self._clock_work += 1
+        self._changed()
+        released = False
+
+        def release() -> None:
+            nonlocal released
+            if released:
+                return
+            released = True
+            self._work[detail] -= 1
+            if self._work[detail] <= 0:
+                del self._work[detail]
+            if clock:
+                self._clock_work -= 1
+            self._changed()
+
+        return release
+
+    @contextlib.contextmanager
+    def track(self, detail: str, *, clock: bool = True) -> Generator[None]:
+        """Hold ``work`` with this ``detail`` (turn, run, background, acp_turn) for the block."""
+        release = self.acquire(detail, clock=clock)
+        try:
+            yield
+        finally:
+            release()
+
+    def track_async(self, detail: str) -> AbstractAsyncContextManager[None]:
+        """``track`` as an async context manager, for AG2's middleware scope."""
+
+        @contextlib.asynccontextmanager
+        async def scope():
+            with self.track(detail):
+                yield
+
+        return scope()
+
+    def open_human(self, until: float) -> int:
+        """Open a human hold that lapses at ``until`` (epoch seconds); returns its token."""
+        self._next_token += 1
+        self._human[self._next_token] = until
+        self._changed()
+        return self._next_token
+
+    def close_human(self, token: int) -> None:
+        if self._human.pop(token, None) is not None:
+            self._changed()
+
+    def human_watch(self, pending, deadline=None, *, fallback_s: float) -> _HumanWatch:
+        """A ``has_pending`` stand-in that opens a human hold while the asker waits.
+        ``deadline`` returns the asker's epoch deadline, or None for ``now + fallback_s``."""
+        return _HumanWatch(self, pending, deadline or (lambda: None), fallback_s)
+
+    def set_scheduled(self, key: str, count: int, next_at: str | None) -> None:
+        """Record one profile's scheduled tasks: how many, and the earliest ``next_run_at``."""
+        value = (count, next_at if count else None)
+        if self._scheduled.get(key, (0, None)) == value:
+            return
+        if count:
+            self._scheduled[key] = value
+        else:
+            self._scheduled.pop(key, None)
+        self._changed()
+
+    def set_scheduled_unknown(self, key: str) -> None:
+        """A profile's schedule could not be read: a scheduled hold with no count stands
+        in until a refresh succeeds, so a host never sleeps on a guess."""
+        if self._scheduled.get(key, (0, None)) is None:
+            return
+        self._scheduled[key] = None
+        self._changed()
+
+    # ---- snapshot ----
+
+    @property
+    def busy(self) -> bool:
+        return bool(self._work)
+
+    def holds(self) -> list[dict]:
+        out: list[dict] = [
+            {"kind": WORK, "count": count, "detail": detail}
+            for detail, count in sorted(self._work.items())
+        ]
+        known = [value for value in self._scheduled.values() if value is not None]
+        if len(known) < len(self._scheduled):
+            # Some profile's schedule is unreadable: neither count nor next can be
+            # trusted, so the hold carries no claim beyond "scheduled work may exist".
+            out.append({"kind": SCHEDULED})
+        elif total := sum(count for count, _ in known):
+            hold: dict = {"kind": SCHEDULED, "count": total}
+            nexts = [nxt for _, nxt in known if nxt]
+            if nexts:
+                hold["next"] = min(nexts)
+            out.append(hold)
+        out.extend(
+            {"kind": HUMAN, "until": iso_utc(datetime.fromtimestamp(until, timezone.utc))}
+            for until in self._human.values()
+        )
+        return out
+
+    def flush(self) -> None:
+        """Rewrite the file now if a write failed earlier (a poll is a chance to recover)."""
+        if self._dirty and self._idle_timer is None:
+            self._write()
+
+    def shutdown(self) -> None:
+        """Write the final state now: the grace and retry timers are cancelled, so an
+        orderly stop inside the grace never leaves a work hold in the file."""
+        self._stopped = True
+        for timer in (self._idle_timer, self._retry_timer, self._heartbeat_timer):
+            if timer is not None:
+                timer.cancel()
+        self._idle_timer = self._retry_timer = self._heartbeat_timer = None
+        self._human.clear()  # whatever was waited on lives in this process, which is ending
+        self._pending = None
+        if self._file is not None and (self._dirty or self.holds() != self._last_written):
+            self._write()
+
+    def snapshot(self) -> dict:
+        return {
+            "ts": iso_utc(self._clock()),
+            "idle_since": None if self._idle_since is None else iso_utc(self._idle_since),
+            "holds": self.holds(),
+        }
+
+    # ---- change tracking + file ----
+
+    def _changed(self) -> None:
+        busy = self._clock_work > 0  # deliveries in flight do not move the idle clock
+        if busy and self._idle_since is not None:
+            self._idle_since = None
+        elif not busy and self._idle_since is None:
+            self._idle_since = self._clock()
+        released = self._was_busy and not busy  # the last clock-counting hold just closed
+        self._was_busy = busy
+        if self._file is None:
+            return
+        holds = self.holds()
+        if self._idle_timer is not None:
+            if holds == self._pending:
+                return  # the timed write already carries this state; let it land
+            self._idle_timer.cancel()
+            self._idle_timer = None
+            self._pending = None
+        if holds == self._last_written:
+            return
+        if not released or self._grace <= 0 or self._stopped:
+            self._write()  # only the end of work waits; everything else lands at once
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._write()
+            return
+        self._pending = holds
+        self._idle_timer = loop.call_later(self._grace, self._write)
+
+    def _write(self) -> None:
+        self._idle_timer = None
+        self._pending = None
+        if self._file is None:
+            return
+        snapshot = self.snapshot()
+        try:
+            self._write_file(self._file, json.dumps(snapshot))
+        except Exception as exc:
+            log_suppressed("activity file write", exc, path=str(self._file))
+            # Whatever the file says now is stale, and an idle snapshot standing in
+            # for live work is the one lie a host must not read: take the file away
+            # (no file = unknown) until a write succeeds again.
+            with contextlib.suppress(Exception):
+                self._file.unlink()
+            self._last_written = None
+            self._dirty = True
+            self._schedule_retry()
+            return
+        self._last_written = snapshot["holds"]
+        self._dirty = False
+        self._retry_delay = self._retry_s
+        if self._retry_timer is not None:
+            self._retry_timer.cancel()
+            self._retry_timer = None
+        self._arm_heartbeat()
+
+    def _arm_heartbeat(self) -> None:
+        """Rewrite the file after ``heartbeat_s`` even if nothing changes, so a reader
+        can tell a live file from one the process stopped updating (``ts`` ages)."""
+        if self._heartbeat_timer is not None:
+            self._heartbeat_timer.cancel()
+            self._heartbeat_timer = None
+        if self._stopped or self._heartbeat_s <= 0:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # before the loop runs; the first write inside it arms the beat
+        self._heartbeat_timer = loop.call_later(self._heartbeat_s, self._beat)
+
+    def _beat(self) -> None:
+        self._heartbeat_timer = None
+        if self._idle_timer is None and self._retry_timer is None:
+            self._write()
+        else:
+            self._arm_heartbeat()
+
+    def _schedule_retry(self) -> None:
+        if self._retry_timer is not None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # no loop to wait on; the next change or flush retries
+        delay = self._retry_delay
+        self._retry_delay = min(delay * 2, RETRY_MAX_S)
+        self._retry_timer = loop.call_later(delay, self._retry_write)
+
+    def _retry_write(self) -> None:
+        self._retry_timer = None
+        self.flush()
+
+
+class HoldingSend:
+    """An ASGI ``send`` that holds ``work``/``detail`` while a reply is on its way out
+    (clockless: it protects delivery, it is not activity). A finite HTTP response is
+    held from its headers to its last body chunk, so a download never looks idle
+    while a chunk is read; an event stream, which may stay open for hours, and a
+    WebSocket frame are held per send. ``close()`` settles a response the app never
+    finished."""
+
+    def __init__(self, send: Callable[..., Any], activity: "Activity", detail: str) -> None:
+        self._send = send
+        self._activity = activity
+        self._detail = detail
+        self._streaming = False
+        self._release: Callable[[], None] | None = None
+        # Called once when the response starts: the handler's own work is over.
+        self.on_start: Callable[[], None] | None = None
+
+    async def __call__(self, message: Any) -> None:
+        kind = message.get("type")
+        if kind == "http.response.start":
+            if self.on_start is not None:
+                self.on_start()
+                self.on_start = None
+            self._streaming = _is_event_stream(message)
+            if not self._streaming and self._release is None:
+                # Held from the headers on: the body's first read (a file from disk)
+                # is part of the delivery, not a gap in it.
+                self._release = self._activity.acquire(self._detail, clock=False)
+            await self._send(message)
+            return
+        if kind == "websocket.send" or (kind == "http.response.body" and self._streaming):
+            with self._activity.track(self._detail, clock=False):
+                await self._send(message)
+            return
+        if kind != "http.response.body":
+            await self._send(message)
+            return
+        if self._release is None:
+            self._release = self._activity.acquire(self._detail, clock=False)
+        try:
+            await self._send(message)
+        finally:
+            if not message.get("more_body", False):
+                self.close()
+
+    def close(self) -> None:
+        if self._release is not None:
+            self._release()
+            self._release = None
+
+
+def _is_event_stream(start: Any) -> bool:
+    for name, value in start.get("headers", ()):
+        if name.lower() == b"content-type":
+            return value.lower().startswith(b"text/event-stream")
+    return False
+
+
+def holding_send(send: Callable[..., Any], activity: "Activity", detail: str) -> HoldingSend:
+    return HoldingSend(send, activity, detail)
+
+
+MONITORING_PATHS = frozenset({"/api/activity", "/api/health", "/api/status"})
+MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+class ActivitySendMiddleware:
+    """Pure ASGI middleware. A mutating HTTP request (POST/PUT/PATCH/DELETE) holds
+    ``work``/``request`` from arrival to completion. A read holds it clocklessly only
+    until its response starts: the handler's work (a GET that refreshes a credential)
+    must not be cut short, but a poll is not activity, and an event-stream
+    subscription may then stay open for hours. Every ``send`` goes through
+    :func:`holding_send`; the monitoring endpoints are left alone, since a host's own
+    poll must not read as work. A WebSocket connection is not held as a whole; its
+    frames are."""
+
+    def __init__(
+        self,
+        app: Any,
+        activity: "Activity",
+        detail: str = "send",
+        skip: frozenset[str] = MONITORING_PATHS,
+    ) -> None:
+        self._app = app
+        self._activity = activity
+        self._detail = detail
+        self._skip = skip
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] not in ("http", "websocket") or scope.get("path") in self._skip:
+            await self._app(scope, receive, send)
+            return
+        held = holding_send(send, self._activity, self._detail)
+        try:
+            if scope["type"] != "http":
+                await self._app(scope, receive, held)
+            elif scope.get("method") in MUTATING_METHODS:
+                with self._activity.track("request"):
+                    await self._app(scope, receive, held)
+            else:
+                release = self._activity.acquire("request", clock=False)
+                held.on_start = release  # the read's work ends where its response begins
+                try:
+                    await self._app(scope, receive, held)
+                finally:
+                    release()
+        finally:
+            held.close()  # a response cut short (error, disconnect) is not still owed
+
+
+class ActivityMiddleware:
+    """AG2 ``ScopedMiddlewareFactory`` whose scope holds ``work`` for the whole agent
+    turn, so turns the gateway does not drive itself (ACP) still count."""
+
+    def __init__(self, activity: Activity, detail: str = "acp_turn") -> None:
+        self._activity = activity
+        self._detail = detail
+
+    def __call__(self, event: "BaseEvent", context: "Context") -> BaseMiddleware:
+        return BaseMiddleware(event, context)
+
+    def scope(self, event: Any, context: Any) -> AbstractAsyncContextManager[None]:
+        return self._activity.track_async(self._detail)

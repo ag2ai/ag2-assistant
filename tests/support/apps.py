@@ -82,6 +82,7 @@ def make_manager(
     model_factory=None,
     environment_factory=None,
     plugins=(),
+    voice_factory=None,
 ):
     """A ProfileManager over ``paths`` (or the HOME-isolated layout) whose every
     network-touching collaborator is a fake unless the caller injects its own.
@@ -101,6 +102,7 @@ def make_manager(
         title_factory=title_factory or fake_title_factory(),
         summary_factory=summary_factory or fake_summary_factory(),
         plugins=plugins,
+        voice_factory=voice_factory,
     )
 
 
@@ -116,6 +118,7 @@ def make_profile_app(
     channel_factory=None,
     title_factory=None,
     summary_factory=None,
+    voice_factory=None,
     **app_kwargs,
 ):
     """Build a create_app FastAPI app around a ProfileManager with ONE profile.
@@ -141,6 +144,7 @@ def make_profile_app(
         channel_factory=channel_factory,
         title_factory=title_factory,
         summary_factory=summary_factory,
+        voice_factory=voice_factory,
     )
     app = create_app(
         manager,
@@ -193,7 +197,7 @@ def real_gateway(config, **kwargs):
     return Gateway(config, title_factory=fake_title_factory(), **kwargs)
 
 
-def make_acp_agent(paths, pid: str, *, connection_id: str = "acp:test"):
+def make_acp_agent(paths, pid: str, *, connection_id: str = "acp:test", activity=None):
     """Build a chat-tracking ACP agent over a local scripted model."""
     _, config, _ = resolve_active_profile(pid, paths=paths, env={})
     storage = ChatBackedStorage(paths=paths, data_dir=config.data_dir, profile=pid)
@@ -205,6 +209,7 @@ def make_acp_agent(paths, pid: str, *, connection_id: str = "acp:test"):
         sessions=SessionConfig(storage=storage, retain_history=True),
         chat_storage=storage,
         connection_id=connection_id,
+        activity=activity,
     )
     return served, storage, config
 

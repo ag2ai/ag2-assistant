@@ -146,6 +146,7 @@ async def serve_stdio(
             chat_storage=chat_storage,
             connection_id=connection_id,
             auth=choose_auth(config, env or {}),
+            activity=gateway.activity,
         )
     try:
         await _run_stdio_guarded(acp_agent)

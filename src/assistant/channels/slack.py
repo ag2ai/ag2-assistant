@@ -254,32 +254,33 @@ class SlackChannel(Channel):
         if inbound is None or not self._require_router().accepts(inbound):
             return
 
-        # 👀 on the user's message while we work; removed once we've replied.
-        channel = event.get("channel")
-        ts = event.get("ts")
-        reacted = False
-        if channel and ts:
-            try:
-                await client.reactions_add(channel=channel, timestamp=ts, name="eyes")
-                reacted = True
-            except Exception:
-                pass  # missing reactions:write or already reacted — non-fatal
+        with self._request_hold():  # through the delivered reply
+            # 👀 on the user's message while we work; removed once we've replied.
+            channel = event.get("channel")
+            ts = event.get("ts")
+            reacted = False
+            if channel and ts:
+                try:
+                    await client.reactions_add(channel=channel, timestamp=ts, name="eyes")
+                    reacted = True
+                except Exception:
+                    pass  # missing reactions:write or already reacted — non-fatal
 
-        attachments, files = await _download_attachments(event, self._bot_token)
-        outcome = await self._require_router().handle(
-            inbound,
-            asker=self._asker_for(channel) if channel else None,
-            attachments=attachments,
-            files=files,
-        )
+            attachments, files = await _download_attachments(event, self._bot_token)
+            outcome = await self._require_router().handle(
+                inbound,
+                asker=self._asker_for(channel) if channel else None,
+                attachments=attachments,
+                files=files,
+            )
 
-        spoken = spoken_text(outcome)
-        if spoken is not None:
-            for chunk in split_for_limit(self.format_outbound(spoken), self._message_limit):
-                await say(chunk)
+            spoken = spoken_text(outcome)
+            if spoken is not None:
+                for chunk in split_for_limit(self.format_outbound(spoken), self._message_limit):
+                    await say(chunk)
 
-        if reacted:
-            try:
-                await client.reactions_remove(channel=channel, timestamp=ts, name="eyes")
-            except Exception:
-                pass
+            if reacted:
+                try:
+                    await client.reactions_remove(channel=channel, timestamp=ts, name="eyes")
+                except Exception:
+                    pass

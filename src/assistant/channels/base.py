@@ -5,6 +5,7 @@ hands it to the `ChannelRouter`, and renders the outcome that comes back in the
 platform's format. Adapters keep platform concerns; the router decides.
 """
 
+import contextlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, get_args
@@ -77,6 +78,12 @@ class Channel(ABC):
         if self._router is None:
             raise RuntimeError(f"{self.platform} channel is not started")
         return self._router
+
+    def _request_hold(self):
+        """The router's work hold for one inbound message (``ChannelRouter.hold``); a
+        router without one, as a test double may be, holds nothing."""
+        hold = getattr(self._router, "hold", None)
+        return hold() if hold is not None else contextlib.nullcontext()
 
     @abstractmethod
     async def stop(self) -> None:
