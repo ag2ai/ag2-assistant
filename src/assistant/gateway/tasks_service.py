@@ -221,6 +221,9 @@ class TaskService:
         self._refresh_delay = refresh_retry_s
         self._refresh_timer: asyncio.TimerHandle | None = None
         self._refresh_lock = asyncio.Lock()  # one read-and-publish at a time, in order
+        # Writes that outlived a cancelled caller, and their republications: close()
+        # awaits them, so nothing publishes after the runtime's final word.
+        self._outliving: set[asyncio.Task] = set()
         self._schedule_gen = 0  # bumped by every mutation; a scan from before it is stale
         self._closed = False  # a refresh that lands after close publishes nothing
         self._config_factory = config_factory or (lambda: self._config)
@@ -383,6 +386,8 @@ class TaskService:
         except asyncio.CancelledError:
             if not write.done():
                 release = self._activity.acquire("task_write")
+                self._outliving.add(write)
+                write.add_done_callback(self._outliving.discard)
 
                 def settled(_task: asyncio.Task) -> None:
                     async def republish() -> None:
@@ -391,7 +396,9 @@ class TaskService:
                         finally:
                             release()
 
-                    asyncio.ensure_future(republish())
+                    task = asyncio.ensure_future(republish())
+                    self._outliving.add(task)
+                    task.add_done_callback(self._outliving.discard)
 
                 write.add_done_callback(settled)
             raise
@@ -478,6 +485,10 @@ class TaskService:
         # activity write after this close must not still show a run.
         await asyncio.gather(*jobs, return_exceptions=True)
         self._jobs.clear()
+        # A write that outlived its caller lands, and republishes, before close
+        # returns: the runtime's final read and an archive's clearing come after.
+        while self._outliving:
+            await asyncio.gather(*list(self._outliving), return_exceptions=True)
         if self._refresh_timer is not None:
             self._refresh_timer.cancel()
             self._refresh_timer = None

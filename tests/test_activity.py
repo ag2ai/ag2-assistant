@@ -2001,3 +2001,41 @@ async def test_a_write_outliving_its_cancelled_caller_stays_work_until_published
     assert hold["kind"] == "scheduled" and hold["count"] == 1  # landed and published
     assert len(await tasks.list_tasks()) == 1
     await tasks.close()
+
+
+async def test_closing_waits_for_a_write_that_outlived_its_caller_so_archive_is_final(
+    paths, tmp_path
+):
+    gate = asyncio.Event()
+    writing = asyncio.Event()
+
+    class _SlowStore(TaskStore):
+        async def create_task(self, **fields):
+            writing.set()
+            await gate.wait()
+            return await super().create_task(**fields)
+
+    activity = Activity()
+    tasks = TaskService(
+        config=Config.for_paths(paths),
+        store=_SlowStore(path=tmp_path / "tasks.db"),
+        inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
+        activity=activity,
+    )
+    await tasks.start(scheduler=False)
+    creating = asyncio.ensure_future(
+        tasks.create_task(name="A", prompt="p", schedule={"kind": "cron", "cron": "@daily"})
+    )
+    await asyncio.wait_for(writing.wait(), 5)
+    creating.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await creating
+    closing = asyncio.ensure_future(tasks.close())  # archive: the service closes ...
+    await asyncio.sleep(0.05)
+    assert not closing.done()  # ... but not before the in-flight write has landed
+    gate.set()
+    await asyncio.wait_for(closing, 5)
+    assert activity.holds()[0]["count"] == 1  # landed and published, nothing in flight
+    activity.set_scheduled(tasks._config.data_dir.name, 0, None)  # ... then archive clears
+    await asyncio.sleep(0.1)
+    assert activity.holds() == []  # and nothing brings it back
