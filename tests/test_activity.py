@@ -1466,3 +1466,47 @@ def test_polling_the_activity_route_keeps_idle_since(paths):
             client.get("/api/health")
             client.get("/api/status")
         assert client.get("/api/activity").json()["idle_since"] == first
+
+
+def test_a_reply_blocked_at_the_server_s_send_is_work_through_the_whole_stack(paths):
+    """The real app, called as ASGI with a send that stalls on the body: the hold must
+    wrap the outermost send, not a buffering middleware's inner one."""
+    import threading
+
+    app, pid = make_profile_app(paths)
+    with TestClient(app) as client:
+        activity = app.state.profiles.activity
+        blocked = threading.Event()
+        gate = asyncio.Event()
+
+        async def call():
+            scope = {
+                "type": "http",
+                "asgi": {"version": "3.0"},
+                "http_version": "1.1",
+                "method": "GET",
+                "scheme": "http",
+                "path": "/api/profiles",
+                "raw_path": b"/api/profiles",
+                "query_string": b"",
+                "headers": [(b"host", b"testserver")],
+                "client": ("127.0.0.1", 1),
+                "server": ("testserver", 80),
+            }
+
+            async def receive():
+                return {"type": "http.request", "body": b"", "more_body": False}
+
+            async def send(message):
+                if message["type"] == "http.response.body":
+                    blocked.set()
+                    await gate.wait()
+
+            await app(scope, receive, send)
+
+        done = client.portal.start_task_soon(call)
+        assert blocked.wait(5)
+        assert _work(activity) == {"send": 1}
+        client.portal.call(gate.set)
+        done.result(5)
+        assert activity.holds() == []

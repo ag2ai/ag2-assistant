@@ -348,9 +348,6 @@ def create_app(
         responses=ERROR_RESPONSES,
     )
     app.state.profiles = manager
-    # Every response body still being sent is work: a sleep host must not stop the
-    # process while a caller has not received its answer (REST, WebSocket, streams).
-    app.add_middleware(ActivitySendMiddleware, activity=manager.activity)
     app.state.google_flows = {}  # state token -> in-progress OAuth flow
     app.state.codex_flows = {}  # state token -> PKCE verifier (ChatGPT-subscription login)
 
@@ -792,4 +789,10 @@ def create_app(
             return Response(status_code=404)
         return RedirectResponse(url="/app/", status_code=307)
 
+    # Every response body still being sent is work: a sleep host must not stop the
+    # process while a caller has not received its answer (REST, WebSocket, streams).
+    # Added last, so it is the outermost layer and wraps the server-facing send: an
+    # inner position would sit under the origin guard's buffering middleware and
+    # release before the bytes have left.
+    app.add_middleware(ActivitySendMiddleware, activity=manager.activity)
     return app
