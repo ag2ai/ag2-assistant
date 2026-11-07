@@ -370,6 +370,9 @@ class ProfileManager:
         self._environment_factory = environment_factory
         self._plugins = tuple(plugins)  # AG2 plugins added to every turn of every profile
         self._runtimes: dict[str, ProfileRuntime] = {}
+        # Install-level jobs a route starts (the ChatGPT sign-in wait); each holds work
+        # until it is done and is cancelled before the final activity write on close.
+        self._jobs: set[asyncio.Task] = set()
         # Connection id → the live install-level adapter (ADR 0022). One per registered
         # Connection, so two bots of one platform run side by side.
         self.channels: dict[str, channels.Channel] = {}
@@ -757,7 +760,21 @@ class ProfileManager:
         self.acp_outbound.clear()
         self.channel_errors.clear()
         self.acp_listener_errors.clear()
+        jobs = list(self._jobs)
+        for job in jobs:
+            job.cancel()
+        await asyncio.gather(*jobs, return_exceptions=True)
         self.activity.shutdown()  # the last file state is the settled one
+
+    def background_task(self, coro, detail: str) -> asyncio.Task:
+        """Run an install-level job as a task that holds ``work``/``detail`` until it is
+        done, including a cancellation before its first step."""
+        release = self.activity.acquire(detail)
+        task = asyncio.create_task(coro)
+        self._jobs.add(task)
+        task.add_done_callback(self._jobs.discard)
+        task.add_done_callback(lambda _task: release())
+        return task
 
     def get(self, pid: str) -> ProfileRuntime:
         """Registry-first lookup (§4.1): unknown → UnknownProfile; archived →

@@ -452,8 +452,7 @@ def build_router(d: GatewayDeps, *, code_reader: Callable[[str], str]) -> APIRou
 
         # Waiting on the browser redirect and finishing the sign-in is work: a sleep
         # host stopping here would strand the flow the user is in the middle of.
-        release = d.manager.activity.acquire("codex_signin")
-        asyncio.create_task(_complete()).add_done_callback(lambda _task: release())
+        d.manager.background_task(_complete(), "codex_signin")
         return {"ok": True, "auth_url": url, "state": state}
 
     @r.post("/api/codex/submit", response_model=Ok)

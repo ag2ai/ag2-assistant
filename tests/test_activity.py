@@ -1286,3 +1286,32 @@ async def test_an_agui_run_is_work_until_its_last_event_is_taken(paths):
         assert activity.holds() == []
     finally:
         await gateway.close()
+
+
+async def test_a_hold_released_after_shutdown_writes_at_once(tmp_path):
+    path = tmp_path / "activity.json"
+    a = Activity(path, idle_grace_s=5)
+    release = a.acquire("codex_signin")
+    a.shutdown()
+    assert json.loads(path.read_text())["holds"] != []
+    release()  # a late cancellation landing after the final write
+    assert json.loads(path.read_text())["holds"] == []  # no timer on a dying loop
+
+
+async def test_closing_the_manager_settles_a_pending_sign_in_wait(paths, tmp_path):
+    from assistant.profiles import ProfileRegistry
+    from tests.support.apps import make_manager
+
+    path = tmp_path / "activity.json"
+    ProfileRegistry(paths).create_profile("Work", "#109e91")
+    manager = make_manager(paths, env={"AG2ASSISTANT_ACTIVITY_FILE": str(path)})
+    await manager.start()
+
+    async def wait_for_the_browser():
+        await asyncio.Event().wait()  # the user never comes back
+
+    manager.background_task(wait_for_the_browser(), "codex_signin")
+    await asyncio.sleep(0)
+    assert _work(manager.activity) == {"codex_signin": 1}
+    await manager.close()
+    assert json.loads(path.read_text())["holds"] == []

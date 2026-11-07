@@ -92,6 +92,7 @@ class Activity:
         self._retry_delay = retry_s
         self._retry_timer: asyncio.TimerHandle | None = None
         self._dirty = False  # the file does not hold the latest state (a write failed)
+        self._stopped = False  # after shutdown(): every change writes at once, no timers
         self._clock = clock
         self._work: dict[str, int] = {}
         self._human: dict[int, float] = {}
@@ -224,6 +225,7 @@ class Activity:
     def shutdown(self) -> None:
         """Write the final state now: the grace and retry timers are cancelled, so an
         orderly stop inside the grace never leaves a work hold in the file."""
+        self._stopped = True
         for timer in (self._idle_timer, self._retry_timer):
             if timer is not None:
                 timer.cancel()
@@ -260,7 +262,7 @@ class Activity:
             self._pending = None
         if holds == self._last_written:
             return
-        if not released or self._grace <= 0:
+        if not released or self._grace <= 0 or self._stopped:
             self._write()  # only the end of work waits; everything else lands at once
             return
         try:
