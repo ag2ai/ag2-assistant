@@ -1387,7 +1387,7 @@ async def test_the_file_beats_while_the_process_runs(tmp_path):
 
 
 async def test_an_acp_frame_on_its_way_out_is_work():
-    from assistant.acp.serve_ws import holding_send
+    from assistant.activity import holding_send
 
     activity = Activity()
     gate = asyncio.Event()
@@ -1398,7 +1398,7 @@ async def test_an_acp_frame_on_its_way_out_is_work():
             sending.set()
             await gate.wait()  # the socket is backpressured
 
-    held = holding_send(send, activity)
+    held = holding_send(send, activity, "acp_send")
     await held({"type": "websocket.accept"})
     assert activity.holds() == []
     frame = asyncio.ensure_future(held({"type": "websocket.send", "text": "{}"}))
@@ -1406,4 +1406,29 @@ async def test_an_acp_frame_on_its_way_out_is_work():
     assert _work(activity) == {"acp_send": 1}
     gate.set()
     await frame
+    assert activity.holds() == []
+
+
+async def test_a_rest_reply_on_its_way_out_is_work():
+    from assistant.activity import ActivitySendMiddleware
+
+    activity = Activity()
+    gate = asyncio.Event()
+    sending = asyncio.Event()
+
+    async def app(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b'{"reply": "done"}'})
+
+    async def send(message):
+        if message["type"] == "http.response.body":
+            sending.set()
+            await gate.wait()  # the caller's socket is backpressured
+
+    held = ActivitySendMiddleware(app, activity)
+    request = asyncio.ensure_future(held({"type": "http", "path": "/api/p/x/message"}, None, send))
+    await asyncio.wait_for(sending.wait(), 5)
+    assert _work(activity) == {"send": 1}  # the turn is over; the answer is not delivered
+    gate.set()
+    await request
     assert activity.holds() == []

@@ -351,6 +351,35 @@ class Activity:
         self.flush()
 
 
+def holding_send(send: Callable[..., Any], activity: "Activity", detail: str) -> Callable[..., Any]:
+    """An ASGI ``send`` that holds ``work``/``detail`` while a response body or WebSocket
+    frame is on its way out: a backpressured client keeps the answer's delivery as work."""
+
+    async def held(message: Any) -> None:
+        if message.get("type") not in ("http.response.body", "websocket.send"):
+            await send(message)
+            return
+        with activity.track(detail):
+            await send(message)
+
+    return held
+
+
+class ActivitySendMiddleware:
+    """Pure ASGI middleware wrapping every ``send`` with :func:`holding_send`."""
+
+    def __init__(self, app: Any, activity: "Activity", detail: str = "send") -> None:
+        self._app = app
+        self._activity = activity
+        self._detail = detail
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] not in ("http", "websocket"):
+            await self._app(scope, receive, send)
+            return
+        await self._app(scope, receive, holding_send(send, self._activity, self._detail))
+
+
 class ActivityMiddleware:
     """AG2 ``ScopedMiddlewareFactory`` whose scope holds ``work`` for the whole agent
     turn, so turns the gateway does not drive itself (ACP) still count."""

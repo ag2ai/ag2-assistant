@@ -111,6 +111,7 @@ from assistant import (
     provider_catalog,
     voice_providers,
 )
+from assistant.activity import ActivitySendMiddleware
 from assistant.agent import model_config
 from assistant.codex_auth import (
     CodexAuth,
@@ -347,6 +348,9 @@ def create_app(
         responses=ERROR_RESPONSES,
     )
     app.state.profiles = manager
+    # Every response body still being sent is work: a sleep host must not stop the
+    # process while a caller has not received its answer (REST, WebSocket, streams).
+    app.add_middleware(ActivitySendMiddleware, activity=manager.activity)
     app.state.google_flows = {}  # state token -> in-progress OAuth flow
     app.state.codex_flows = {}  # state token -> PKCE verifier (ChatGPT-subscription login)
 
