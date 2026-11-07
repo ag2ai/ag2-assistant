@@ -457,6 +457,13 @@ class ProfileManager:
                 await self.start_acp_listener(listener.connection.id)
 
     async def _boot(self, meta: ProfileMeta) -> ProfileRuntime:
+        # Booting is work, and the schedule is unknown until the task service reads it:
+        # restore and create take this path too, not only start().
+        self.activity.set_scheduled_unknown(meta.id)
+        with self.activity.track("boot"):
+            return await self._boot_held(meta)
+
+    async def _boot_held(self, meta: ProfileMeta) -> ProfileRuntime:
         runtime = ProfileRuntime(
             meta,
             self.paths,
@@ -856,6 +863,7 @@ class ProfileManager:
             # Roll back the flag so the invariant "unarchived ⟺ running" holds.
             self._registry.archive_profile(pid)
             self._runtimes.pop(pid, None)
+            self.activity.set_scheduled(pid, 0, None)  # archived again: nothing pending
             raise
 
     async def purge(self, pid: str) -> None:

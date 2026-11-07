@@ -757,3 +757,58 @@ async def test_a_null_task_record_keeps_the_schedule_unknown(paths, tmp_path):
     (hold,) = activity.holds()
     assert hold["count"] == 1
     await tasks.close()
+
+
+async def test_restoring_a_profile_is_work_with_an_unknown_schedule_until_it_is_read(paths):
+    from assistant.profiles import ProfileRegistry
+    from tests.support.apps import make_manager
+    from tests.support.fakes import FakeAgent
+
+    registry = ProfileRegistry(paths)
+    work = registry.create_profile("Work", "#109e91").id
+    personal = registry.create_profile("Personal", "#f95339").id
+    seen: list = []
+
+    def agent(config, **kwargs):  # built during boot, before the schedule is read
+        seen.append((config.data_dir.name, manager.activity.holds()))
+        return FakeAgent()
+
+    manager = make_manager(paths, agent_factory=agent)
+    await manager.start()
+    try:
+        await (
+            manager.get(work)
+            .require_tasks()
+            .create_task(name="A", prompt="p", schedule={"kind": "cron", "cron": "@daily"})
+        )
+        await manager.archive(work, new_default=personal)
+        assert manager.activity.holds() == []
+        seen.clear()
+        await manager.restore(work)
+        assert seen == [
+            (work, [{"kind": "work", "count": 1, "detail": "boot"}, {"kind": "scheduled"}])
+        ]
+        (hold,) = manager.activity.holds()
+        assert hold["kind"] == "scheduled" and hold["count"] == 1
+    finally:
+        await manager.close()
+
+
+async def test_a_restore_that_fails_leaves_no_hold_behind(paths):
+    from assistant.profiles import ProfileRegistry
+    from tests.support.apps import make_manager
+    from tests.support.fakes import failing_agent_factory
+
+    registry = ProfileRegistry(paths)
+    work = registry.create_profile("Work", "#109e91").id
+    personal = registry.create_profile("Personal", "#f95339").id
+    registry.archive_profile(work)
+    manager = make_manager(paths, agent_factory=failing_agent_factory({work}))
+    await manager.start()
+    try:
+        with pytest.raises(RuntimeError):
+            await manager.restore(work)
+        assert manager.activity.holds() == []
+        assert manager.get(personal).require_gateway() is not None
+    finally:
+        await manager.close()
