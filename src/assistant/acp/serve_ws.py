@@ -79,27 +79,70 @@ def _token_authorized(scope: Scope, token: str) -> bool:
     return presented is not None and secrets.compare_digest(presented, token)
 
 
-def terminal_responses(message: Any) -> int:
-    """How many JSON-RPC responses (a result or error for a request id, not a
-    notification) an outgoing WebSocket frame carries; 0 when it cannot be read."""
+def _items(message: Any) -> list[dict]:
+    """The JSON-RPC objects a WebSocket frame carries (none when it cannot be read)."""
     raw = message.get("text")
     if raw is None:
         raw = message.get("bytes")
     if raw is None:
-        return 0
+        return []
     try:
         payload = json.loads(raw)
     except Exception:
-        return 0
+        return []
     items = payload if isinstance(payload, list) else [payload]
-    return sum(
-        1
-        for item in items
-        if isinstance(item, dict)
-        and "id" in item
-        and "method" not in item
-        and ("result" in item or "error" in item)
-    )
+    return [item for item in items if isinstance(item, dict)]
+
+
+def _key(item: dict) -> str:
+    return json.dumps(item["id"])  # 1 and "1" are different JSON-RPC ids
+
+
+def request_ids(message: Any) -> list[str]:
+    """The ids of the requests (not notifications) an incoming frame carries."""
+    return [_key(item) for item in _items(message) if "method" in item and "id" in item]
+
+
+def response_ids(message: Any) -> list[str]:
+    """The ids answered (result or error) by an outgoing frame."""
+    return [
+        _key(item)
+        for item in _items(message)
+        if "id" in item and "method" not in item and ("result" in item or "error" in item)
+    ]
+
+
+class RequestHolds:
+    """One connection's in-flight JSON-RPC requests as ``work``: a request holds from
+    the frame that brought it to the frame carrying its response, matched by id, so a
+    backpressured or interleaved frame for another request never frees it."""
+
+    def __init__(self, activity: Activity, detail: str = "acp_request") -> None:
+        self._activity = activity
+        self._detail = detail
+        self._pending: dict[str, Callable[[], None]] = {}
+
+    def on_receive(self, message: Any) -> None:
+        if message.get("type") != "websocket.receive":
+            return
+        for rid in request_ids(message):
+            previous = self._pending.pop(rid, None)
+            if previous is not None:
+                previous()  # an id reused before its answer: the old wait is over
+            self._pending[rid] = self._activity.acquire(self._detail)
+
+    def on_send(self, message: Any) -> None:
+        if message.get("type") != "websocket.send":
+            return
+        for rid in response_ids(message):
+            release = self._pending.pop(rid, None)
+            if release is not None:
+                release()
+
+    def close(self) -> None:
+        """The connection is gone: nothing more will be answered."""
+        while self._pending:
+            self._pending.popitem()[1]()
 
 
 def build_ws_app(acp_agent: ACPAgent, token: str) -> AsgiApp:
@@ -138,22 +181,21 @@ def build_ws_app(acp_agent: ACPAgent, token: str) -> AsgiApp:
 
             conn_app = create_asgi_app(tracked_bind)
             held = holding_send(send, activity, "acp_send")
+            requests = RequestHolds(activity)
+
+            async def receiving() -> Any:
+                message = await receive()
+                requests.on_receive(message)
+                return message
 
             async def delivering(message: Any) -> None:
                 await held(message)
-                if message.get("type") != "websocket.send":
-                    return
-                # Only a terminal response frees a handed-over hold: a notification in
-                # between must not release the hold of the answer still queued behind it.
-                for _ in range(terminal_responses(message)):
-                    for conn_scope in scopes:
-                        deliver = getattr(conn_scope, "deliver_one", None)
-                        if deliver is not None:
-                            deliver()
+                requests.on_send(message)
 
             try:
-                await conn_app(scope, receive, delivering)
+                await conn_app(scope, receiving, delivering)
             finally:
+                requests.close()
                 # Close the connection's sessions and detach its outbound receiver.
                 for conn_scope in scopes:
                     with contextlib.suppress(Exception):

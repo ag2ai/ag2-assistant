@@ -1060,9 +1060,7 @@ async def test_an_acp_request_is_work_until_its_answer_is_delivered(paths):
     assert _work(activity) == {"acp_prompt": 1}  # the agent is done; delivery is not
     gate.set()
     await asyncio.wait_for(turn, 5)
-    assert _work(activity) == {"acp_response": 1}  # handed to the send path
-    scope.deliver_one()
-    assert activity.holds() == []
+    assert activity.holds() == []  # the WebSocket server's RequestHolds covers the frame
     await scope.aclose()
 
 
@@ -1662,67 +1660,30 @@ def test_a_google_consent_nobody_finishes_lapses_with_its_flow(paths):
         assert "Expired" in page.text
 
 
-async def test_an_acp_answer_stays_work_until_its_response_frame_has_left(paths):
-    import acp
-    from ag2.acp.testing import RecordingClient
-
-    from assistant.profiles import ProfileRegistry
-    from tests.support.apps import make_acp_agent
+def test_an_acp_request_is_work_from_its_frame_to_the_frame_with_its_answer():
+    from assistant.acp.serve_ws import RequestHolds
 
     activity = Activity()
-    pid = ProfileRegistry(paths).create_profile("ACP", "#109e91").id
-    served, storage, _ = make_acp_agent(paths, pid, activity=activity)
-    scope = served.bind(RecordingClient())
-    await scope.initialize(protocol_version=1)
-    session = await scope.new_session(cwd=".", mcp_servers=[])
-    await scope.prompt(session.session_id, [acp.text_block("hi")])
-    assert _work(activity) == {"acp_response": 1}  # the handler is done; the frame is not out
-    scope.deliver_one()  # what the WebSocket server does after the frame is sent
+    holds = RequestHolds(activity)
+
+    def frame(kind, **obj):
+        return {"type": kind, "text": json.dumps({"jsonrpc": "2.0", **obj})}
+
+    holds.on_receive(frame("websocket.receive", id=1, method="session/prompt", params={}))
+    holds.on_receive(frame("websocket.receive", id="n", method="session/new", params={}))
+    holds.on_receive(frame("websocket.receive", method="session/cancel", params={}))
+    assert _work(activity) == {"acp_request": 2}  # the notification holds nothing
+    holds.on_send(frame("websocket.send", method="session/update", params={}))
+    holds.on_send(frame("websocket.send", id=7, method="session/request_permission", params={}))
+    assert _work(activity) == {"acp_request": 2}  # neither answers a request
+    holds.on_send(frame("websocket.send", id="n", result={}))  # the unrelated answer
+    assert _work(activity) == {"acp_request": 1}  # the prompt is still owed its answer
+    holds.on_send(frame("websocket.send", id="1", result={}))  # "1" is not 1
+    assert _work(activity) == {"acp_request": 1}
+    holds.on_send(frame("websocket.send", id=1, error={"code": -1, "message": "x"}))
     assert activity.holds() == []
-    await scope.prompt(session.session_id, [acp.text_block("again")])
-    await scope.aclose()  # the connection goes away with the response still queued
+    holds.on_receive(frame("websocket.receive", id=2, method="session/prompt", params={}))
+    holds.on_send({"type": "websocket.send", "text": "not json"})
+    assert _work(activity) == {"acp_request": 1}
+    holds.close()  # the connection went away with the answer still owed
     assert activity.holds() == []
-
-
-def test_only_a_terminal_response_frame_frees_an_acp_answer_s_hold():
-    from assistant.acp.serve_ws import terminal_responses
-
-    notification = {
-        "type": "websocket.send",
-        "text": json.dumps({"jsonrpc": "2.0", "method": "session/update", "params": {}}),
-    }
-    request = {
-        "type": "websocket.send",
-        "text": json.dumps(
-            {"jsonrpc": "2.0", "id": 7, "method": "session/request_permission", "params": {}}
-        ),
-    }
-    response = {
-        "type": "websocket.send",
-        "text": json.dumps({"jsonrpc": "2.0", "id": 3, "result": {"stopReason": "end_turn"}}),
-    }
-    error = {
-        "type": "websocket.send",
-        "bytes": json.dumps(
-            {"jsonrpc": "2.0", "id": 4, "error": {"code": -32603, "message": "x"}}
-        ).encode(),
-    }
-    batch = {
-        "type": "websocket.send",
-        "text": json.dumps(
-            [
-                {"jsonrpc": "2.0", "method": "session/update", "params": {}},
-                {"jsonrpc": "2.0", "id": 5, "result": {}},
-                {"jsonrpc": "2.0", "id": 6, "result": {}},
-            ]
-        ),
-    }
-    assert [terminal_responses(m) for m in (notification, request, response, error, batch)] == [
-        0,
-        0,
-        1,
-        1,
-        2,
-    ]
-    assert terminal_responses({"type": "websocket.send", "text": "not json"}) == 0
-    assert terminal_responses({"type": "websocket.send"}) == 0

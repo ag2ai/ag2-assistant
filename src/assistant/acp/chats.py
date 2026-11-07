@@ -27,7 +27,6 @@ gateway's chat routes read to show a "live" badge and offer a close button.
 
 import contextlib
 import json
-from collections import deque
 from collections.abc import Awaitable, Callable, Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -537,23 +536,9 @@ class ChatTrackingACPAgent(ACPAgent):
 
 
 class _LinkedScope(_ConnectionScope):
-    """Attach declared ACP receivers during initialization and detach them on close.
+    """Attach declared ACP receivers during initialization and detach them on close."""
 
-    A prompt's hold outlives the handler: the SDK queues the terminal response after
-    ``prompt()`` returns, so the hold is handed to ``_pending_deliveries`` and released
-    by the connection's send path once the next frame has gone out (``deliver_one``),
-    or by ``aclose`` when the connection is torn down."""
-
-    __slots__ = ("_pending_deliveries",)
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self._pending_deliveries: deque[Callable[[], None]] = deque()
-
-    def deliver_one(self) -> None:
-        """A frame left the socket: the oldest handed-over hold is done."""
-        if self._pending_deliveries:
-            self._pending_deliveries.popleft()()
+    __slots__ = ()
 
     async def initialize(
         self,
@@ -575,16 +560,13 @@ class _LinkedScope(_ConnectionScope):
         # The agent's own turn holds work through its middleware scope, but the
         # answer is delivered to the client after that scope ends; hold the whole
         # request so a host never sees idle while the reply is still on its way.
+        # The handler's own span; the WebSocket server holds the request from its
+        # arrival to the frame carrying its response (RequestHolds), which is wider.
         activity: Activity = getattr(self._owner, "activity", None) or Activity()
         with activity.track("acp_prompt"):
-            response = await super().prompt(session_id, prompt, **kwargs)
-        # The terminal response is queued from here; hold until it has been sent.
-        self._pending_deliveries.append(activity.acquire("acp_response"))
-        return response
+            return await super().prompt(session_id, prompt, **kwargs)
 
     async def aclose(self) -> None:
-        while self._pending_deliveries:
-            self._pending_deliveries.popleft()()  # nothing more will be delivered
         outbound = getattr(self._owner, "outbound", None)
         if outbound is not None and self._client is not None:
             outbound.detach(self._client)
