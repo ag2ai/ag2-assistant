@@ -5,7 +5,12 @@ from ag2.events import TextInput
 from openai import AsyncOpenAI
 
 from assistant.attachments import build_input
-from assistant.transcription import VOICE_PREFIX, VOICE_UNREADABLE, transcribe_audio
+from assistant.transcription import (
+    VOICE_NEEDS_LIBRARY,
+    VOICE_PREFIX,
+    VOICE_UNREADABLE,
+    transcribe_audio,
+)
 from tests.support.http import async_client, json_responder
 
 
@@ -50,3 +55,13 @@ async def test_a_failed_transcription_becomes_a_note_not_an_error():
         [_voice()], api_key="k", client=_openai(json_responder({"error": {}}, status_code=500))
     )
     assert _texts(out) == [VOICE_UNREADABLE]
+
+
+async def test_without_the_openai_library_the_audio_becomes_the_install_hint():
+    image = build_input(b"\x89PNG", "pic.png")
+    absent = {"openai": ("no_such_module_for_this_test", "openai")}
+    out = await transcribe_audio([_voice(), image], api_key="k", extras=absent)
+    assert _texts(out) == [
+        VOICE_NEEDS_LIBRARY.format(install='pip install "ag2-assistant[openai]"')
+    ]
+    assert out[1] == image
