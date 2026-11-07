@@ -1237,3 +1237,52 @@ async def test_a_stale_scan_cannot_clear_a_cancelled_mutation_s_safeguard(paths,
     (hold,) = activity.holds()
     assert hold["count"] == 1
     await tasks.close()
+
+
+async def test_an_agui_run_is_work_until_its_last_event_is_taken(paths):
+    from ag2.context import ConversationContext
+    from ag2.events import ModelMessage, ModelMessageChunk, ModelRequest, ModelResponse
+    from ag_ui.core import RunAgentInput
+
+    from assistant.gateway.agui.session import ChatRuns, TurnRequest
+
+    class _Streaming(FakeRunMixin):
+        """Half a reply, then a wait the test controls, then the rest."""
+
+        tools: list = []
+
+        def __init__(self):
+            self.gate = asyncio.Event()
+
+        async def ask(self, *msg, stream, **kwargs):
+            context = ConversationContext(stream=stream)
+            await context.send(ModelRequest.ensure_request([msg[0]]))
+            await context.send(ModelMessageChunk("Hello "))
+            await self.gate.wait()
+            await context.send(ModelMessageChunk("world"))
+            await context.send(ModelResponse(message=ModelMessage("Hello world")))
+            return FakeReply("Hello world")
+
+    activity = Activity()
+    agent = _Streaming()
+    gateway = await _gateway(paths, agent, activity)
+    body = RunAgentInput(
+        thread_id="c1", run_id="r1", state={}, messages=[], tools=[], context=[], forwarded_props={}
+    )
+    try:
+        run = ChatRuns().run(gateway, "c1", body, TurnRequest(text="work"), answer=None)
+        assert (await anext(run)).type == "RUN_STARTED"
+        while (await anext(run)).type != "TEXT_MESSAGE_CONTENT":
+            pass
+        assert _work(activity) == {"agui": 1, "turn": 1}
+        agent.gate.set()
+        for _ in range(200):  # the turn ends while the client has not read on
+            if not gateway.is_running("c1"):
+                break
+            await asyncio.sleep(0.01)
+        assert _work(activity) == {"agui": 1}  # the answer is still being streamed
+        types = [event.type async for event in run]
+        assert types[-1] == "RUN_FINISHED"
+        assert activity.holds() == []
+    finally:
+        await gateway.close()
