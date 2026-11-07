@@ -29,6 +29,7 @@ from assistant.acp.approvals import install_owner_side_approvals
 from assistant.acp.auth import choose_auth
 from assistant.acp.chats import ChatBackedStorage
 from assistant.acp.outbound import Outbound
+from assistant.activity import Activity
 from assistant.config import Config, load_config, resolve_config
 from assistant.config_migrations import migrate_anthropic_sampling
 from assistant.connections import ConnectionStore
@@ -134,9 +135,11 @@ class ProfileRuntime:
         model_factory: Callable | None = None,
         environment_factory: Callable | None = None,
         plugins: Iterable[Plugin] = (),
+        activity: Activity | None = None,
     ) -> None:
         self.meta = meta
         self.paths = paths
+        self._activity = activity
         self._registry = ProfileRegistry(paths)
         self._env = env
         self._memory = memory
@@ -267,6 +270,7 @@ class ProfileRuntime:
             model_factory=self._model_factory,
             environment_factory=self._environment_factory,
             plugins=self._plugins,
+            activity=self._activity,
         )
         await self.gateway.start()
         self.gateway.set_mirror(self._mirror)  # completed turns -> the Attached Peer
@@ -315,6 +319,7 @@ class ProfileManager:
         model_factory: Callable | None = None,
         environment_factory: Callable | None = None,
         plugins: Iterable[Plugin] = (),
+        activity: Activity | None = None,
     ) -> None:
         # Install-level layout + config; the pair always agrees. Given neither, both come
         # from the entry-point boundary so ``serve`` needs no wiring; given ``paths``, the
@@ -328,6 +333,9 @@ class ProfileManager:
         self._env = env
         self._registry = ProfileRegistry(self.paths)
         self._connections = ConnectionStore(self.paths, env)
+        # One install-wide tally of open work, shared by every profile's gateway and
+        # task service; AG2ASSISTANT_ACTIVITY_FILE mirrors it to disk for a host.
+        self.activity = activity or Activity((env or {}).get("AG2ASSISTANT_ACTIVITY_FILE"))
         self._memory = memory
         self._persist = persist
         # A host's async (profile_id, task, text, *, failed, run_id) -> delivered, tried first.
@@ -446,6 +454,7 @@ class ProfileManager:
             model_factory=self._model_factory,
             environment_factory=self._environment_factory,
             plugins=self._plugins,
+            activity=self.activity,
         )
         await runtime.start()
         self.boot_errors.pop(meta.id, None)

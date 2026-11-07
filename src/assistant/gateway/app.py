@@ -11,6 +11,7 @@ Route map:
   Global (unprefixed):
     GET  /api/health                         -> process status (first running runtime)
     GET  /api/status                         -> [{pid, busy, running_tasks, unseen_done}] activity badges
+    GET  /api/activity                       -> {ts, idle_since, holds} open work for a sleep/wake host
     GET  /api/usage                          -> {profiles:[{pid,name,...}], total} install-wide roll-up
     POST /api/secrets/key                    -> save a provider key (upserts its Default Secret); reloads ALL runtimes
     GET/POST /api/secrets[/{sid}] + DELETE   -> Secret CRUD (named reusable API keys); reloads ALL runtimes

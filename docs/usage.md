@@ -145,6 +145,7 @@ Endpoints:
 
 ```
 GET  /api/health                      -> {status, model, chats, ...}
+GET  /api/activity                    -> {ts, idle_since, holds: [{kind, ...}]}  (see Activity)
 GET  /api/chats                       -> {chats: [{chat_id, updated, preview, turns}]}
 GET  /api/chats/{id}                  -> {chat_id, messages: [{role, text}]}
 GET  /api/hitl/pending                -> {pending: [{id, text, options, path, ...}]}
@@ -430,11 +431,40 @@ Every key above also has an env override (these win over `config.yaml`):
 | `AG2ASSISTANT_REPLY_TIMEOUT` | `gateway.reply_timeout_s` |
 | `AG2ASSISTANT_CHAT_TITLES` | `gateway.chat_titles` (`0` turns off the LLM call that names a chat) |
 | `AG2ASSISTANT_TURN_SUMMARIES` | `gateway.turn_summaries` (default `false`; see [Turn summaries](#turn-summaries)) |
+| `AG2ASSISTANT_ACTIVITY_FILE` | a path the [activity](#activity) snapshot is mirrored to (unset: no file) |
 | `AG2ASSISTANT_SANDBOX` | `tools.sandbox` (`local` / `docker`) |
 | `AG2ASSISTANT_DISABLE_NATIVE_TOOLS` | `tools.disable_native` (default `false`; `true` removes the tools that only work in the native app from chat, task and ACP turns: `ask_user`, `answer_question`, `list_open_questions`, `describe_settings`, `describe_integrations`, `list_coding_agents`, `install_skill`, `remove_skill`, `search_skills`, `list_folders`) |
 | `AG2ASSISTANT_WEB_FETCH_ALLOW_PRIVATE` | `tools.web_fetch_allow_private` (default `false`; `true` lets `web_fetch` and `fetch_page` reach loopback, private and link-local hosts, such as a dev server on `localhost`) |
 | `AG2ASSISTANT_DOCKER_IMAGE` / `AG2ASSISTANT_DOCKER_NETWORK` | Docker sandbox |
 | `AG2ASSISTANT_AGGREGATE_EVERY_N` | `memory.aggregate_every_n_turns` |
+
+### Activity
+
+A host that stops an idle install (a cloud pod that sleeps) needs to know when it is
+safe to. `GET /api/activity` answers with the open *holds*, install-wide:
+
+```json
+{"ts": "2026-11-07T10:00:05Z", "idle_since": null,
+ "holds": [{"kind": "work", "count": 1, "detail": "turn"},
+           {"kind": "scheduled", "count": 2, "next": "2026-11-08T09:00:00Z"},
+           {"kind": "human", "until": "2026-11-07T10:05:00Z"}]}
+```
+
+- `work` is anything running now, tallied by `detail`: a chat turn (`turn`, from any
+  surface or channel, from the moment it is accepted), a task run (`run`, including its
+  wait in the queue, summary and delivery), post-turn work (`background`: chat title,
+  turn summary, memory update) and an ACP turn (`acp_turn`). `idle_since` is when the
+  last `work` hold closed, and null while one is open.
+- `scheduled` counts unpaused tasks with a future slot; `next` is the earliest. A slot
+  that passes while the process is down is skipped, not caught up, so a host must be
+  back before it.
+- `human` is a turn parked on a question or permission prompt; `until` is when that
+  prompt lapses.
+
+With `AG2ASSISTANT_ACTIVITY_FILE=/path/activity.json` the same snapshot is written there
+(atomically, tmp + rename) on every change of the holds, the write that reports no
+`work` left waiting 2.5 s so back-to-back turns do not flap. The file is never read
+back; a process starts with no holds and `idle_since` = its start time.
 
 ### Turn summaries
 

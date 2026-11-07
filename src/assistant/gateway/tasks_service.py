@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from ag2 import Agent
 
+from assistant.activity import Activity, iso_utc
 from assistant.config import Config, load_config
 from assistant.connections import ConnectionStore
 from assistant.hitl import NullAsker
@@ -210,8 +211,10 @@ class TaskService:
         scheduler_interval: float = 30.0,
         config_factory: Callable[[], Config] | None = None,
         summary_factory: Callable[[Config], Agent] | None = None,
+        activity: Activity | None = None,
     ) -> None:
         self._config = config or load_config()
+        self._activity = activity or Activity()
         self._config_factory = config_factory or (lambda: self._config)
         # How the cheap-model distiller (run summaries, task auto-naming) is built.
         self._summary_factory = summary_factory or default_summarizer
@@ -304,6 +307,21 @@ class TaskService:
                     self._require_store(), self._fire, interval=self._scheduler_interval
                 )
                 await self._scheduler.start()
+        await self.refresh_scheduled()
+
+    async def refresh_scheduled(self) -> None:
+        """Report this profile's unpaused tasks with a future slot as a scheduled hold."""
+        try:
+            tasks = await self._require_store().list_tasks()
+        except Exception as exc:
+            from assistant.observability import log_suppressed
+
+            log_suppressed("scheduled activity refresh", exc)
+            return
+        slots = [dt for t in tasks if not t.paused and (dt := parse_dt(t.next_run_at)) is not None]
+        self._activity.set_scheduled(
+            self._config.data_dir.name, len(slots), iso_utc(min(slots)) if slots else None
+        )
 
     async def _migrate_recall(self) -> None:
         """Pre-ADR-0027 tasks had an unconditional 3-run look-back; give the recurring
@@ -420,6 +438,7 @@ class TaskService:
             description=description,
             recall_depth=recall_depth,
         )
+        await self.refresh_scheduled()
         return _task_row(task, None, 0, False)
 
     async def update_task(self, task_id: str, **patch) -> dict | None:
@@ -434,6 +453,7 @@ class TaskService:
         if "description" in patch:
             patch["description"] = (patch["description"] or "").strip()
         task = await self._require_store().update_task(task_id, **patch)
+        await self.refresh_scheduled()
         return None if task is None else await self.get_task(task_id)
 
     async def delete_task(self, task_id: str) -> bool:
@@ -459,6 +479,7 @@ class TaskService:
             with contextlib.suppress(Exception):
                 if (folders := self._gateway.folders) is not None:
                     folders.drop_task(task_id)
+        await self.refresh_scheduled()
         return True
 
     async def list_tasks(self) -> list[dict]:
@@ -548,6 +569,7 @@ class TaskService:
         if once:
             rearm["schedule"] = manual_schedule()  # exhausted → back to on-demand
         await self._require_store().update_task(task_id, **rearm)
+        await self.refresh_scheduled()
         await self.start_run(task_id, trigger="once" if once else "schedule")
 
     async def start_run(self, task_id: str, trigger: RunTrigger = "manual") -> Run | None:
@@ -562,13 +584,14 @@ class TaskService:
         return run
 
     async def _execute(self, run_id: str) -> None:
-        try:
-            async with self._sem:
-                await self._turn(run_id)
-        except asyncio.CancelledError:
-            # killed while queued (stop/delete/shutdown) — settle the record
-            await self._finish(run_id, RunStatus.CANCELLED)
-            raise
+        with self._activity.track("run"):
+            try:
+                async with self._sem:
+                    await self._turn(run_id)
+            except asyncio.CancelledError:
+                # killed while queued (stop/delete/shutdown) — settle the record
+                await self._finish(run_id, RunStatus.CANCELLED)
+                raise
 
     async def _turn(self, run_id: str) -> None:
         self._config = self._config_factory()

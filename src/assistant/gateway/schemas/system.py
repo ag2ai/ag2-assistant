@@ -25,6 +25,25 @@ class HealthResponse(BaseModel):
     profiles: int | None = None
 
 
+class ActivityHoldOut(BaseModel):
+    """One open hold: ``work`` carries count + detail, ``scheduled`` count + next,
+    ``human`` until. Absent fields are not sent."""
+
+    kind: str
+    count: int | None = None
+    detail: str | None = None
+    next: str | None = None
+    until: str | None = None
+
+
+class ActivityResponse(BaseModel):
+    """GET /api/activity: activity.py snapshot()."""
+
+    ts: str
+    idle_since: str | None
+    holds: list[ActivityHoldOut]
+
+
 class UsageTotalsOut(BaseModel):
     """One day's spend: usage.py _blank minus by_model."""
 
