@@ -1432,3 +1432,37 @@ async def test_a_rest_reply_on_its_way_out_is_work():
     gate.set()
     await request
     assert activity.holds() == []
+
+
+async def test_a_monitoring_poll_is_not_work_and_keeps_idle_since():
+    from assistant.activity import ActivitySendMiddleware
+
+    clock = _Clock()
+    activity = Activity(clock=clock)
+    seen: list = []
+
+    async def app(scope, receive, send):
+        seen.append(_work(activity))
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"{}"})
+
+    async def send(message):
+        if message["type"] == "http.response.body":
+            seen.append(_work(activity))
+
+    held = ActivitySendMiddleware(app, activity)
+    clock.now = T0 + timedelta(minutes=5)
+    for path in ("/api/activity", "/api/health", "/api/status"):
+        await held({"type": "http", "path": path}, None, send)
+    assert seen == [{}] * 6  # never work, not even while the body goes out
+    assert activity.snapshot()["idle_since"] == "2026-11-07T10:00:00Z"
+
+
+def test_polling_the_activity_route_keeps_idle_since(paths):
+    app, pid = make_profile_app(paths)
+    with TestClient(app) as client:
+        first = client.get("/api/activity").json()["idle_since"]
+        for _ in range(3):
+            client.get("/api/health")
+            client.get("/api/status")
+        assert client.get("/api/activity").json()["idle_since"] == first

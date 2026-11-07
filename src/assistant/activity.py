@@ -365,16 +365,27 @@ def holding_send(send: Callable[..., Any], activity: "Activity", detail: str) ->
     return held
 
 
-class ActivitySendMiddleware:
-    """Pure ASGI middleware wrapping every ``send`` with :func:`holding_send`."""
+MONITORING_PATHS = frozenset({"/api/activity", "/api/health", "/api/status"})
 
-    def __init__(self, app: Any, activity: "Activity", detail: str = "send") -> None:
+
+class ActivitySendMiddleware:
+    """Pure ASGI middleware wrapping every ``send`` with :func:`holding_send`, except
+    for the monitoring endpoints: a host's own poll must not read as work."""
+
+    def __init__(
+        self,
+        app: Any,
+        activity: "Activity",
+        detail: str = "send",
+        skip: frozenset[str] = MONITORING_PATHS,
+    ) -> None:
         self._app = app
         self._activity = activity
         self._detail = detail
+        self._skip = skip
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
-        if scope["type"] not in ("http", "websocket"):
+        if scope["type"] not in ("http", "websocket") or scope.get("path") in self._skip:
             await self._app(scope, receive, send)
             return
         await self._app(scope, receive, holding_send(send, self._activity, self._detail))
