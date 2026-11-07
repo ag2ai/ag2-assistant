@@ -485,8 +485,12 @@ class TaskService:
         # activity write after this close must not still show a run.
         await asyncio.gather(*jobs, return_exceptions=True)
         self._jobs.clear()
-        # A write that outlived its caller lands, and republishes, before close
-        # returns: the runtime's final read and an archive's clearing come after.
+        await self.settle()
+
+    async def settle(self) -> None:
+        """Wait for every write that outlived a cancelled caller, and its republication.
+        Called by close(), and again by the runtime once the gateway has cancelled its
+        turns (which can start such writes), before the final schedule read."""
         while self._outliving:
             await asyncio.gather(*list(self._outliving), return_exceptions=True)
         if self._refresh_timer is not None:

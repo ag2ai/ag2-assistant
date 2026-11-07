@@ -300,8 +300,10 @@ class ProfileRuntime:
         if self.gateway is not None:
             await self.gateway.close()
         if self.tasks is not None:
-            # Every turn that could still have saved a task is cancelled now: publish
-            # what is on disk as this runtime's last word on its schedule.
+            # Every turn that could still have saved a task is cancelled now; a save a
+            # cancelled turn left running lands first, then what is on disk is this
+            # runtime's last word on its schedule.
+            await self.tasks.settle()
             await self.tasks.refresh_scheduled(final=True)
 
 
