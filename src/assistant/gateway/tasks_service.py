@@ -220,6 +220,7 @@ class TaskService:
         self._refresh_retry_s = refresh_retry_s
         self._refresh_delay = refresh_retry_s
         self._refresh_timer: asyncio.TimerHandle | None = None
+        self._closed = False  # a refresh that lands after close publishes nothing
         self._config_factory = config_factory or (lambda: self._config)
         # How the cheap-model distiller (run summaries, task auto-naming) is built.
         self._summary_factory = summary_factory or default_summarizer
@@ -318,6 +319,8 @@ class TaskService:
         """Report this profile's unpaused tasks with a future slot as a scheduled hold.
         A read that fails leaves the hold unknown (sleep-blocking) and retries by itself."""
         key = self._config.data_dir.name
+        if self._closed:
+            return
         try:
             # strict: a record that cannot be read must not turn into "not scheduled"
             tasks = await self._require_store().list_tasks(strict=True)
@@ -325,9 +328,13 @@ class TaskService:
             from assistant.observability import log_suppressed
 
             log_suppressed("scheduled activity refresh", exc)
+            if self._closed:
+                return
             self._activity.set_scheduled_unknown(key)
             self._schedule_refresh_retry()
             return
+        if self._closed:
+            return  # archived or stopped while reading: the close decided the hold
         slots = [dt for t in tasks if not t.paused and (dt := parse_dt(t.next_run_at)) is not None]
         self._activity.set_scheduled(key, len(slots), iso_utc(min(slots)) if slots else None)
         self._refresh_delay = self._refresh_retry_s
@@ -336,7 +343,7 @@ class TaskService:
             self._refresh_timer = None
 
     def _schedule_refresh_retry(self) -> None:
-        if self._refresh_timer is not None:
+        if self._refresh_timer is not None or self._closed:
             return
         try:
             loop = asyncio.get_running_loop()
@@ -409,8 +416,13 @@ class TaskService:
         if self._scheduler_lock is not None:
             self._scheduler_lock.release()
             self._scheduler_lock = None
-        for job in list(self._jobs.values()):
+        self._closed = True
+        jobs = list(self._jobs.values())
+        for job in jobs:
             job.cancel()
+        # Await them: a job's hold is released from its done callback, and the final
+        # activity write after this close must not still show a run.
+        await asyncio.gather(*jobs, return_exceptions=True)
         self._jobs.clear()
         if self._refresh_timer is not None:
             self._refresh_timer.cancel()

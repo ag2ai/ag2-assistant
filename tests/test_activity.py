@@ -892,3 +892,55 @@ async def test_an_orderly_stop_inside_the_grace_writes_the_settled_file(paths, t
     await manager.close()  # well inside the 2.5 s grace
     (hold,) = json.loads(path.read_text())["holds"]
     assert hold["kind"] == "scheduled" and hold["count"] == 1  # no work left, next wake kept
+
+
+async def test_closing_the_task_service_settles_queued_and_running_holds(paths, tmp_path):
+    activity = Activity()
+    agent = _Gated()
+    gateway = await _gateway(paths, agent, activity)
+    tasks = TaskService(
+        config=gateway.config,
+        store=TaskStore(path=tmp_path / "tasks.db"),
+        inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
+        max_concurrent=1,
+        summary_factory=fake_summary_factory(),
+        activity=activity,
+    )
+    tasks.set_gateway(gateway)
+    await tasks.start(scheduler=False)
+    task = await tasks.create_task(name="nightly", prompt="report")
+    await tasks.start_run(task["id"])
+    await tasks.start_run(task["id"])  # queued behind the first
+    await asyncio.wait_for(agent.started.wait(), 5)
+    assert _work(activity) == {"run": 2, "turn": 1}
+    await tasks.close()  # the gate never opens: both jobs are cancelled and awaited
+    assert _work(activity) == {}
+    await gateway.close()
+
+
+async def test_a_refresh_that_lands_after_a_close_does_not_resurrect_the_hold(paths, tmp_path):
+    gate = asyncio.Event()
+
+    class _GatedStore(TaskStore):
+        async def list_tasks(self, **kwargs):
+            await gate.wait()
+            return await super().list_tasks(**kwargs)
+
+    activity = Activity()
+    tasks = TaskService(
+        config=Config.for_paths(paths),
+        store=_GatedStore(path=tmp_path / "tasks.db"),
+        inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
+        activity=activity,
+    )
+    gate.set()
+    await tasks.start(scheduler=False)
+    await tasks.create_task(name="A", prompt="p", schedule={"kind": "cron", "cron": "@daily"})
+    gate.clear()
+    pending = asyncio.ensure_future(tasks.refresh_scheduled())  # a poll's refresh, parked
+    await asyncio.sleep(0.01)
+    await tasks.close()
+    activity.set_scheduled(tasks._config.data_dir.name, 0, None)  # what archive does next
+    gate.set()
+    await pending
+    assert activity.holds() == []
