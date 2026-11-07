@@ -97,6 +97,7 @@ class Activity:
         self._next_token = 0
         self._scheduled: dict[str, tuple[int, str | None]] = {}
         self._idle_since: datetime | None = clock()
+        self._was_busy = False
         self._last_written: list[dict] | None = None
         self._idle_timer: asyncio.TimerHandle | None = None
         self._pending: list[dict] | None = None  # the holds the timed idle write carries
@@ -212,6 +213,9 @@ class Activity:
             self._idle_since = None
         elif not self._work and self._idle_since is None:
             self._idle_since = self._clock()
+        busy = bool(self._work)
+        released = self._was_busy and not busy  # the last work hold just closed
+        self._was_busy = busy
         if self._file is None:
             return
         holds = self.holds()
@@ -223,8 +227,8 @@ class Activity:
             self._pending = None
         if holds == self._last_written:
             return
-        if self._work or self._grace <= 0:
-            self._write()
+        if not released or self._grace <= 0:
+            self._write()  # only the end of work waits; everything else lands at once
             return
         try:
             loop = asyncio.get_running_loop()

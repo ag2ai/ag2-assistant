@@ -462,8 +462,9 @@ safe to. `GET /api/activity` answers with the open *holds*, install-wide:
   prompt lapses.
 
 With `AG2ASSISTANT_ACTIVITY_FILE=/path/activity.json` the same snapshot is written there
-(atomically, tmp + rename) on every change of the holds, the write that reports no
-`work` left waiting 2.5 s so back-to-back turns do not flap. The file is never read
+(atomically, tmp + rename) on every change of the holds; only the write that reports the last
+`work` hold closing waits 2.5 s, so back-to-back turns do not flap, and a schedule saved
+while idle lands at once. The file is never read
 back; a process starts with no holds and `idle_since` = its start time, and writes that
 state at once, so a crashed predecessor's file never outlives it. A write that fails is
 retried with backoff (1 s doubling to 30 s) and on the next `GET /api/activity`, so a

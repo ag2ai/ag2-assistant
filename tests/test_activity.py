@@ -581,3 +581,71 @@ def test_a_voice_call_holds_work_until_the_socket_closes(paths):
             assert ws.receive_json() == {"type": "ready"}
             assert voice_holds() == [{"kind": "work", "count": 1, "detail": "voice"}]
         wait_for(lambda: voice_holds() == [])
+
+
+async def test_a_schedule_saved_while_idle_reaches_the_file_at_once(tmp_path):
+    path = tmp_path / "activity.json"
+    a = Activity(path, idle_grace_s=5)
+    a.set_scheduled("p", 1, "2026-11-08T09:00:00Z")
+    assert json.loads(path.read_text())["holds"] == [
+        {"kind": "scheduled", "count": 1, "next": "2026-11-08T09:00:00Z"}
+    ]
+    a.set_scheduled("p", 1, "2026-11-07T18:00:00Z")  # an earlier slot: also at once
+    assert json.loads(path.read_text())["holds"][0]["next"] == "2026-11-07T18:00:00Z"
+
+
+async def test_a_fired_slot_is_work_before_its_schedule_is_disarmed(paths, tmp_path):
+    """The scheduler's callback holds work through the re-arm and run creation, so a
+    poll in between never sees a once-task gone from the schedule with no run yet."""
+    activity = Activity()
+    seen: list = []
+
+    class _Probing(TaskStore):
+        async def update_task(self, task_id, **fields):
+            seen.append(_work(activity))  # what a poll would see during the re-arm
+            return await super().update_task(task_id, **fields)
+
+    agent = _Gated()
+    agent.gate.set()
+    gateway = await _gateway(paths, agent, activity)
+    tasks = TaskService(
+        config=gateway.config,
+        store=_Probing(path=tmp_path / "tasks.db"),
+        inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
+        summary_factory=fake_summary_factory(),
+        activity=activity,
+    )
+    tasks.set_gateway(gateway)
+    await tasks.start(scheduler=False)
+    try:
+        soon = (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat()
+        task = await tasks.create_task(
+            name="once", prompt="p", schedule={"kind": "once", "at": soon}
+        )
+        seen.clear()
+        await tasks._fire(task["id"])
+        assert seen == [{"run": 1}]
+        assert _work(activity) == {"run": 1}  # the job owns the hold before its first step
+        await asyncio.wait_for(tasks._jobs_done(), 10)
+        assert activity.holds() == []
+    finally:
+        await tasks.close()
+        await gateway.close()
+
+
+async def test_a_fire_on_a_paused_task_opens_nothing(paths, tmp_path):
+    activity = Activity()
+    tasks = TaskService(
+        config=Config.for_paths(paths),
+        store=TaskStore(path=tmp_path / "tasks.db"),
+        inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
+        activity=activity,
+    )
+    await tasks.start(scheduler=False)
+    task = await tasks.create_task(
+        name="A", prompt="p", schedule={"kind": "cron", "cron": "@daily"}
+    )
+    await tasks.update_task(task["id"], paused=True)
+    await tasks._fire(task["id"])
+    assert activity.holds() == []
+    assert await tasks.start_run("no-such-task") is None and activity.holds() == []

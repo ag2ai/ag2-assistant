@@ -547,9 +547,20 @@ class TaskService:
     # ---- execution ----
 
     async def _fire(self, task_id: str) -> None:
-        """Scheduler callback: start a run and re-arm (cron) / disarm (once)."""
+        """Scheduler callback: start a run and re-arm (cron) / disarm (once). The slot
+        is work from this moment, so the host never sees a gap between the scheduled
+        hold going and the run's hold opening."""
+        release = self._activity.acquire("run")
+        try:
+            await self._fire_held(task_id, release)
+        except BaseException:
+            release()
+            raise
+
+    async def _fire_held(self, task_id: str, release) -> None:
         t = await self._require_store().get_task(task_id)
         if t is None or t.paused or not t.next_run_at:
+            release()
             return
         once = t.schedule.get("kind") == ScheduleKind.ONCE
         # Re-arm base = max(now, slot). Plain `now` re-arms onto the SAME slot when
@@ -571,28 +582,38 @@ class TaskService:
             rearm["schedule"] = manual_schedule()  # exhausted → back to on-demand
         await self._require_store().update_task(task_id, **rearm)
         await self.refresh_scheduled()
-        await self.start_run(task_id, trigger="once" if once else "schedule")
+        await self.start_run(task_id, trigger="once" if once else "schedule", hold=release)
 
-    async def start_run(self, task_id: str, trigger: RunTrigger = "manual") -> Run | None:
-        t = await self._require_store().get_task(task_id)
-        if t is None:
-            return None
-        run = await self._require_store().create_run(task_id, trigger=trigger)
+    async def start_run(
+        self, task_id: str, trigger: RunTrigger = "manual", *, hold=None
+    ) -> Run | None:
+        """Create a run and its job. The job holds ``work`` from now until it is done,
+        however it ends; ``hold`` hands over a hold the caller already opened."""
+        release = hold or self._activity.acquire("run")
+        try:
+            t = await self._require_store().get_task(task_id)
+            if t is None:
+                release()
+                return None
+            run = await self._require_store().create_run(task_id, trigger=trigger)
+        except BaseException:
+            release()
+            raise
         job = asyncio.create_task(self._execute(run.id))
         self._jobs[run.id] = job
         run_id = run.id  # bound here, not as a lambda default, so the closure is typed
         job.add_done_callback(lambda _j: self._jobs.pop(run_id, None))
+        job.add_done_callback(lambda _j: release())
         return run
 
     async def _execute(self, run_id: str) -> None:
-        with self._activity.track("run"):
-            try:
-                async with self._sem:
-                    await self._turn(run_id)
-            except asyncio.CancelledError:
-                # killed while queued (stop/delete/shutdown) — settle the record
-                await self._finish(run_id, RunStatus.CANCELLED)
-                raise
+        try:
+            async with self._sem:
+                await self._turn(run_id)
+        except asyncio.CancelledError:
+            # killed while queued (stop/delete/shutdown) — settle the record
+            await self._finish(run_id, RunStatus.CANCELLED)
+            raise
 
     async def _turn(self, run_id: str) -> None:
         self._config = self._config_factory()
