@@ -113,7 +113,7 @@ def test_scheduled_hold_sums_profiles_and_takes_the_earliest_slot():
 async def test_the_file_is_written_on_changes_and_idle_only_after_the_grace(tmp_path):
     path = tmp_path / "state" / "activity.json"
     a = Activity(path, idle_grace_s=0.05)
-    assert not path.exists()  # nothing until the holds first change
+    assert json.loads(path.read_text())["holds"] == []  # the start state, at once
     release = a.acquire("turn")
     assert json.loads(path.read_text())["holds"] == [{"kind": "work", "count": 1, "detail": "turn"}]
     release()
@@ -438,7 +438,7 @@ async def test_the_env_names_the_file_the_install_mirrors_its_activity_to(paths,
     pid = ProfileRegistry(paths).create_profile("Work", "#109e91").id
     await manager.start()
     try:
-        assert not path.exists()
+        assert json.loads(path.read_text())["holds"] == []
         await manager.get(pid).require_gateway().send_message("hi", chat_id="c1")
         assert json.loads(path.read_text())["holds"] != []  # the turn (and its title job)
         await _settled(manager.activity)
@@ -493,3 +493,32 @@ async def test_archiving_a_profile_drops_its_scheduled_hold(paths):
         assert manager.activity.holds() == []
     finally:
         await manager.close()
+
+
+def test_a_new_process_replaces_a_predecessor_s_busy_file(tmp_path):
+    path = tmp_path / "activity.json"
+    path.write_text(json.dumps({"ts": "x", "idle_since": None, "holds": [{"kind": "work"}]}))
+    clock = _Clock()
+    Activity(path, clock=clock)
+    assert json.loads(path.read_text()) == {
+        "ts": "2026-11-07T10:00:00Z",
+        "idle_since": "2026-11-07T10:00:00Z",
+        "holds": [],
+    }
+
+
+def test_a_fresh_process_with_nothing_to_do_still_writes_its_file(tmp_path):
+    path = tmp_path / "state" / "activity.json"
+    Activity(path)
+    assert json.loads(path.read_text())["holds"] == []
+
+
+async def test_closing_the_gateway_before_post_turn_work_starts_releases_its_hold(paths):
+    activity = Activity()
+    agent = _Gated()
+    agent.gate.set()
+    gateway = await _gateway(paths, agent, activity, chat_titles=True)
+    await gateway.send_message("hi", chat_id="c1")
+    assert _work(activity) == {"background": 1}  # the title job, not yet started
+    await gateway.close()  # cancels it before its first step
+    assert activity.holds() == []

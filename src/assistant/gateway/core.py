@@ -1224,18 +1224,13 @@ class Gateway:
             self._summary_workers[chat_id] = self._background_task(self._summarize_turns(chat_id))
 
     def _background_task(self, coro) -> "asyncio.Task":
-        """Run post-turn work as a task that holds ``work`` from now until it ends."""
+        """Run post-turn work as a task that holds ``work`` from now until it is done,
+        including a cancellation that lands before its first step."""
         release = self._activity.acquire("background")
-
-        async def run():
-            try:
-                return await coro
-            finally:
-                release()
-
-        task = asyncio.create_task(run())
+        task = asyncio.create_task(coro)
         self._background.add(task)
         task.add_done_callback(self._background.discard)
+        task.add_done_callback(lambda _task: release())
         return task
 
     async def _summarize_turns(self, chat_id: str) -> None:

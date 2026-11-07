@@ -4,7 +4,8 @@
 background work, an ACP turn), ``scheduled`` (tasks with a future ``next_run_at``)
 and ``human`` (a turn parked on a question). ``snapshot()`` is the wire shape of
 ``GET /api/activity``; with a file path it is also written atomically on every change
-of the holds, after a short grace once the last work hold closes.
+of the holds, after a short grace once the last work hold closes; a new process writes
+its empty state at once, so a crashed predecessor's file never outlives it.
 
 The registry describes one process: the gateway, which owns every profile's turns,
 runs and ACP listeners. ``ag2-assistant acp-serve`` is a separate per-client stdio
@@ -92,6 +93,8 @@ class Activity:
         self._last_written: list[dict] | None = None
         self._idle_timer: asyncio.TimerHandle | None = None
         self._pending: list[dict] | None = None  # the holds the timed idle write carries
+        if self._file is not None:
+            self._write()  # a fresh process replaces whatever its predecessor left
 
     # ---- holds ----
 
