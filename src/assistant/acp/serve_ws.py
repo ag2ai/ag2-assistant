@@ -99,8 +99,19 @@ def _key(item: dict) -> str:
 
 
 def request_ids(message: Any) -> list[str]:
-    """The ids of the requests (not notifications) an incoming frame carries."""
-    return [_key(item) for item in _items(message) if "method" in item and "id" in item]
+    """The ids of the requests (not notifications) an incoming frame carries, admitted
+    the way the SDK's inbound pump admits them: one JSON object in a text frame. A
+    binary frame or a batch is ignored by the SDK, so it would never be answered."""
+    raw = message.get("text")
+    if not isinstance(raw, str):
+        return []
+    try:
+        item = json.loads(raw)
+    except Exception:
+        return []
+    if not isinstance(item, dict) or "method" not in item or "id" not in item:
+        return []
+    return [_key(item)]
 
 
 def response_ids(message: Any) -> list[str]:

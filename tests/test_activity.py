@@ -1687,3 +1687,10 @@ def test_an_acp_request_is_work_from_its_frame_to_the_frame_with_its_answer():
     assert _work(activity) == {"acp_request": 1}
     holds.close()  # the connection went away with the answer still owed
     assert activity.holds() == []
+    # Frames the SDK's inbound pump ignores are never answered, so they hold nothing.
+    binary = json.dumps({"jsonrpc": "2.0", "id": 3, "method": "session/prompt"}).encode()
+    holds.on_receive({"type": "websocket.receive", "bytes": binary})
+    batch = json.dumps([{"jsonrpc": "2.0", "id": 4, "method": "session/prompt"}])
+    holds.on_receive({"type": "websocket.receive", "text": batch})
+    holds.on_receive({"type": "websocket.receive", "text": "not json"})
+    assert activity.holds() == []
