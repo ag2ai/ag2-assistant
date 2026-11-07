@@ -131,29 +131,31 @@ class RequestHolds:
     def __init__(self, activity: Activity, detail: str = "acp_request") -> None:
         self._activity = activity
         self._detail = detail
-        self._pending: dict[str, Callable[[], None]] = {}
+        # id -> one release per request still in flight under it: the SDK dispatches
+        # concurrently, so a reused id means two requests and two answers.
+        self._pending: dict[str, list[Callable[[], None]]] = {}
 
     def on_receive(self, message: Any) -> None:
         if message.get("type") != "websocket.receive":
             return
         for rid in request_ids(message):
-            previous = self._pending.pop(rid, None)
-            if previous is not None:
-                previous()  # an id reused before its answer: the old wait is over
-            self._pending[rid] = self._activity.acquire(self._detail)
+            self._pending.setdefault(rid, []).append(self._activity.acquire(self._detail))
 
     def on_send(self, message: Any) -> None:
         if message.get("type") != "websocket.send":
             return
         for rid in response_ids(message):
-            release = self._pending.pop(rid, None)
-            if release is not None:
-                release()
+            releases = self._pending.get(rid)
+            if releases:
+                releases.pop(0)()
+                if not releases:
+                    del self._pending[rid]
 
     def close(self) -> None:
         """The connection is gone: nothing more will be answered."""
         while self._pending:
-            self._pending.popitem()[1]()
+            for release in self._pending.popitem()[1]:
+                release()
 
 
 def build_ws_app(acp_agent: ACPAgent, token: str) -> AsgiApp:

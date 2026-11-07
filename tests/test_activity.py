@@ -1863,3 +1863,25 @@ async def test_a_read_that_does_work_is_held_without_touching_the_idle_clock():
     await refresh
     assert activity.holds() == []
     assert activity.snapshot()["idle_since"] == "2026-11-07T10:00:00Z"
+
+
+def test_a_reused_acp_request_id_keeps_the_slower_request_s_hold():
+    from assistant.acp.serve_ws import RequestHolds
+
+    activity = Activity()
+    holds = RequestHolds(activity)
+
+    def frame(kind, **obj):
+        return {"type": kind, "text": json.dumps({"jsonrpc": "2.0", **obj})}
+
+    holds.on_receive(frame("websocket.receive", id=1, method="session/load", params={}))
+    holds.on_receive(frame("websocket.receive", id=1, method="session/new", params={}))  # same id
+    assert _work(activity) == {"acp_request": 2}
+    holds.on_send(frame("websocket.send", id=1, error={"code": -1, "message": "fast failure"}))
+    assert _work(activity) == {"acp_request": 1}  # the slow load is still in flight
+    holds.on_send(frame("websocket.send", id=1, result={}))
+    assert activity.holds() == []
+    holds.on_receive(frame("websocket.receive", id=2, method="session/prompt", params={}))
+    holds.on_receive(frame("websocket.receive", id=2, method="session/prompt", params={}))
+    holds.close()
+    assert activity.holds() == []
