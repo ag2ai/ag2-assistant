@@ -212,9 +212,14 @@ class TaskService:
         config_factory: Callable[[], Config] | None = None,
         summary_factory: Callable[[Config], Agent] | None = None,
         activity: Activity | None = None,
+        refresh_retry_s: float = 1.0,
     ) -> None:
         self._config = config or load_config()
         self._activity = activity or Activity()
+        # A failed schedule read retries on its own, doubling from here up to 30 s.
+        self._refresh_retry_s = refresh_retry_s
+        self._refresh_delay = refresh_retry_s
+        self._refresh_timer: asyncio.TimerHandle | None = None
         self._config_factory = config_factory or (lambda: self._config)
         # How the cheap-model distiller (run summaries, task auto-naming) is built.
         self._summary_factory = summary_factory or default_summarizer
@@ -310,18 +315,40 @@ class TaskService:
         await self.refresh_scheduled()
 
     async def refresh_scheduled(self) -> None:
-        """Report this profile's unpaused tasks with a future slot as a scheduled hold."""
+        """Report this profile's unpaused tasks with a future slot as a scheduled hold.
+        A read that fails leaves the hold unknown (sleep-blocking) and retries by itself."""
+        key = self._config.data_dir.name
         try:
             tasks = await self._require_store().list_tasks()
         except Exception as exc:
             from assistant.observability import log_suppressed
 
             log_suppressed("scheduled activity refresh", exc)
+            self._activity.set_scheduled_unknown(key)
+            self._schedule_refresh_retry()
             return
         slots = [dt for t in tasks if not t.paused and (dt := parse_dt(t.next_run_at)) is not None]
-        self._activity.set_scheduled(
-            self._config.data_dir.name, len(slots), iso_utc(min(slots)) if slots else None
-        )
+        self._activity.set_scheduled(key, len(slots), iso_utc(min(slots)) if slots else None)
+        self._refresh_delay = self._refresh_retry_s
+        if self._refresh_timer is not None:
+            self._refresh_timer.cancel()
+            self._refresh_timer = None
+
+    def _schedule_refresh_retry(self) -> None:
+        if self._refresh_timer is not None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        delay = self._refresh_delay
+        self._refresh_delay = min(delay * 2, 30.0)
+
+        def retry() -> None:
+            self._refresh_timer = None
+            asyncio.ensure_future(self.refresh_scheduled())
+
+        self._refresh_timer = loop.call_later(delay, retry)
 
     async def _migrate_recall(self) -> None:
         """Pre-ADR-0027 tasks had an unconditional 3-run look-back; give the recurring
@@ -384,6 +411,9 @@ class TaskService:
         for job in list(self._jobs.values()):
             job.cancel()
         self._jobs.clear()
+        if self._refresh_timer is not None:
+            self._refresh_timer.cancel()
+            self._refresh_timer = None
         self._activity.set_scheduled(self._config.data_dir.name, 0, None)
 
     async def _jobs_done(self) -> None:

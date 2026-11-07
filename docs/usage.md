@@ -457,7 +457,9 @@ safe to. `GET /api/activity` answers with the open *holds*, install-wide:
   last `work` hold closed, and null while one is open.
 - `scheduled` counts unpaused tasks with a future slot; `next` is the earliest. A slot
   that passes while the process is down is skipped, not caught up, so a host must be
-  back before it.
+  back before it. If a profile's schedule cannot be read, the hold stays with no `count`
+  until a retried read succeeds, so the install never looks free of scheduled work on a
+  guess.
 - `human` is a turn parked on a question or permission prompt; `until` is when that
   prompt lapses.
 

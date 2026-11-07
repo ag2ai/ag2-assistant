@@ -649,3 +649,43 @@ async def test_a_fire_on_a_paused_task_opens_nothing(paths, tmp_path):
     await tasks._fire(task["id"])
     assert activity.holds() == []
     assert await tasks.start_run("no-such-task") is None and activity.holds() == []
+
+
+def test_an_unknown_schedule_is_a_scheduled_hold_without_a_count():
+    a = Activity()
+    a.set_scheduled("p1", 2, "2026-11-08T09:00:00Z")
+    a.set_scheduled_unknown("p2")
+    assert a.holds() == [{"kind": "scheduled", "count": 2, "next": "2026-11-08T09:00:00Z"}]
+    a.set_scheduled("p1", 0, None)
+    assert a.holds() == [{"kind": "scheduled"}]  # p2 may still hold work: no count
+    a.set_scheduled("p2", 0, None)
+    assert a.holds() == []
+
+
+async def test_a_failed_schedule_read_fails_closed_and_recovers_on_its_own(paths, tmp_path):
+    activity = Activity()
+    failures = {"left": 0}
+
+    class _Flaky(TaskStore):
+        async def list_tasks(self):
+            if failures["left"]:
+                failures["left"] -= 1
+                raise OSError("disk hiccup")
+            return await super().list_tasks()
+
+    tasks = TaskService(
+        config=Config.for_paths(paths),
+        store=_Flaky(path=tmp_path / "tasks.db"),
+        inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
+        activity=activity,
+        refresh_retry_s=0.05,
+    )
+    await tasks.start(scheduler=False)
+    failures["left"] = 2
+    await tasks.create_task(name="A", prompt="p", schedule={"kind": "cron", "cron": "@daily"})
+    assert activity.holds() == [{"kind": "scheduled"}]  # unknown, and sleep-blocking
+    await asyncio.sleep(0.3)  # no poll: the retry alone recovers
+    (hold,) = activity.holds()
+    assert hold["count"] == 1 and "next" in hold
+    await tasks.close()
+    assert activity.holds() == []

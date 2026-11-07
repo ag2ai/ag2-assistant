@@ -95,7 +95,8 @@ class Activity:
         self._work: dict[str, int] = {}
         self._human: dict[int, float] = {}
         self._next_token = 0
-        self._scheduled: dict[str, tuple[int, str | None]] = {}
+        # key -> (count, earliest next) when known; None while a refresh has failed
+        self._scheduled: dict[str, tuple[int, str | None] | None] = {}
         self._idle_since: datetime | None = clock()
         self._was_busy = False
         self._last_written: list[dict] | None = None
@@ -170,6 +171,14 @@ class Activity:
             self._scheduled.pop(key, None)
         self._changed()
 
+    def set_scheduled_unknown(self, key: str) -> None:
+        """A profile's schedule could not be read: a scheduled hold with no count stands
+        in until a refresh succeeds, so a host never sleeps on a guess."""
+        if self._scheduled.get(key, (0, None)) is None:
+            return
+        self._scheduled[key] = None
+        self._changed()
+
     # ---- snapshot ----
 
     @property
@@ -181,10 +190,13 @@ class Activity:
             {"kind": WORK, "count": count, "detail": detail}
             for detail, count in sorted(self._work.items())
         ]
-        total = sum(count for count, _ in self._scheduled.values())
-        if total:
-            nexts = [nxt for _, nxt in self._scheduled.values() if nxt]
-            hold: dict = {"kind": SCHEDULED, "count": total}
+        known = [value for value in self._scheduled.values() if value is not None]
+        total = sum(count for count, _ in known)
+        if total or len(known) < len(self._scheduled):
+            hold: dict = {"kind": SCHEDULED}
+            if total:
+                hold["count"] = total  # omitted while a profile's schedule is unknown
+            nexts = [nxt for _, nxt in known if nxt]
             if nexts:
                 hold["next"] = min(nexts)
             out.append(hold)
