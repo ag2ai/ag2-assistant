@@ -1193,3 +1193,47 @@ async def test_an_older_schedule_read_cannot_overwrite_a_newer_hold(paths, tmp_p
     (hold,) = activity.holds()
     assert hold["kind"] == "scheduled" and hold["count"] == 1
     await tasks.close()
+
+
+async def test_a_stale_scan_cannot_clear_a_cancelled_mutation_s_safeguard(paths, tmp_path):
+    """A poll reads the schedule, then a task is armed and its publish is cancelled
+    while the poll still holds the lock: the poll's stale result is rejected, the
+    unknown hold stays, and the retry publishes the armed task."""
+    gates: list = []
+
+    class _GatedStore(TaskStore):
+        async def list_tasks(self, **kwargs):
+            tasks = await super().list_tasks(**kwargs)  # read first ...
+            if gates:
+                await gates.pop(0).wait()  # ... then stall before publishing
+            return tasks
+
+    activity = Activity()
+    tasks = TaskService(
+        config=Config.for_paths(paths),
+        store=_GatedStore(path=tmp_path / "tasks.db"),
+        inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
+        activity=activity,
+        refresh_retry_s=0.05,
+    )
+    await tasks.start(scheduler=False)
+    task = await tasks.create_task(name="A", prompt="p")  # manual
+    stall = asyncio.Event()
+    gates.append(stall)
+    stale_poll = asyncio.ensure_future(tasks.refresh_scheduled())
+    await asyncio.sleep(0.01)  # it has read "nothing scheduled" and holds the lock
+    arming = asyncio.ensure_future(
+        tasks.update_task(task["id"], schedule={"kind": "cron", "cron": "@daily"})
+    )
+    await asyncio.sleep(0.01)  # persisted; now waiting for the lock to publish
+    arming.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await arming
+    assert activity.holds() == [{"kind": "scheduled"}]
+    stall.set()
+    await stale_poll
+    assert activity.holds() == [{"kind": "scheduled"}]  # the stale result was rejected
+    await asyncio.sleep(0.3)
+    (hold,) = activity.holds()
+    assert hold["count"] == 1
+    await tasks.close()

@@ -221,6 +221,7 @@ class TaskService:
         self._refresh_delay = refresh_retry_s
         self._refresh_timer: asyncio.TimerHandle | None = None
         self._refresh_lock = asyncio.Lock()  # one read-and-publish at a time, in order
+        self._schedule_gen = 0  # bumped by every mutation; a scan from before it is stale
         self._closed = False  # a refresh that lands after close publishes nothing
         self._config_factory = config_factory or (lambda: self._config)
         # How the cheap-model distiller (run summaries, task auto-naming) is built.
@@ -327,6 +328,7 @@ class TaskService:
             key = self._config.data_dir.name
             if self._closed and not final:
                 return
+            gen = self._schedule_gen
             try:
                 # strict: a record that cannot be read must not turn into "not scheduled"
                 tasks = await self._require_store().list_tasks(strict=True)
@@ -341,6 +343,11 @@ class TaskService:
                 return
             if self._closed and not final:
                 return  # archived or stopped while reading: the close decided the hold
+            if gen != self._schedule_gen:
+                # A mutation began (or was cancelled) while this scan ran: what it read
+                # is stale, so a fresh scan publishes instead.
+                self._schedule_refresh_retry()
+                return
             slots = [
                 dt for t in tasks if not t.paused and (dt := parse_dt(t.next_run_at)) is not None
             ]
@@ -371,11 +378,13 @@ class TaskService:
         """Around a change to what is scheduled: the new schedule is published on the way
         out, and a cancellation in between leaves the hold unknown with a retry that
         republishes on its own, so a saved task never sits behind an idle signal."""
+        self._schedule_gen += 1
         try:
             yield
             await self.refresh_scheduled()
         except BaseException:
             # Also after close: the runtime's final read, or the next start, resolves it.
+            self._schedule_gen += 1
             self._activity.set_scheduled_unknown(self._config.data_dir.name)
             self._schedule_refresh_retry()
             raise
