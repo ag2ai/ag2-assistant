@@ -750,6 +750,7 @@ class ProfileManager:
         self.acp_outbound.clear()
         self.channel_errors.clear()
         self.acp_listener_errors.clear()
+        self.activity.shutdown()  # the last file state is the settled one
 
     def get(self, pid: str) -> ProfileRuntime:
         """Registry-first lookup (§4.1): unknown → UnknownProfile; archived →

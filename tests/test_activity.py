@@ -842,3 +842,53 @@ async def test_naming_a_new_task_is_work_until_it_is_saved(paths, tmp_path):
     assert (await asyncio.wait_for(creating, 5))["name"] == "Named"
     assert _work(activity) == {}
     await tasks.close()
+
+
+async def test_arming_a_task_is_work_until_the_schedule_is_published(paths, tmp_path):
+    gate = asyncio.Event()
+    entered = asyncio.Event()
+
+    class _GatedStore(TaskStore):
+        async def update_task(self, task_id, **fields):
+            entered.set()
+            await gate.wait()
+            return await super().update_task(task_id, **fields)
+
+    activity = Activity()
+    tasks = TaskService(
+        config=Config.for_paths(paths),
+        store=_GatedStore(path=tmp_path / "tasks.db"),
+        inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
+        activity=activity,
+    )
+    await tasks.start(scheduler=False)
+    task = await tasks.create_task(name="A", prompt="p")  # manual: nothing scheduled
+    assert activity.holds() == []
+    arming = asyncio.ensure_future(
+        tasks.update_task(task["id"], schedule={"kind": "cron", "cron": "@daily"})
+    )
+    await asyncio.wait_for(entered.wait(), 5)
+    assert _work(activity) == {"task_update": 1}
+    gate.set()
+    await asyncio.wait_for(arming, 5)
+    assert _work(activity) == {} and activity.holds()[0]["count"] == 1
+    await tasks.close()
+
+
+async def test_an_orderly_stop_inside_the_grace_writes_the_settled_file(paths, tmp_path):
+    from assistant.profiles import ProfileRegistry
+    from tests.support.apps import make_manager
+
+    path = tmp_path / "activity.json"
+    pid = ProfileRegistry(paths).create_profile("Work", "#109e91").id
+    manager = make_manager(paths, env={"AG2ASSISTANT_ACTIVITY_FILE": str(path)})
+    await manager.start()
+    await (
+        manager.get(pid)
+        .require_tasks()
+        .create_task(name="A", prompt="p", schedule={"kind": "cron", "cron": "@daily"})
+    )
+    await manager.get(pid).require_gateway().send_message("hi", chat_id="c1")
+    await manager.close()  # well inside the 2.5 s grace
+    (hold,) = json.loads(path.read_text())["holds"]
+    assert hold["kind"] == "scheduled" and hold["count"] == 1  # no work left, next wake kept

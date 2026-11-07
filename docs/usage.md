@@ -463,9 +463,9 @@ safe to. `GET /api/activity` answers with the open *holds*, install-wide:
 - `human` is a turn parked on a question or permission prompt; `until` is when that
   prompt lapses.
 
-An ordinary shutdown leaves the `scheduled` hold in the file, since the tasks stay armed
-on disk and a host reading the last state still needs the next wake; archiving a
-profile removes its tasks from the tally.
+An ordinary shutdown writes the settled state at once (no grace), leaving the
+`scheduled` hold in the file, since the tasks stay armed on disk and a host reading the
+last state still needs the next wake; archiving a profile removes its tasks from the tally.
 
 With `AG2ASSISTANT_ACTIVITY_FILE=/path/activity.json` the same snapshot is written there
 (atomically, tmp + rename) on every change of the holds; only the write that reports the last

@@ -221,6 +221,17 @@ class Activity:
         if self._dirty and self._idle_timer is None:
             self._write()
 
+    def shutdown(self) -> None:
+        """Write the final state now: the grace and retry timers are cancelled, so an
+        orderly stop inside the grace never leaves a work hold in the file."""
+        for timer in (self._idle_timer, self._retry_timer):
+            if timer is not None:
+                timer.cancel()
+        self._idle_timer = self._retry_timer = None
+        self._pending = None
+        if self._file is not None and (self._dirty or self.holds() != self._last_written):
+            self._write()
+
     def snapshot(self) -> dict:
         return {
             "ts": iso_utc(self._clock()),

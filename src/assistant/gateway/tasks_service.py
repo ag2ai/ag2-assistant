@@ -488,9 +488,11 @@ class TaskService:
             patch["name"] = (patch["name"] or "").strip()
         if "description" in patch:
             patch["description"] = (patch["description"] or "").strip()
-        task = await self._require_store().update_task(task_id, **patch)
-        await self.refresh_scheduled()
-        return None if task is None else await self.get_task(task_id)
+        # Arming or unpausing a task is work until the new schedule is published.
+        with self._activity.track("task_update"):
+            task = await self._require_store().update_task(task_id, **patch)
+            await self.refresh_scheduled()
+            return None if task is None else await self.get_task(task_id)
 
     async def delete_task(self, task_id: str) -> bool:
         """Delete a task, all its runs, and each run's chat stream. Stops any
