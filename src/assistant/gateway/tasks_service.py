@@ -220,6 +220,7 @@ class TaskService:
         self._refresh_retry_s = refresh_retry_s
         self._refresh_delay = refresh_retry_s
         self._refresh_timer: asyncio.TimerHandle | None = None
+        self._refresh_lock = asyncio.Lock()  # one read-and-publish at a time, in order
         self._closed = False  # a refresh that lands after close publishes nothing
         self._config_factory = config_factory or (lambda: self._config)
         # How the cheap-model distiller (run summaries, task auto-naming) is built.
@@ -320,29 +321,34 @@ class TaskService:
         A read that fails leaves the hold unknown (sleep-blocking) and retries by itself.
         After close only a ``final`` read publishes: the runtime's last word once every
         turn that could still save a task has been cancelled."""
-        key = self._config.data_dir.name
-        if self._closed and not final:
-            return
-        try:
-            # strict: a record that cannot be read must not turn into "not scheduled"
-            tasks = await self._require_store().list_tasks(strict=True)
-        except Exception as exc:
-            from assistant.observability import log_suppressed
-
-            log_suppressed("scheduled activity refresh", exc)
+        # Overlapping scans (polls, retries, mutations) publish in the order they ran,
+        # so an older read can never replace a newer hold.
+        async with self._refresh_lock:
+            key = self._config.data_dir.name
             if self._closed and not final:
                 return
-            self._activity.set_scheduled_unknown(key)
-            self._schedule_refresh_retry()
-            return
-        if self._closed and not final:
-            return  # archived or stopped while reading: the close decided the hold
-        slots = [dt for t in tasks if not t.paused and (dt := parse_dt(t.next_run_at)) is not None]
-        self._activity.set_scheduled(key, len(slots), iso_utc(min(slots)) if slots else None)
-        self._refresh_delay = self._refresh_retry_s
-        if self._refresh_timer is not None:
-            self._refresh_timer.cancel()
-            self._refresh_timer = None
+            try:
+                # strict: a record that cannot be read must not turn into "not scheduled"
+                tasks = await self._require_store().list_tasks(strict=True)
+            except Exception as exc:
+                from assistant.observability import log_suppressed
+
+                log_suppressed("scheduled activity refresh", exc)
+                if self._closed and not final:
+                    return
+                self._activity.set_scheduled_unknown(key)
+                self._schedule_refresh_retry()
+                return
+            if self._closed and not final:
+                return  # archived or stopped while reading: the close decided the hold
+            slots = [
+                dt for t in tasks if not t.paused and (dt := parse_dt(t.next_run_at)) is not None
+            ]
+            self._activity.set_scheduled(key, len(slots), iso_utc(min(slots)) if slots else None)
+            self._refresh_delay = self._refresh_retry_s
+            if self._refresh_timer is not None:
+                self._refresh_timer.cancel()
+                self._refresh_timer = None
 
     def _schedule_refresh_retry(self) -> None:
         if self._refresh_timer is not None or self._closed:

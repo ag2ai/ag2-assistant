@@ -1158,3 +1158,38 @@ def test_learning_from_feedback_is_work_until_the_preference_is_saved(paths):
         assert _work(activity) == {"background": 1}
         client.portal.call(gate.set)  # the Event lives on the app's loop
         wait_for(lambda: activity.holds() == [])
+
+
+async def test_an_older_schedule_read_cannot_overwrite_a_newer_hold(paths, tmp_path):
+    """A poll's scan starts before a task is armed and finishes after: the armed
+    task's own publication is the last word, not the stale scan."""
+    gates: list = []
+
+    class _GatedStore(TaskStore):
+        async def list_tasks(self, **kwargs):
+            tasks = await super().list_tasks(**kwargs)
+            if gates:
+                await gates.pop(0).wait()  # the first scan is slow to finish
+            return tasks
+
+    activity = Activity()
+    tasks = TaskService(
+        config=Config.for_paths(paths),
+        store=_GatedStore(path=tmp_path / "tasks.db"),
+        inquiry_store=InquiryStore(path=tmp_path / "inq.db"),
+        activity=activity,
+    )
+    await tasks.start(scheduler=False)
+    slow = asyncio.Event()
+    gates.append(slow)
+    stale_poll = asyncio.ensure_future(tasks.refresh_scheduled())  # sees no tasks
+    await asyncio.sleep(0.01)
+    arming = asyncio.ensure_future(
+        tasks.create_task(name="A", prompt="p", schedule={"kind": "cron", "cron": "@daily"})
+    )
+    await asyncio.sleep(0.01)
+    slow.set()
+    await asyncio.gather(stale_poll, arming)
+    (hold,) = activity.holds()
+    assert hold["kind"] == "scheduled" and hold["count"] == 1
+    await tasks.close()
