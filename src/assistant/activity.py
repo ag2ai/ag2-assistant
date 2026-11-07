@@ -109,6 +109,7 @@ class Activity:
         self._stopped = False  # after shutdown(): every change writes at once, no timers
         self._clock = clock
         self._work: dict[str, int] = {}
+        self._clock_work = 0  # open work holds that count for idle_since (not deliveries)
         self._human: dict[int, float] = {}
         self._next_token = 0
         # key -> (count, earliest next) when known; None while a refresh has failed
@@ -131,9 +132,13 @@ class Activity:
 
     # ---- holds ----
 
-    def acquire(self, detail: str) -> Callable[[], None]:
-        """Open a ``work`` hold with this ``detail`` now; call the result once to close it."""
+    def acquire(self, detail: str, *, clock: bool = True) -> Callable[[], None]:
+        """Open a ``work`` hold with this ``detail`` now; call the result once to close it.
+        ``clock=False`` is for a delivery still on its way out: it blocks a stop like any
+        work, but closing it does not restart the idle clock (a poll's reply is not work)."""
         self._work[detail] = self._work.get(detail, 0) + 1
+        if clock:
+            self._clock_work += 1
         self._changed()
         released = False
 
@@ -145,14 +150,16 @@ class Activity:
             self._work[detail] -= 1
             if self._work[detail] <= 0:
                 del self._work[detail]
+            if clock:
+                self._clock_work -= 1
             self._changed()
 
         return release
 
     @contextlib.contextmanager
-    def track(self, detail: str) -> Generator[None]:
+    def track(self, detail: str, *, clock: bool = True) -> Generator[None]:
         """Hold ``work`` with this ``detail`` (turn, run, background, acp_turn) for the block."""
-        release = self.acquire(detail)
+        release = self.acquire(detail, clock=clock)
         try:
             yield
         finally:
@@ -258,12 +265,12 @@ class Activity:
     # ---- change tracking + file ----
 
     def _changed(self) -> None:
-        if self._work and self._idle_since is not None:
+        busy = self._clock_work > 0  # deliveries in flight do not move the idle clock
+        if busy and self._idle_since is not None:
             self._idle_since = None
-        elif not self._work and self._idle_since is None:
+        elif not busy and self._idle_since is None:
             self._idle_since = self._clock()
-        busy = bool(self._work)
-        released = self._was_busy and not busy  # the last work hold just closed
+        released = self._was_busy and not busy  # the last clock-counting hold just closed
         self._was_busy = busy
         if self._file is None:
             return
@@ -359,7 +366,7 @@ def holding_send(send: Callable[..., Any], activity: "Activity", detail: str) ->
         if message.get("type") not in ("http.response.body", "websocket.send"):
             await send(message)
             return
-        with activity.track(detail):
+        with activity.track(detail, clock=False):  # protects delivery, not "activity"
             await send(message)
 
     return held

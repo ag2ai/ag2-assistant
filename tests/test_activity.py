@@ -1510,3 +1510,32 @@ def test_a_reply_blocked_at_the_server_s_send_is_work_through_the_whole_stack(pa
         client.portal.call(gate.set)
         done.result(5)
         assert activity.holds() == []
+
+
+async def test_a_passive_poll_s_reply_blocks_a_stop_but_does_not_restart_the_idle_clock():
+    from assistant.activity import ActivitySendMiddleware
+
+    clock = _Clock()
+    activity = Activity(clock=clock)
+    gate = asyncio.Event()
+    sending = asyncio.Event()
+
+    async def app(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"[]"})
+
+    async def send(message):
+        if message["type"] == "http.response.body":
+            sending.set()
+            await gate.wait()
+
+    held = ActivitySendMiddleware(app, activity)
+    clock.now = T0 + timedelta(minutes=10)  # the SPA polls every few seconds
+    poll = asyncio.ensure_future(held({"type": "http", "path": "/api/usage"}, None, send))
+    await asyncio.wait_for(sending.wait(), 5)
+    assert _work(activity) == {"send": 1}  # a stalled reply still blocks a stop
+    assert activity.snapshot()["idle_since"] == "2026-11-07T10:00:00Z"  # but is not activity
+    gate.set()
+    await poll
+    assert activity.holds() == []
+    assert activity.snapshot()["idle_since"] == "2026-11-07T10:00:00Z"
