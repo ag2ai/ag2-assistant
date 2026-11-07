@@ -484,6 +484,13 @@ async def test_a_failed_schedule_read_fails_closed_and_recovers_on_its_own(paths
     await backing.write("/tasks/task-corrupt.json", "null")
     await tasks.refresh_scheduled()
     assert activity.holds() == [{"kind": "scheduled"}]  # a corrupt record is not "fewer tasks"
+    await backing.delete("/tasks/task-corrupt.json")
+    (task,) = await tasks.list_tasks()
+    record = json.loads(await backing.read(f"/tasks/{task['id']}.json"))
+    record["next_run_at"] = "not-a-date"  # valid JSON, unreadable slot
+    await backing.write(f"/tasks/{task['id']}.json", json.dumps(record))
+    await tasks.refresh_scheduled()
+    assert activity.holds() == [{"kind": "scheduled"}]  # nor is a slot that cannot be read
     await tasks.close()
 
 

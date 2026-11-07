@@ -339,9 +339,17 @@ class TaskService:
                 return
             if self._closed and not final:
                 return  # archived or stopped while reading: the close decided the hold
-            slots = [
-                dt for t in tasks if not t.paused and (dt := parse_dt(t.next_run_at)) is not None
-            ]
+            slots = []
+            for t in tasks:
+                if t.paused or not t.next_run_at:
+                    continue
+                slot = parse_dt(t.next_run_at)
+                if slot is None:
+                    # A slot that cannot be read is not "no slot": stay unknown until repaired.
+                    self._activity.set_scheduled_unknown(key)
+                    self._schedule_refresh_retry()
+                    return
+                slots.append(slot)
             self._activity.set_scheduled(key, len(slots), iso_utc(min(slots)) if slots else None)
             self._refresh_delay = self._refresh_retry_s
             if self._refresh_timer is not None:
