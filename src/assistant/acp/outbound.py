@@ -60,9 +60,10 @@ class Outbound:
         self._flush_task: asyncio.Task[int] | None = None
         # A reconnect drain is work: queued outcomes are being delivered.
         self._activity = activity or Activity()
-        # One hold per notification the SDK has queued but not yet put on the wire;
-        # the WebSocket server releases them as the frames leave (notification_sent).
-        self._in_transit: list[Callable[[], None]] = []
+        # One (receiver, hold) per notification the SDK has queued for that receiver
+        # but not yet put on the wire; the WebSocket server releases them as the
+        # frames leave (notification_sent), detach releases a gone receiver's.
+        self._in_transit: list[tuple[Any, Callable[[], None]]] = []
 
     # ---- clients -------------------------------------------------------------
 
@@ -80,17 +81,24 @@ class Outbound:
     def detach(self, client: Any) -> None:
         if client in self._clients:
             self._clients.remove(client)
-        if not self._clients:
-            self._settle_transit()  # nothing queued for a gone client will be sent
+        self._settle_transit(client)  # nothing queued for a gone receiver will be sent
 
-    def notification_sent(self) -> None:
-        """A ``_ag2/notify`` frame left the socket: the oldest queued outcome is delivered."""
-        if self._in_transit:
-            self._in_transit.pop(0)()
+    def notification_sent(self, client: Any) -> None:
+        """An outcome frame left ``client``'s socket: its oldest queued outcome is delivered."""
+        for index, (receiver, release) in enumerate(self._in_transit):
+            if receiver is client:
+                del self._in_transit[index]
+                release()
+                return
 
-    def _settle_transit(self) -> None:
-        while self._in_transit:
-            self._in_transit.pop()()
+    def _settle_transit(self, client: Any = None) -> None:
+        keep = []
+        for receiver, release in self._in_transit:
+            if client is None or receiver is client:
+                release()
+            else:
+                keep.append((receiver, release))
+        self._in_transit = keep
 
     @property
     def connected(self) -> int:
@@ -140,7 +148,7 @@ class Outbound:
             try:
                 await client.ext_notification(NOTIFY_METHOD, params)
                 # Enqueued, not yet on the wire: still work until the frame is sent.
-                self._in_transit.append(self._activity.acquire("acp_notify", clock=False))
+                self._in_transit.append((client, self._activity.acquire("acp_notify", clock=False)))
                 return True
             except Exception as exc:
                 log.info("acp outbound %s: client dropped: %s", self.connection_id, exc)

@@ -1136,14 +1136,15 @@ async def test_delivering_queued_acp_outcomes_on_reconnect_is_work(tmp_path):
     out = Outbound("cn-1", tmp_path / "outbox", activity=activity)
     await out.notify("room", "a result nobody was there for")
     assert activity.holds() == []  # queued, not delivering
-    out.attach(_SlowReceiver())  # a receiver reconnects: the drain starts
+    receiver = _SlowReceiver()
+    out.attach(receiver)  # a receiver reconnects: the drain starts
     await asyncio.wait_for(sending.wait(), 5)
     assert _work(activity) == {"acp_outbox": 1}
     gate.set()
     await asyncio.wait_for(out.flush(), 5)
     await asyncio.sleep(0)  # the drain task's done callback
     assert _work(activity) == {"acp_notify": 1}  # delivered to the SDK's queue, not yet sent
-    out.notification_sent()  # the frame leaves the socket
+    out.notification_sent(receiver)  # the frame leaves the socket
     assert activity.holds() == []
     await out.aclose()
 
@@ -2100,7 +2101,7 @@ async def test_a_queued_acp_outcome_is_work_until_its_frame_leaves_the_socket(tm
     assert await out.notify("room", "done") is True
     assert out.pending() == []  # the durable entry is gone ...
     assert _work(activity) == {"acp_notify": 1}  # ... so the queued frame is held
-    out.notification_sent()  # the WebSocket server saw the ag2/notify frame go out
+    out.notification_sent(client)  # the WebSocket server saw the frame go out
     assert activity.holds() == []
     await out.notify("room", "another")
     out.detach(client)  # the client went away before the frame left: nothing will send it
@@ -2129,3 +2130,26 @@ def test_the_outcome_frame_is_recognised_as_the_sdk_writes_it():
     }
     assert [notifications_sent(m) for m in (wire, bare, update)] == [1, 0, 0]
     assert notifications_sent({"type": "websocket.receive", "text": wire["text"]}) == 0
+
+
+async def test_a_gone_receiver_s_queued_outcome_is_released_while_another_stays(tmp_path):
+    from assistant.acp.outbound import Outbound
+
+    activity = Activity()
+
+    class _Enqueuing:
+        async def ext_notification(self, method, params):
+            pass
+
+    out = Outbound("cn-1", tmp_path / "outbox", activity=activity)
+    older, newer = _Enqueuing(), _Enqueuing()
+    out.attach(older)
+    out.attach(newer)
+    await out.notify("room", "for the newest receiver")  # delivered to the newest one
+    assert _work(activity) == {"acp_notify": 1}
+    out.notification_sent(older)  # a frame on the OTHER connection frees nothing here
+    assert _work(activity) == {"acp_notify": 1}
+    out.detach(newer)  # it disconnects before the frame left
+    assert activity.holds() == []  # its hold goes with it; the older receiver stays attached
+    assert out.connected == 1
+    await out.aclose()

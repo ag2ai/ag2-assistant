@@ -195,10 +195,12 @@ def build_ws_app(acp_agent: ACPAgent, token: str) -> AsgiApp:
                     await send({"type": "websocket.close", "code": 4401})
                 return
             scopes: list[Any] = []
+            clients: list[Any] = []
 
             def tracked_bind(client: Any) -> Any:
                 conn_scope = acp_agent.bind(client)
                 scopes.append(conn_scope)  # the one teardown handle
+                clients.append(client)  # the receiver this connection's frames reach
                 return conn_scope
 
             conn_app = create_asgi_app(tracked_bind)
@@ -215,9 +217,9 @@ def build_ws_app(acp_agent: ACPAgent, token: str) -> AsgiApp:
             async def delivering(message: Any) -> None:
                 await held(message)
                 requests.on_send(message)
-                if outbound is not None:
+                if outbound is not None and clients:
                     for _ in range(notifications_sent(message)):
-                        outbound.notification_sent()
+                        outbound.notification_sent(clients[-1])
 
             try:
                 await conn_app(scope, receiving, delivering)
