@@ -456,12 +456,14 @@ class ProfileManager:
             except Exception as exc:
                 self.boot_errors[meta.id] = str(exc)
                 profile_logger(meta.id).error("profile failed to boot: %s", exc)
-        self._release_startup()  # from here the holds speak for themselves
         for connection in self._connections.list_connections():
             await self.start_channel(connection.id)
         for listener in self._connections.list_acp_connections():
             if listener.port is not None:
                 await self.start_acp_listener(listener.connection.id)
+        # Profiles, schedules and listeners are up: from here the holds speak for
+        # themselves.
+        self._release_startup()
 
     async def _boot(self, meta: ProfileMeta) -> ProfileRuntime:
         # Booting is work, and the schedule is unknown until the task service reads it:

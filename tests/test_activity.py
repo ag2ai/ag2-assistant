@@ -1315,3 +1315,32 @@ async def test_closing_the_manager_settles_a_pending_sign_in_wait(paths, tmp_pat
     assert _work(manager.activity) == {"codex_signin": 1}
     await manager.close()
     assert json.loads(path.read_text())["holds"] == []
+
+
+async def test_startup_work_lasts_until_the_message_listeners_are_up(paths):
+    from assistant.connections import ConnectionStore
+    from assistant.profiles import ProfileRegistry
+    from tests.support.apps import make_manager
+    from tests.support.fakes import FakeChannel
+
+    gate = asyncio.Event()
+    connecting = asyncio.Event()
+
+    class _SlowChannel(FakeChannel):
+        async def start(self, router):
+            connecting.set()
+            await gate.wait()  # Telegram's get_me / polling start takes its time
+            await super().start(router)
+
+    ProfileRegistry(paths).create_profile("Work", "#109e91")
+    ConnectionStore(paths).create_connection("telegram", "Work", {"TELEGRAM_BOT_TOKEN": "t"})
+    manager = make_manager(paths, channel_factory=lambda *a, **k: _SlowChannel(*a, **k))
+    starting = asyncio.ensure_future(manager.start())
+    await asyncio.wait_for(connecting.wait(), 5)
+    assert _work(manager.activity) == {"startup": 1}  # profiles booted, listeners not yet
+    gate.set()
+    await asyncio.wait_for(starting, 5)
+    try:
+        assert _work(manager.activity) == {}
+    finally:
+        await manager.close()
