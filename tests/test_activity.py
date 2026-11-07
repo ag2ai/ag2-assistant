@@ -667,11 +667,11 @@ async def test_a_failed_schedule_read_fails_closed_and_recovers_on_its_own(paths
     failures = {"left": 0}
 
     class _Flaky(TaskStore):
-        async def list_tasks(self):
+        async def _read_json(self, path):  # one record's read fails, the rest are fine
             if failures["left"]:
                 failures["left"] -= 1
                 raise OSError("disk hiccup")
-            return await super().list_tasks()
+            return await super()._read_json(path)
 
     tasks = TaskService(
         config=Config.for_paths(paths),

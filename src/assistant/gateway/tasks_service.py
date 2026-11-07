@@ -319,7 +319,8 @@ class TaskService:
         A read that fails leaves the hold unknown (sleep-blocking) and retries by itself."""
         key = self._config.data_dir.name
         try:
-            tasks = await self._require_store().list_tasks()
+            # strict: a record that cannot be read must not turn into "not scheduled"
+            tasks = await self._require_store().list_tasks(strict=True)
         except Exception as exc:
             from assistant.observability import log_suppressed
 
