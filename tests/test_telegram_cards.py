@@ -158,6 +158,22 @@ async def test_a_button_whose_card_is_not_in_the_chat_says_so(paths):
         assert len(app.models.requests) == before
 
 
+async def test_a_button_from_an_earlier_chat_does_not_act_in_the_new_one(paths):
+    """Two chats may each draw a `booking` surface; a tap reaches only its own chat's."""
+    async with _Install(paths, BOOKING, FakeTelegramBot()) as app:
+        ch = app.channel()
+        await _say(ch, app.bot, "book?")
+        old_card, old_button = app.card(), app.button()
+        await _say(ch, app.bot, "/new")
+        await _say(ch, app.bot, "book again?")
+        before = len(app.models.requests)
+
+        await ch._on_callback(telegram_tap(old_button, old_card), None)
+
+        assert app.bot.shown()[-1] == CARD_EXPIRED
+        assert len(app.models.requests) == before
+
+
 async def test_what_telegram_refuses_falls_back_to_plain_text_and_a_keyboard(paths):
     async with _Install(paths, BOOKING, FakeTelegramBot(refuse=True)) as app:
         ch = app.channel()
@@ -217,7 +233,7 @@ async def test_a_server_action_redraws_its_card_in_place(paths):
         (chat,) = await gateway.list_chats()
         await gateway.emit_event(chat["chat_id"], status)
         placeholder = await app.bot.send_message(42, "⏳")
-        await ch._render(Reply("Here.", (status,)), placeholder, placeholder)
+        await ch._render(Reply("Here.", (status,), chat["chat_id"]), placeholder, placeholder)
         card = app.card()
         assert "<p>open</p>" in app.bot.rich[card.message_id]["html"]
         before = len(app.models.requests)
@@ -233,3 +249,35 @@ async def test_a_task_notification_arrives_as_rich_markdown(paths):
         await app.channel().notify("42", "Task **done**.")
 
         assert app.bot.shown() == ["Task **done**."]
+
+
+async def test_a_card_whose_data_a_later_turn_wrote_keeps_its_buttons(paths):
+    """A data-only record for a drawn surface updates its data and leaves its tree."""
+    status = A2UISurface(
+        "status",
+        component={
+            "id": "root",
+            "_components": [
+                {"id": "root", "component": "Column", "children": ["state", "save"]},
+                {"id": "state", "component": "Text", "text": {"path": "/status"}},
+                *_button("save", "Confirm", "save_surface", {"data": {"path": "/next"}}),
+            ],
+        },
+        data={"status": "open", "next": {"status": "booked"}},
+    )
+    async with _Install(paths, "Here.", FakeTelegramBot()) as app:
+        ch = app.channel()
+        await _say(ch, app.bot, "status?")
+        gateway = app.manager.get(app.pid).require_gateway()
+        (chat,) = await gateway.list_chats()
+        await gateway.emit_event(chat["chat_id"], status)
+        placeholder = await app.bot.send_message(42, "⏳")
+        await ch._render(Reply("Here.", (status,), chat["chat_id"]), placeholder, placeholder)
+        card = app.card()
+        written = {"status": "held", "next": {"status": "confirmed"}}
+        await gateway.emit_event(chat["chat_id"], A2UISurface("status", data=written))
+
+        await ch._on_callback(telegram_tap(app.button(), card), None)
+
+        assert CARD_EXPIRED not in app.bot.shown()
+        assert "<p>confirmed</p>" in app.bot.rich[card.message_id]["html"]

@@ -216,9 +216,9 @@ class TraceEditor:
             self.traced = True
 
 
-def _card_key(surface_id: str) -> str:
-    """The short, fixed-size name a surface's buttons carry in their callback data."""
-    return hashlib.sha256(surface_id.encode()).hexdigest()[:12]
+def _card_key(chat: str, surface_id: str) -> str:
+    """The short, fixed-size name a Chat's surface's buttons carry in their callback data."""
+    return hashlib.sha256(f"{chat}\n{surface_id}".encode()).hexdigest()[:12]
 
 
 def _thread_of(message) -> dict:
@@ -349,8 +349,8 @@ class TelegramChannel(Channel):
         key, _, index = query.data[len(_CARD_PREFIX) :].rpartition(":")
         router = self._require_router()
         inbound = self._from_callback(query)
-        surfaces = await router.surfaces(inbound)
-        surface = next((s for sid, s in surfaces.items() if _card_key(sid) == key), None)
+        chat, surfaces = await router.surfaces(inbound)
+        surface = next((s for sid, s in surfaces.items() if _card_key(chat, sid) == key), None)
         actions = render_card(surface, f"{_CARD_PREFIX}{key}:").actions if surface else ()
         if not index.isdigit() or int(index) >= len(actions):
             await self._send(chat_id, CARD_EXPIRED)
@@ -369,13 +369,13 @@ class TelegramChannel(Channel):
         if isinstance(outcome, Redraw) and surface is not None:
             redrawn = copy(surface)
             redrawn.data = outcome.data
-            await self._redraw(query.message, redrawn)
+            await self._redraw(query.message, key, redrawn)
         await self._render(outcome, placeholder, placeholder, traced=tracer.traced)
 
-    async def _send_cards(self, message, surfaces) -> None:
-        """Send each A2UI surface into `message`'s chat and forum topic."""
+    async def _send_cards(self, message, chat: str, surfaces) -> None:
+        """Send each of `chat`'s A2UI surfaces into `message`'s chat and forum topic."""
         for surface in surfaces:
-            key = _card_key(surface.surface_id)
+            key = _card_key(chat, surface.surface_id)
             card = render_card(surface, f"{_CARD_PREFIX}{key}:")
             if card.html:
                 await self._post_card(message.chat.id, _thread_of(message), key, card)
@@ -409,9 +409,8 @@ class TelegramChannel(Channel):
                 log_suppressed("telegram plain card", exc)
                 return
 
-    async def _redraw(self, message, surface: A2UISurface) -> None:
+    async def _redraw(self, message, key: str, surface: A2UISurface) -> None:
         """Draw `surface` over the card message it came from, or anew when that fails."""
-        key = _card_key(surface.surface_id)
         card = render_card(surface, f"{_CARD_PREFIX}{key}:")
         if not await self._edit_card(message, key, card):
             await self._post_card(message.chat.id, _thread_of(message), key, card)
@@ -699,11 +698,10 @@ class TelegramChannel(Channel):
             await self._say(self.format_outbound(outcome.text), home, message, markup)
             return
 
-        surfaces = outcome.surfaces if isinstance(outcome, Reply) else ()
-        carded = bool(surfaces)
-        if carded:
+        carded = isinstance(outcome, Reply) and bool(outcome.surfaces)
+        if carded and isinstance(outcome, Reply):
             # Cards stand above the text that speaks of them, as the web app draws them.
-            await self._send_cards(message, surfaces)
+            await self._send_cards(message, outcome.chat, outcome.surfaces)
             home = None
         spoken = spoken_text(outcome)
         if isinstance(outcome, Reply) and spoken:

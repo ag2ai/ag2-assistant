@@ -383,7 +383,13 @@ class Gateway:
         """Each A2UI surface `chat_id`'s history holds, by id, drawn over its latest data."""
         latest: dict[str, A2UISurface] = {}
         for event in await self.replay_events(chat_id):
-            if isinstance(event, A2UISurface):
+            if (
+                isinstance(event, A2UISurface)
+                and not event.component
+                and event.surface_id in latest
+            ):
+                latest[event.surface_id].data = copy.deepcopy(event.data)
+            elif isinstance(event, A2UISurface):
                 latest[event.surface_id] = copy.copy(event)
             elif isinstance(event, A2UISurfaceDataUpdated) and event.surface_id in latest:
                 latest[event.surface_id].data = copy.deepcopy(event.data)

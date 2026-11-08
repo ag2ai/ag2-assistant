@@ -116,6 +116,30 @@ def test_buttons_become_callbacks_carrying_their_resolved_action():
     )
 
 
+def test_a_button_context_keeps_its_literal_objects_and_resolves_bindings_inside_them():
+    context = {
+        "data": {"status": "booked", "at": {"path": "/time"}},
+        "tags": ["vip", {"path": "/time"}],
+    }
+    surface = _surface(
+        {
+            "id": "root",
+            "component": "Button",
+            "child": "label",
+            "action": {"event": {"name": "save_surface", "context": context}},
+        },
+        {"id": "label", "component": "Text", "text": "Save"},
+        data={"time": "19:00"},
+    )
+
+    (save,) = render_card(surface, "a2u:abcd1234:").actions
+
+    assert save.context == {
+        "data": {"status": "booked", "at": "19:00"},
+        "tags": ["vip", "19:00"],
+    }
+
+
 def test_what_telegram_cannot_draw_is_left_out_and_noted():
     surface = _surface(
         {"id": "root", "component": "Column", "children": ["text", "chart", "field"]},

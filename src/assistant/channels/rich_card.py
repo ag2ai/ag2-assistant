@@ -186,6 +186,16 @@ class _Drawer:
             return _walk(self.data, [p for p in path.split("/") if p])
         return _walk(item if item is not None else self.data, [p for p in path.split("/") if p])
 
+    def context(self, value: Any, item: Any) -> Any:
+        """An action context with each `{path}` binding resolved, however deep it sits."""
+        if isinstance(value, list):
+            return [self.context(entry, item) for entry in value]
+        if not isinstance(value, dict):
+            return value
+        if isinstance(value.get("path"), str) and len(value) == 1:
+            return self.resolve(value, item)
+        return {key: self.context(entry, item) for key, entry in value.items()}
+
     def raw(self, value: Any, item: Any, mapping: Any = None) -> str:
         """A bound value as unescaped text, through the component's `map` if it has one."""
         resolved = self.resolve(value, item)
@@ -408,11 +418,7 @@ class _Drawer:
                 self.omitted.append("Button")
             return []
         context = event.get("context")
-        resolved = (
-            {key: self.resolve(value, item) for key, value in context.items()}
-            if isinstance(context, dict)
-            else {}
-        )
+        resolved = self.context(context, item) if isinstance(context, dict) else {}
         index = len(self.actions)
         self.actions.append(
             CardAction(

@@ -491,6 +491,7 @@ class Reply:
 
     text: str
     surfaces: tuple[A2UISurface, ...] = ()
+    chat: str = ""  # the Chat its surfaces were drawn in
 
 
 @dataclass(frozen=True)
@@ -1206,16 +1207,19 @@ class ChannelRouter:
         # A stopped turn comes back with nothing to say; say nothing rather than an
         # empty reply, so the adapter drops the placeholder instead of leaving it.
         surfaces = tuple(drawn.surfaces) if drawn is not None else ()
-        return Reply(reply, surfaces) if reply or surfaces else NOTHING
+        if surfaces:
+            return Reply(reply, surfaces, chat_id)
+        return Reply(reply) if reply else NOTHING
 
-    async def surfaces(self, inbound: InboundMessage) -> dict[str, A2UISurface]:
-        """The A2UI surfaces this Peer's Chat holds, by id, as drawn over their latest data."""
+    async def surfaces(self, inbound: InboundMessage) -> tuple[str, dict[str, A2UISurface]]:
+        """This Peer's Chat and the A2UI surfaces it holds, by id, over their latest data."""
         if not self.paired(inbound):
-            return {}
+            return "", {}
         runtime = self._runtime(inbound)
         if not isinstance(runtime, tuple):
-            return {}
-        return await runtime[1].chat_surfaces(self._chat_for(inbound))
+            return "", {}
+        chat = self._chat_for(inbound)
+        return chat, await runtime[1].chat_surfaces(chat)
 
     async def act(self, inbound: InboundMessage, click: A2UIIncomingAction, **turn) -> Outcome:
         """Apply a tapped A2UI action from this Peer to its Chat: a server action runs
