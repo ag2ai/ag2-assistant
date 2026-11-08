@@ -2,12 +2,9 @@
 
 import asyncio
 import contextlib
-import json
 from collections.abc import AsyncIterator, Mapping
 from typing import Any
 
-from ag2.a2ui.incoming import A2UIIncomingAction, A2UIIncomingActionResult, parse_incoming_message
-from ag2.a2ui.server_action import build_server_action_context, run_server_action
 from ag_ui.core import Event, ResumeEntry, RunAgentInput
 from ag_ui.encoder import EventEncoder
 from fastapi import APIRouter, Depends, HTTPException
@@ -15,10 +12,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from assistant import feedback as feedback_learner
-from assistant.a2ui import A2UI_SERVER_ACTIONS
+from assistant.a2ui_click import InvalidClick, parse_click, submit_click
 from assistant.events import (
-    A2UIActionSubmitted,
-    A2UISurfaceDataUpdated,
     Attachment,
     FeedbackCleared,
     FeedbackGiven,
@@ -32,9 +27,6 @@ from assistant.gateway.schemas.agui import FeedResponse
 from assistant.gateway.uploads import decode_attachments, persist_uploads
 
 _STREAM_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
-
-# Cap on the data model a click carries, bounding any client-supplied body.
-_MAX_A2UI_STATE_BYTES = 256 * 1024
 
 
 class FeedRequest(BaseModel):
@@ -59,23 +51,6 @@ class FeedbackClearRequest(BaseModel):
 class A2UIActionRequest(BaseModel):
     message: dict[str, Any]
     state: dict[str, Any] | None = None
-
-
-def _clicked_instance_model(state, surface_id: str) -> dict | None:
-    """The data model a click sends for the Card instance `surface_id` — None when it
-    sends none, or names a different instance."""
-    if not isinstance(state, dict) or state.get("surfaceId") != surface_id:
-        return None
-    data = state.get("data")
-    return data if isinstance(data, dict) else None
-
-
-def _oversized_model(model: dict) -> bool:
-    """Whether a client-supplied data model exceeds the bound on a persisted body."""
-    try:
-        return len(json.dumps(model, ensure_ascii=False).encode()) > _MAX_A2UI_STATE_BYTES
-    except (TypeError, ValueError):
-        return True
 
 
 async def _sse(events: AsyncIterator[Event]) -> AsyncIterator[str]:
@@ -243,58 +218,25 @@ def build_profile_router(d: GatewayDeps, get_runtime, *, surfaces: Mapping[str, 
         """A click on an A2UI surface. A registered server action runs here; any other
         Button action is described to the agent as a new Turn."""
         gateway = runtime.require_gateway()
-        parsed = parse_incoming_message(req.message)
-        if not isinstance(parsed, A2UIIncomingActionResult):
-            raise HTTPException(status_code=422, detail="Invalid A2UI action.")
-        click = parsed.action
-        if not click.surface_id or not click.source_component_id:
-            raise HTTPException(status_code=422, detail="Unsupported A2UI action.")
-        action = A2UI_SERVER_ACTIONS.get(click.name)
-        if action is None:
-            model = _clicked_instance_model(req.state, click.surface_id)
-            oversized = model is not None and _oversized_model(model)
-            if model is not None and not oversized:
-                await gateway.emit_event(
-                    chat_id, A2UISurfaceDataUpdated(click.surface_id, data=model)
-                )
-            await gateway.emit_event(
-                chat_id, A2UIActionSubmitted(click.surface_id, action_name=click.name)
+        try:
+            outcome = await submit_click(
+                gateway,
+                chat_id,
+                parse_click(req.message),
+                req.state,
+                version=req.message.get("version", "v1.0"),
             )
-            text = (
-                f"[[A2UI_ACTION]] The user clicked the A2UI action '{click.name}' on surface "
-                f"'{click.surface_id}'. Its current values are: {click.context}. "
-                "Carry out the requested action and respond to the user."
-            )
+        except InvalidClick as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if outcome.turn_text is not None:
             request = TurnRequest(
-                text=text, asker=chat_asker(runtime, chat_id), surface=surfaces.get(surface, "")
+                text=outcome.turn_text,
+                asker=chat_asker(runtime, chat_id),
+                surface=surfaces.get(surface, ""),
             )
             runs.start(gateway, chat_id, request)
-            if oversized:  # the click still reaches the agent; only the model is refused
-                raise HTTPException(status_code=413, detail="A2UI state too large to store.")
-            return {"ok": True}
-        click = A2UIIncomingAction(
-            name=click.name,
-            surface_id=click.surface_id,
-            source_component_id=click.source_component_id,
-            timestamp=click.timestamp,
-            context={**click.context, "surface_id": click.surface_id},
-            user_message=click.user_message,
-            metadata=click.metadata,
-        )
-        messages = await run_server_action(
-            action,
-            click,
-            version=req.message.get("version", "v1.0"),
-            context=build_server_action_context(gateway.require_agent()),
-        )
-        for message in messages:
-            update = message.get("updateDataModel")
-            if isinstance(update, dict) and update.get("surfaceId") == click.surface_id:
-                value = update.get("value")
-                if update.get("path", "/") == "/" and isinstance(value, dict):
-                    await gateway.emit_event(
-                        chat_id, A2UISurfaceDataUpdated(click.surface_id, data=value)
-                    )
+        if outcome.oversized:  # the click still reaches the agent; only the model is refused
+            raise HTTPException(status_code=413, detail="A2UI state too large to store.")
         return {"ok": True}
 
     return r
