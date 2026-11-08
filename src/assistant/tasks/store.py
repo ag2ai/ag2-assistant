@@ -99,8 +99,10 @@ class TaskStore:
     async def delete_task(self, task_id: str) -> None:
         await self._store.delete(f"{_TASKS}{task_id}.json")
 
-    async def list_tasks(self) -> list[Task]:
-        tasks = await self._read_all(_TASKS, Task)
+    async def list_tasks(self, *, strict: bool = False) -> list[Task]:
+        """Every task, newest first. A record that cannot be read or decoded is skipped,
+        or with ``strict`` raises, for a caller that must not treat a partial list as whole."""
+        tasks = await self._read_all(_TASKS, Task, strict=strict)
         tasks.sort(key=lambda t: t.created_at, reverse=True)
         return tasks
 
@@ -279,15 +281,21 @@ class TaskStore:
         except Exception as exc:
             raise TaskStoreCorruptionError(doc_id, path, exc) from exc
 
-    async def _read_all(self, prefix: str, cls) -> list:
+    async def _read_all(self, prefix: str, cls, *, strict: bool = False) -> list:
         out = []
         for entry in await self._store.list(prefix):
             if not entry.endswith(".json"):
                 continue
             try:
-                data = await self._read_json(prefix + entry)
-                if data is not None:
-                    out.append(cls.from_dict(data))
+                raw = await self._store.read(prefix + entry)
+                if raw is None:
+                    continue  # listed, then deleted: not a record
+                data = json.loads(raw)
+                if not isinstance(data, dict):
+                    raise ValueError(f"record {entry} is not an object")
+                out.append(cls.from_dict(data))
             except Exception:
+                if strict:
+                    raise
                 logger.exception("skipping corrupt record %s", entry)
         return out

@@ -11,6 +11,7 @@ Route map:
   Global (unprefixed):
     GET  /api/health                         -> process status (first running runtime)
     GET  /api/status                         -> [{pid, busy, running_tasks, unseen_done}] activity badges
+    GET  /api/activity                       -> {ts, idle_since, holds} open work for a sleep/wake host
     GET  /api/usage                          -> {profiles:[{pid,name,...}], total} install-wide roll-up
     POST /api/secrets/key                    -> save a provider key (upserts its Default Secret); reloads ALL runtimes
     GET/POST /api/secrets[/{sid}] + DELETE   -> Secret CRUD (named reusable API keys); reloads ALL runtimes
@@ -568,172 +569,174 @@ def create_app(
 
         runtime.on_close(_on_archive)
 
-        sid = uuid.uuid4().hex[:8]
-        # A run is a plain chat now, so voice has one binding to make: the chat
-        # it's continuing (its stream carries task/run framing already, same as
-        # any other chat). persist_chat mirrors that stream so spoken transcripts
-        # survive reload and join the shared history (None → bare voice session).
-        origin_chat = websocket.query_params.get("chat") or None
-        persist_chat = origin_chat
-        # Persist spoken turns by ROLE ALTERNATION, not the "completed" event (Gemini
-        # doesn't fire it reliably): accumulate each side's chunks and flush a turn
-        # when the other side starts speaking → alternating ModelRequest/ModelResponse.
-        user_buf: list[str] = []
-        agent_buf: list[str] = []
-        last_role: dict[str, str | None] = {"v": None}  # "user" | "agent"
-        user_chunked = {"v": False}  # the utterance in flight already arrived as chunks
+        # The call is work for the whole socket: setup, streaming, final persistence.
+        with gateway.track("voice"):
+            sid = uuid.uuid4().hex[:8]
+            # A run is a plain chat now, so voice has one binding to make: the chat
+            # it's continuing (its stream carries task/run framing already, same as
+            # any other chat). persist_chat mirrors that stream so spoken transcripts
+            # survive reload and join the shared history (None → bare voice session).
+            origin_chat = websocket.query_params.get("chat") or None
+            persist_chat = origin_chat
+            # Persist spoken turns by ROLE ALTERNATION, not the "completed" event (Gemini
+            # doesn't fire it reliably): accumulate each side's chunks and flush a turn
+            # when the other side starts speaking → alternating ModelRequest/ModelResponse.
+            user_buf: list[str] = []
+            agent_buf: list[str] = []
+            last_role: dict[str, str | None] = {"v": None}  # "user" | "agent"
+            user_chunked = {"v": False}  # the utterance in flight already arrived as chunks
 
-        async def _flush_user():
-            text = "".join(user_buf).strip()
-            user_buf.clear()
-            if persist_chat and text:
+            async def _flush_user():
+                text = "".join(user_buf).strip()
+                user_buf.clear()
+                if persist_chat and text:
+                    with contextlib.suppress(Exception):
+                        await gateway.emit_event(
+                            persist_chat, ModelRequest(parts=[TextInput(content=text)])
+                        )
+
+            async def _flush_agent():
+                text = "".join(agent_buf).strip()
+                agent_buf.clear()
+                if persist_chat and text:
+                    with contextlib.suppress(Exception):
+                        await gateway.emit_event(
+                            persist_chat, ModelResponse(message=ModelMessage(content=text))
+                        )
+
+            async def forward_event(event) -> None:
+                # Forward a structured AG2 event verbatim (same wire shape as the text
+                # StreamBridge) so the voice client folds it with the one shared reducer
+                # → tool chips/cards, task cards, deliverables, all "for free".
                 with contextlib.suppress(Exception):
-                    await gateway.emit_event(
-                        persist_chat, ModelRequest(parts=[TextInput(content=text)])
+                    await websocket.send_json(
+                        {"event": to_wire(as_drawn(event, gateway.catalog, gateway.card_sources))}
                     )
 
-        async def _flush_agent():
-            text = "".join(agent_buf).strip()
-            agent_buf.clear()
-            if persist_chat and text:
-                with contextlib.suppress(Exception):
-                    await gateway.emit_event(
-                        persist_chat, ModelResponse(message=ModelMessage(content=text))
-                    )
+            # The voice agent can hang up the call itself via its end_call tool, which
+            # trips this event; wait_end() (below) then ends the job race → teardown.
+            end_requested = asyncio.Event()
 
-        async def forward_event(event) -> None:
-            # Forward a structured AG2 event verbatim (same wire shape as the text
-            # StreamBridge) so the voice client folds it with the one shared reducer
-            # → tool chips/cards, task cards, deliverables, all "for free".
-            with contextlib.suppress(Exception):
-                await websocket.send_json(
-                    {"event": to_wire(as_drawn(event, gateway.catalog, gateway.card_sources))}
+            try:
+                agent = await gateway.build_voice_agent(
+                    voice_id=sid,
+                    origin_chat=origin_chat,
+                    on_event=forward_event,  # delegated universal-agent events → voice client
+                    on_end=end_requested.set,
                 )
+            except Exception as exc:
+                with contextlib.suppress(Exception):
+                    await websocket.send_json({"type": "error", "message": str(exc)})
+                    await websocket.close()
+                return
 
-        # The voice agent can hang up the call itself via its end_call tool, which
-        # trips this event; wait_end() (below) then ends the job race → teardown.
-        end_requested = asyncio.Event()
+            async def pump_audio(context):
+                with context.stream.where(SynthesizedAudioEvent).join() as evs:
+                    async for e in evs:
+                        await websocket.send_bytes(e.content)
 
-        try:
-            agent = await gateway.build_voice_agent(
-                voice_id=sid,
-                origin_chat=origin_chat,
-                on_event=forward_event,  # delegated universal-agent events → voice client
-                on_end=end_requested.set,
-            )
-        except Exception as exc:
-            with contextlib.suppress(Exception):
-                await websocket.send_json({"type": "error", "message": str(exc)})
-                await websocket.close()
-            return
-
-        async def pump_audio(context):
-            with context.stream.where(SynthesizedAudioEvent).join() as evs:
-                async for e in evs:
-                    await websocket.send_bytes(e.content)
-
-        async def pump_text(context):
-            # ModelResponse marks the end of an agent turn for BOTH providers
-            # (Gemini turn_complete / OpenAI response.done) — the provider-agnostic
-            # turn boundary that separates one spoken reply from the next.
-            sel = (
-                TranscriptionChunkEvent
-                | TranscriptionCompletedEvent
-                | ModelMessageChunk
-                | ModelResponse
-            )
-            with context.stream.where(sel).join() as evs:
-                async for e in evs:
-                    if isinstance(e, ModelResponse):  # agent turn ended
-                        if last_role["v"] == "agent":
-                            await _flush_agent()  # persist the spoken turn
-                        last_role["v"] = None
-                        # tell the client to close the bubble so the next reply is fresh
-                        await websocket.send_json({"type": "turn_end", "role": "agent"})
-                        continue
-                    if isinstance(e, ModelMessageChunk):  # agent speaking
-                        if last_role["v"] == "user":
-                            await _flush_user()  # user turn ended
-                        last_role["v"] = "agent"
-                        agent_buf.append(e.content)
-                        frame: dict[str, str | bool] = {
-                            "type": "transcript",
-                            "role": "agent",
-                            "text": e.content,
-                        }
-                    elif isinstance(e, TranscriptionCompletedEvent) and user_chunked["v"]:
-                        # Chunks already carried this utterance; the completed text only
-                        # closes the bubble (it can land after the agent started).
-                        user_chunked["v"] = False
-                        frame = {"type": "transcript", "role": "user", "text": e.content}
-                        frame["final"] = True
-                    else:  # user chunk, or a completed with no chunks before it
-                        if last_role["v"] == "agent":
-                            await _flush_agent()  # agent turn ended
-                        last_role["v"] = "user"
-                        user_buf.append(e.content)
-                        user_chunked["v"] = isinstance(e, TranscriptionChunkEvent)
-                        frame = {"type": "transcript", "role": "user", "text": e.content}
-                        if isinstance(e, TranscriptionCompletedEvent):
+            async def pump_text(context):
+                # ModelResponse marks the end of an agent turn for BOTH providers
+                # (Gemini turn_complete / OpenAI response.done) — the provider-agnostic
+                # turn boundary that separates one spoken reply from the next.
+                sel = (
+                    TranscriptionChunkEvent
+                    | TranscriptionCompletedEvent
+                    | ModelMessageChunk
+                    | ModelResponse
+                )
+                with context.stream.where(sel).join() as evs:
+                    async for e in evs:
+                        if isinstance(e, ModelResponse):  # agent turn ended
+                            if last_role["v"] == "agent":
+                                await _flush_agent()  # persist the spoken turn
+                            last_role["v"] = None
+                            # tell the client to close the bubble so the next reply is fresh
+                            await websocket.send_json({"type": "turn_end", "role": "agent"})
+                            continue
+                        if isinstance(e, ModelMessageChunk):  # agent speaking
+                            if last_role["v"] == "user":
+                                await _flush_user()  # user turn ended
+                            last_role["v"] = "agent"
+                            agent_buf.append(e.content)
+                            frame: dict[str, str | bool] = {
+                                "type": "transcript",
+                                "role": "agent",
+                                "text": e.content,
+                            }
+                        elif isinstance(e, TranscriptionCompletedEvent) and user_chunked["v"]:
+                            # Chunks already carried this utterance; the completed text only
+                            # closes the bubble (it can land after the agent started).
+                            user_chunked["v"] = False
+                            frame = {"type": "transcript", "role": "user", "text": e.content}
                             frame["final"] = True
-                    await websocket.send_json(frame)
+                        else:  # user chunk, or a completed with no chunks before it
+                            if last_role["v"] == "agent":
+                                await _flush_agent()  # agent turn ended
+                            last_role["v"] = "user"
+                            user_buf.append(e.content)
+                            user_chunked["v"] = isinstance(e, TranscriptionChunkEvent)
+                            frame = {"type": "transcript", "role": "user", "text": e.content}
+                            if isinstance(e, TranscriptionCompletedEvent):
+                                frame["final"] = True
+                        await websocket.send_json(frame)
 
-        async def pump_events(context):
-            # The voice agent's OWN basic tools (delegated universal-agent events
-            # come through forward_event). Forward the batch raw — minus the plumbing
-            # tools (ask_assistant/end_call) the user shouldn't see — so the client
-            # folds chips/cards the same way it does for text. Only the ToolCallsEvent
-            # batch is forwarded; the client's reducer ignores the singular event.
-            with context.stream.where(ToolCallsEvent).join() as evs:
-                async for e in evs:
-                    calls = [
-                        c
-                        for c in e.calls
-                        if (getattr(c, "name", "") or "") not in ("ask_assistant", "end_call")
+            async def pump_events(context):
+                # The voice agent's OWN basic tools (delegated universal-agent events
+                # come through forward_event). Forward the batch raw — minus the plumbing
+                # tools (ask_assistant/end_call) the user shouldn't see — so the client
+                # folds chips/cards the same way it does for text. Only the ToolCallsEvent
+                # batch is forwarded; the client's reducer ignores the singular event.
+                with context.stream.where(ToolCallsEvent).join() as evs:
+                    async for e in evs:
+                        calls = [
+                            c
+                            for c in e.calls
+                            if (getattr(c, "name", "") or "") not in ("ask_assistant", "end_call")
+                        ]
+                        if calls:
+                            await forward_event(ToolCallsEvent(calls=calls))
+
+            async def recv_loop(context):
+                while True:
+                    msg = await websocket.receive()
+                    if msg.get("type") == "websocket.disconnect":
+                        break
+                    data = msg.get("bytes")
+                    if data:
+                        await context.send(RecordedAudioEvent(data))
+
+            async def wait_end():
+                # The agent called end_call. Let the spoken goodbye drain before we tear
+                # the session down (the client closes its playback context on WS close).
+                await end_requested.wait()
+                await asyncio.sleep(2.5)
+
+            try:
+                async with agent.run() as context:
+                    await websocket.send_json({"type": "ready"})
+                    jobs = [
+                        asyncio.create_task(pump_audio(context)),
+                        asyncio.create_task(pump_text(context)),
+                        asyncio.create_task(pump_events(context)),
+                        asyncio.create_task(recv_loop(context)),
+                        asyncio.create_task(wait_end()),
                     ]
-                    if calls:
-                        await forward_event(ToolCallsEvent(calls=calls))
-
-        async def recv_loop(context):
-            while True:
-                msg = await websocket.receive()
-                if msg.get("type") == "websocket.disconnect":
-                    break
-                data = msg.get("bytes")
-                if data:
-                    await context.send(RecordedAudioEvent(data))
-
-        async def wait_end():
-            # The agent called end_call. Let the spoken goodbye drain before we tear
-            # the session down (the client closes its playback context on WS close).
-            await end_requested.wait()
-            await asyncio.sleep(2.5)
-
-        try:
-            async with agent.run() as context:
-                await websocket.send_json({"type": "ready"})
-                jobs = [
-                    asyncio.create_task(pump_audio(context)),
-                    asyncio.create_task(pump_text(context)),
-                    asyncio.create_task(pump_events(context)),
-                    asyncio.create_task(recv_loop(context)),
-                    asyncio.create_task(wait_end()),
-                ]
-                try:
-                    await asyncio.wait(jobs, return_when=asyncio.FIRST_COMPLETED)
-                finally:
-                    for j in jobs:
-                        j.cancel()
-                    await _flush_user()  # persist whichever turn was pending
+                    try:
+                        await asyncio.wait(jobs, return_when=asyncio.FIRST_COMPLETED)
+                    finally:
+                        for j in jobs:
+                            j.cancel()
+                        await _flush_user()  # persist whichever turn was pending
+                        await _flush_agent()
+            except WebSocketDisconnect:
+                with contextlib.suppress(Exception):
+                    await _flush_user()
                     await _flush_agent()
-        except WebSocketDisconnect:
-            with contextlib.suppress(Exception):
-                await _flush_user()
-                await _flush_agent()
-            return
-        except Exception as exc:
-            with contextlib.suppress(Exception):
-                await websocket.send_json({"type": "error", "message": str(exc)})
+                return
+            except Exception as exc:
+                with contextlib.suppress(Exception):
+                    await websocket.send_json({"type": "error", "message": str(exc)})
 
     # ------------------------------------------------------------------ #
     #  Static assets / SPA shell (global)                                 #

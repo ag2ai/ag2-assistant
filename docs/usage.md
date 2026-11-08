@@ -145,6 +145,7 @@ Endpoints:
 
 ```
 GET  /api/health                      -> {status, model, chats, ...}
+GET  /api/activity                    -> {ts, idle_since, holds: [{kind, ...}]}  (see Activity)
 GET  /api/chats                       -> {chats: [{chat_id, updated, preview, turns}]}
 GET  /api/chats/{id}                  -> {chat_id, messages: [{role, text}]}
 GET  /api/hitl/pending                -> {pending: [{id, text, options, path, ...}]}
@@ -430,11 +431,56 @@ Every key above also has an env override (these win over `config.yaml`):
 | `AG2ASSISTANT_REPLY_TIMEOUT` | `gateway.reply_timeout_s` |
 | `AG2ASSISTANT_CHAT_TITLES` | `gateway.chat_titles` (`0` turns off the LLM call that names a chat) |
 | `AG2ASSISTANT_TURN_SUMMARIES` | `gateway.turn_summaries` (default `false`; see [Turn summaries](#turn-summaries)) |
+| `AG2ASSISTANT_ACTIVITY_FILE` | a path the [activity](#activity) snapshot is mirrored to (unset: no file) |
 | `AG2ASSISTANT_SANDBOX` | `tools.sandbox` (`local` / `docker`) |
 | `AG2ASSISTANT_DISABLE_NATIVE_TOOLS` | `tools.disable_native` (default `false`; `true` removes the tools that only work in the native app from chat, task and ACP turns: `ask_user`, `answer_question`, `list_open_questions`, `describe_settings`, `describe_integrations`, `list_coding_agents`, `install_skill`, `remove_skill`, `search_skills`, `list_folders`) |
 | `AG2ASSISTANT_WEB_FETCH_ALLOW_PRIVATE` | `tools.web_fetch_allow_private` (default `false`; `true` lets `web_fetch` and `fetch_page` reach loopback, private and link-local hosts, such as a dev server on `localhost`) |
 | `AG2ASSISTANT_DOCKER_IMAGE` / `AG2ASSISTANT_DOCKER_NETWORK` | Docker sandbox |
 | `AG2ASSISTANT_AGGREGATE_EVERY_N` | `memory.aggregate_every_n_turns` |
+
+### Activity
+
+A host that stops an idle install (a cloud pod that sleeps) needs to know when it is
+safe to. `GET /api/activity` answers with the open *holds*, install-wide:
+
+```json
+{"ts": "2026-11-07T10:00:05Z", "idle_since": null,
+ "holds": [{"kind": "work", "count": 1, "detail": "turn"},
+           {"kind": "scheduled", "count": 2, "next": "2026-11-08T09:00:00Z"},
+           {"kind": "human", "until": "2026-11-07T10:05:00Z"}]}
+```
+
+- `work` is anything running now, tallied by `detail`: a chat turn (`turn`, from any
+  surface, from the moment it is accepted), a task run (`run`, including its wait in the
+  queue, summary and delivery), post-turn work (`background`: chat title, turn summary,
+  memory update, feedback learning), a voice call (`voice`), a channel message until its
+  reply is delivered (`channel`), a web chat run until the client took its last event
+  (`agui`), an ACP request until its answer is delivered (`acp_prompt`, with the agent's
+  turn inside it as `acp_turn`) or queued ACP outcomes being delivered (`acp_outbox`),
+  and the process booting (`startup`) or a profile booting (`boot`). `idle_since` is
+  when the last `work` hold closed, and null while one is open.
+- `scheduled` counts unpaused tasks with a future slot; `next` is the earliest. A slot
+  that passes while the process is down is skipped, not caught up, so a host must be
+  back before it. If any profile's schedule cannot be read (a failed read being
+  retried, or a profile that did not boot), the hold carries neither `count` nor
+  `next`, so the install never looks free of scheduled work on a guess.
+- `human` is a turn parked on a question or permission prompt; `until` is when that
+  prompt lapses.
+
+With `AG2ASSISTANT_ACTIVITY_FILE=/path/activity.json` the same snapshot is written there
+(atomically, tmp + rename) on every change of the holds; only the write that reports
+the last `work` hold closing waits 2.5 s, so back-to-back turns do not flap. A new
+process writes its state at once, holding `work/startup` until every profile is up, so a
+crashed predecessor's file never outlives it. A write that fails removes the file (no
+file means unknown, never idle) and is retried with backoff. The file is also rewritten
+every 30 s, so `ts` is a heartbeat: a reader treats a `ts` older than a few minutes, like
+a missing file, as "unknown, do not stop". An ordinary shutdown writes the settled state
+at once, keeping the `scheduled` hold (the tasks stay armed on disk); archiving a profile
+removes its tasks from the tally.
+
+The file is a hint for a host that cannot poll; a host that can must confirm with
+`GET /api/activity` before stopping the process. Both describe the gateway process;
+`ag2-assistant acp-serve` is a separate per-client stdio process and is not included.
 
 ### Turn summaries
 

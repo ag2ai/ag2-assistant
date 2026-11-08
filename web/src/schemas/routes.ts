@@ -81,6 +81,7 @@ import {
   TaskList,
 } from './task.ts'
 import {
+  Activity,
   CodexLoginUrl,
   CodexStatus,
   CodingAgents,
@@ -102,6 +103,7 @@ export const ROUTES: Record<string, z.ZodTypeAny> = {
   'GET /api/p/{pid}/screens/view': Screen,
   'PATCH /api/p/{pid}/screens/title': ScreenRow,
   'GET /api/health': Health,
+  'GET /api/activity': Activity,
   'GET /api/usage': UsageRollup,
   'GET /api/status': StatusList,
   'GET /api/p/{pid}/health': ProfileHealth,
