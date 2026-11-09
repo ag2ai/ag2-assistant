@@ -6,6 +6,7 @@ from collections.abc import Collection, Sequence
 from ag2.annotations import Context
 from ag2.events import (
     BaseEvent,
+    DataInput,
     ModelRequest,
     ModelResponse,
     TextInput,
@@ -14,7 +15,11 @@ from ag2.events import (
     ToolResultsEvent,
 )
 from ag2.middleware.base import BaseMiddleware, LLMCall
+from fast_depends.pydantic import PydanticSerializer
 
+_SERIALIZER = PydanticSerializer(
+    pydantic_config={"arbitrary_types_allowed": True}, use_fastdepends_errors=False
+)
 STUB_TEMPLATE = (
     "[tool result omitted to save tokens: {name}, {chars} chars. "
     "Call the tool again if you need it]"
@@ -22,14 +27,17 @@ STUB_TEMPLATE = (
 
 
 def _text_size(result: ToolResultEvent) -> int | None:
-    """Characters in a plain text result; None for errors, built-ins and non-text parts."""
+    """Characters in a text or data result; None for errors, built-ins and media parts."""
     if type(result) is not ToolResultEvent:
         return None
     size = 0
     for part in result.result.parts:
-        if not isinstance(part, TextInput) or type(part) is not TextInput:
+        if type(part) is TextInput:
+            size += len(part.content)
+        elif type(part) is DataInput:
+            size += len(_SERIALIZER.encode(part.data))
+        else:
             return None
-        size += len(part.content)
     return size or None
 
 

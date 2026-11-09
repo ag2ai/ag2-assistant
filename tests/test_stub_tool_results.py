@@ -1,6 +1,9 @@
 """Stubbing old tool results once a chat's prompt cache is cold."""
 
+from dataclasses import dataclass
+
 from ag2.events import (
+    DataInput,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -166,6 +169,36 @@ async def test_middleware_hands_the_stubbed_events_to_the_model_call():
     middleware = StubOldToolResultsMiddleware(_request(0), None, idle_s=IDLE, keep_chars=1000)
     await middleware.on_llm_call(call_next, _chat(gap=IDLE + 1), None)
     assert _texts(seen[0])[0].startswith("[tool result omitted")
+
+
+@dataclass
+class _Hits:
+    items: list[str]
+
+
+def test_data_results_are_sized_by_their_serialised_text_and_stubbed():
+    events = _chat(gap=IDLE + 1)
+    data = _Hits(["h" * 400, "i" * 400])
+    events[2] = ToolResultsEvent(
+        [
+            ToolResultEvent(
+                parent_id="a", name="duckduckgo_search", result=ToolResult(DataInput(data))
+            )
+        ]
+    )
+    out = _stub(events, keep_chars=1000)
+    stub = out[2].results[0].result.parts[0].content
+    assert stub.startswith("[tool result omitted to save tokens: duckduckgo_search, ")
+    kept = _stub(events, keep_chars=5000)[2].results[0].result.parts[0]
+    assert isinstance(kept, DataInput)
+
+
+def test_small_data_results_are_kept():
+    events = _chat(gap=IDLE + 1)
+    events[2] = ToolResultsEvent(
+        [ToolResultEvent(parent_id="a", name="t", result=ToolResult(DataInput(_Hits(["x"]))))]
+    )
+    assert isinstance(_stub(events, keep_chars=0)[2].results[0].result.parts[0], DataInput)
 
 
 def test_off_unless_the_env_names_an_idle_threshold(config):
