@@ -437,6 +437,20 @@ Every key above also has an env override (these win over `config.yaml`):
 | `AG2ASSISTANT_WEB_FETCH_ALLOW_PRIVATE` | `tools.web_fetch_allow_private` (default `false`; `true` lets `web_fetch` and `fetch_page` reach loopback, private and link-local hosts, such as a dev server on `localhost`) |
 | `AG2ASSISTANT_DOCKER_IMAGE` / `AG2ASSISTANT_DOCKER_NETWORK` | Docker sandbox |
 | `AG2ASSISTANT_AGGREGATE_EVERY_N` | `memory.aggregate_every_n_turns` |
+| `AG2ASSISTANT_TRIM_IDLE_SECONDS` | `memory.stub_tool_results_after_idle_s` (default `0` = off; see [Trimming old tool results](#trimming-old-tool-results)) |
+| `AG2ASSISTANT_TRIM_KEEP_CHARS` | `memory.stub_keep_result_chars` (default `30000`) |
+| `AG2ASSISTANT_TRIM_MIN_CHARS` | `memory.stub_min_result_chars` (default `300`) |
+| `AG2ASSISTANT_TRIM_EXCLUDE_TOOLS` | `memory.stub_exclude_tools` (comma-separated tool names never trimmed) |
+
+### Trimming old tool results
+
+Model providers cache a prompt's prefix, so editing old history while the cache is warm
+makes the next call dearer. With `AG2ASSISTANT_TRIM_IDLE_SECONDS` set, a chat that has
+been idle longer than that gets its old tool results replaced, in what is sent to the
+model only, by `[tool result omitted to save tokens: <tool>, <N> chars. Call the tool
+again if you need it]`. The newest `AG2ASSISTANT_TRIM_KEEP_CHARS` of results stay whole.
+Results already trimmed stay trimmed, nothing is trimmed mid-run, tool-call arguments are
+never touched, and the stored chat is unchanged. Off by default.
 
 ### Activity
 

@@ -72,6 +72,7 @@ from assistant.skills import (
     SkillStateStore,
     skill_origin,
 )
+from assistant.stub_tool_results import StubOldToolResultsMiddleware
 from assistant.tools import build_agent_tools, docker_environment
 from assistant.tools.docker_sandbox import build_docker_skill_runtime, docker_available
 from assistant.tools.mcp import build_mcp_tools
@@ -934,6 +935,16 @@ def create_agent(
             Middleware(HaltCheckMiddleware),
         ]
     )
+    if config.memory.stub_tool_results_after_idle_s > 0:
+        middleware.append(
+            Middleware(
+                StubOldToolResultsMiddleware,
+                idle_s=config.memory.stub_tool_results_after_idle_s,
+                keep_chars=config.memory.stub_keep_result_chars,
+                min_chars=config.memory.stub_min_result_chars,
+                exclude=config.memory.stub_exclude_tools,
+            )
+        )
     if knowledge is not None:
         plugins.append(knowledge_plugin(knowledge))
     selected_model = default_model or llm_config
