@@ -397,17 +397,13 @@ class TelegramChannel(Channel):
         if inbound is None or not self._require_router().paired(inbound):
             return
         with self._request_hold():
-            try:
-                await self._require_bot().do_api_request(
-                    "answerWidgetQuery", api_kwargs={"widget_query_id": raw["id"]}
-                )
-            except Exception as exc:
-                log_suppressed("telegram widget answer", exc)
             key, index = _card_button(str(raw.get("data", "")))
             found = await self._card_action(inbound, key, index, widget_actions)
             if found is None:
-                await self._send(inbound.chat_id, CARD_EXPIRED)
+                if not await self._answer_widget(raw["id"], CARD_EXPIRED):
+                    await self._send(inbound.chat_id, CARD_EXPIRED)
                 return
+            await self._answer_widget(raw["id"])
             surface, action = found
             chat_id, message_id = int(inbound.chat_id), raw.get("message_id")
 
@@ -418,6 +414,17 @@ class TelegramChannel(Channel):
                 await self._post_surface(chat_id, {}, key, _with_data(surface, data), private=True)
 
             await self._act(inbound, None, action, redraw)
+
+    async def _answer_widget(self, query_id: str, text: str | None = None) -> bool:
+        """Answer widget query `query_id`, handing `text` to that widget alone to show;
+        whether Telegram took the answer."""
+        kwargs = {"widget_query_id": query_id} | ({"data": text} if text else {})
+        try:
+            await self._require_bot().do_api_request("answerWidgetQuery", api_kwargs=kwargs)
+        except Exception as exc:
+            log_suppressed("telegram widget answer", exc)
+            return False
+        return True
 
     async def _card_action(
         self,

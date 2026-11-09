@@ -441,14 +441,19 @@ class FakeTelegramBot:
     sent; each flag makes it refuse or accept one kind of raw call."""
 
     def __init__(
-        self, refuse: bool = False, ephemeral_replies: bool = True, accepts_widgets: bool = False
+        self,
+        refuse: bool = False,
+        ephemeral_replies: bool = True,
+        accepts_widgets: bool = False,
+        widget_answers: bool = True,
     ) -> None:
         self.refuse = refuse
         self.ephemeral_replies = ephemeral_replies
         self.accepts_widgets = accepts_widgets
-        # The sendWidget arguments per widget message, and each widget query answered.
+        self.widget_answers = widget_answers
+        # The sendWidget arguments per widget message, and (query id, data) per answer.
         self.widgets: dict[int, dict] = {}
-        self.answered: list[str] = []
+        self.answered: list[tuple[str, str | None]] = []
         # (callback_query_id, text) per ephemeral reply shown only to the tapper.
         self.ephemeral: list[tuple[str, str]] = []
         self.messages: list[FakeTelegramMessage] = []
@@ -503,7 +508,9 @@ class FakeTelegramBot:
             self.widgets[message.message_id] = kwargs
             return {"message_id": message.message_id}
         if self.accepts_widgets and endpoint == "answerWidgetQuery":
-            self.answered.append(kwargs["widget_query_id"])
+            if not self.widget_answers:
+                raise RuntimeError("Bad Request: query is too old")
+            self.answered.append((kwargs["widget_query_id"], kwargs.get("data")))
             return True
         if endpoint == "sendRichMessage":
             message = self._put(kwargs["chat_id"], None, kwargs.get("message_thread_id"))

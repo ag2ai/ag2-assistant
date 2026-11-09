@@ -344,7 +344,7 @@ async def test_tapping_a_widget_button_answers_the_query_and_runs_its_action(pat
 
         await ch._on_widget_query(tap, None)
 
-        assert app.bot.answered == [tap.api_kwargs["widget_query"]["id"]]
+        assert app.bot.answered == [(tap.api_kwargs["widget_query"]["id"], None)]
         assert "'book'" in app.asked() and "19:00" in app.asked()
 
 
@@ -361,8 +361,24 @@ async def test_an_unpaired_widget_tap_is_neither_answered_nor_run(paths):
         assert len(app.models.requests) == before
 
 
-async def test_a_widget_button_whose_card_is_gone_says_so(paths):
+async def test_a_widget_button_whose_card_is_gone_says_so_to_that_widget_alone(paths):
     async with _Install(paths, BOOKING, FakeTelegramBot(accepts_widgets=True)) as app:
+        ch = app.channel()
+        await _say(ch, app.bot, "book?")
+        message, query = _widget(app.bot)
+        await _say(ch, app.bot, "/new")
+        shown = app.bot.shown()
+        tap = widget_tap(query, message)
+
+        await ch._on_widget_query(tap, None)
+
+        assert app.bot.answered == [(tap.api_kwargs["widget_query"]["id"], CARD_EXPIRED)]
+        assert app.bot.shown() == shown  # nothing new in the chat
+
+
+async def test_a_gone_card_is_told_to_the_chat_when_telegram_refuses_the_answer(paths):
+    bot = FakeTelegramBot(accepts_widgets=True, widget_answers=False)
+    async with _Install(paths, BOOKING, bot) as app:
         ch = app.channel()
         await _say(ch, app.bot, "book?")
         message, query = _widget(app.bot)
