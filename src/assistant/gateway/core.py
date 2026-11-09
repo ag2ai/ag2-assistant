@@ -23,6 +23,7 @@ from collections import deque
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
+from functools import partial
 from typing import Any
 from urllib.parse import quote
 
@@ -77,6 +78,9 @@ from assistant.coding.detect import parse_bridge
 from assistant.compaction import event_ref
 from assistant.config import Config, load_config
 from assistant.events import (
+    A2UISurface,
+    A2UISurfaceDataUpdated,
+    CardSourceUpdated,
     ChatSeen,
     TurnCancelled,
     TurnCompleted,
@@ -89,7 +93,7 @@ from assistant.gateway.chat_activity import ChatActivity
 from assistant.gateway.history import ChatEventLog
 from assistant.gateway.repair import MAX_HITL_PAUSE, repair_stream_history, wait_reply
 from assistant.gateway.tasks_service import TaskService
-from assistant.gateway.wire import is_binary_event
+from assistant.gateway.wire import as_drawn, is_binary_event
 from assistant.hitl import Asker, build_hitl_hook
 from assistant.integrations.google_auth import GoogleAuth
 from assistant.llm_configs import LlmConfigStore
@@ -370,6 +374,33 @@ class Gateway:
     def catalog(self) -> CardCatalog:
         """This profile's Card catalog, over its three Card directories."""
         return self._catalog
+
+    def drawn(self, surface: A2UISurface) -> A2UISurface:
+        """`surface` as a client is sent it: any Card instance drawn as primitives."""
+        return as_drawn(surface, self._catalog, self.card_sources)
+
+    async def chat_surfaces(self, chat_id: str) -> dict[str, A2UISurface]:
+        """Each A2UI surface `chat_id`'s history holds, by id, drawn over its latest data."""
+        latest: dict[str, A2UISurface] = {}
+        for event in await self.replay_events(chat_id):
+            if (
+                isinstance(event, A2UISurface)
+                and not event.component
+                and event.surface_id in latest
+            ):
+                latest[event.surface_id].data = copy.deepcopy(event.data)
+            elif isinstance(event, A2UISurface):
+                latest[event.surface_id] = copy.copy(event)
+            elif isinstance(event, A2UISurfaceDataUpdated) and event.surface_id in latest:
+                latest[event.surface_id].data = copy.deepcopy(event.data)
+            elif (
+                isinstance(event, CardSourceUpdated)
+                and not event.path
+                and event.surface_id in latest
+                and event.status in {"updated", "configured"}
+            ):
+                latest[event.surface_id].data = copy.deepcopy(event.data)
+        return {surface_id: self.drawn(surface) for surface_id, surface in latest.items()}
 
     @property
     def folders(self) -> FolderStore | None:
@@ -1083,6 +1114,7 @@ class Gateway:
             raise RuntimeError("Gateway not started")
 
         await self._maybe_onboard(asker)
+        forwarded = on_event is not None or on_text is not None
         msg = [text, *(attachments or [])]
 
         async with self._chat_lock(chat_id):
@@ -1146,7 +1178,7 @@ class Gateway:
                     ) as run:
                         turn = asyncio.ensure_future(run.result())
                         active.run, active.task = run, turn
-                        if on_event is None and on_text is None:
+                        if not forwarded:
                             reply = await wait_reply(
                                 turn,
                                 timeout=effective.gateway.reply_timeout_s,
@@ -1160,6 +1192,11 @@ class Gateway:
                                 hitl_pending=hitl_pending,
                                 timeout=effective.gateway.reply_timeout_s,
                                 on_text=on_text,
+                                settle=(
+                                    partial(self._emit_a2ui_surfaces, stream, a2ui_handle)
+                                    if a2ui_handle is not None
+                                    else None
+                                ),
                             )
                 except asyncio.CancelledError:
                     if active.cancelled:
@@ -1188,7 +1225,7 @@ class Gateway:
                     await self._persist_turn(chat_id, stream, text, "")
                     raise
                 else:
-                    if a2ui_handle is not None:
+                    if a2ui_handle is not None and not forwarded:
                         await self._emit_a2ui_surfaces(stream, a2ui_handle)
                     if reply.body is None:
                         response = reply.response
@@ -1343,9 +1380,10 @@ class Gateway:
                 log_suppressed("a2ui durable surface emit", exc, surface_id=surface.surface_id)
 
     async def _forwarding_events(
-        self, stream, turn, on_event, hitl_pending=None, timeout=None, on_text=None
+        self, stream, turn, on_event, hitl_pending=None, timeout=None, on_text=None, settle=None
     ):
-        """Await a driving turn, forwarding the agent's structured events to `on_event`.
+        """Await a driving turn, forwarding the agent's structured events to `on_event`;
+        `settle` runs after the turn ends and before forwarding stops.
 
         Uses AG2's stream subscription — the same event mechanism observers and the
         StreamBridge are built on, scoped to *this chat's* stream so it can't
@@ -1373,11 +1411,14 @@ class Gateway:
 
         sub_id = stream.subscribe(report)
         try:
-            return await wait_reply(
+            reply = await wait_reply(
                 turn,
                 timeout=timeout or self._config.gateway.reply_timeout_s,
                 hitl_pending=hitl_pending,
             )
+            if settle is not None:
+                await settle()
+            return reply
         finally:
             stream.unsubscribe(sub_id)
 

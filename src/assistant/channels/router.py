@@ -5,16 +5,19 @@ renders the outcome that comes back. Every decision about what a message means
 lives here; adapters keep only platform concerns.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
 
+from ag2.a2ui.incoming import A2UIIncomingAction
 from ag2.events import ModelMessageChunk, TextInput, ToolCallsEvent
 
 from assistant import connections
 from assistant import pairing as pairing_mod
+from assistant.a2ui_click import submit_click
 from assistant.activity import Activity
 from assistant.channels.base import InboundMessage, should_respond
+from assistant.events import A2UISurface
 from assistant.observability import log_suppressed
 from assistant.pairing import PairingStore
 from assistant.paths import Paths
@@ -423,6 +426,31 @@ class ToolTrace:
             log_suppressed("channel tool trace", exc)
 
 
+class SurfaceCollector:
+    """Keeps the A2UI surfaces one turn drew, each as a client would be sent it."""
+
+    def __init__(self, gateway) -> None:
+        self._gateway = gateway
+        self.surfaces: list[A2UISurface] = []
+
+    async def __call__(self, event) -> None:
+        if isinstance(event, A2UISurface):
+            self.surfaces.append(self._gateway.drawn(event))
+
+
+def fan_out(*handlers):
+    """One event callback that hands each event to every handler given, or None."""
+    live = [handler for handler in handlers if handler is not None]
+    if not live:
+        return None
+
+    async def each(event) -> None:
+        for handler in live:
+            await handler(event)
+
+    return each
+
+
 class TextStream:
     """Accumulates the model message being written and gives the adapter's ``show`` the
     text so far. Best-effort: text the adapter cannot show never fails a turn."""
@@ -458,9 +486,20 @@ def already_in(name: str) -> str:
 
 @dataclass(frozen=True)
 class Reply:
-    """Text to send back to the conversation the message came from."""
+    """Text to send back to the conversation the message came from, and the Card
+    surfaces its turn drew (only for an adapter that asked for them)."""
 
     text: str
+    surfaces: tuple[A2UISurface, ...] = ()
+    chat: str = ""  # the Chat its surfaces were drawn in
+
+
+@dataclass(frozen=True)
+class Redraw:
+    """A Card's data model a server action replaced; the adapter redraws that card."""
+
+    surface_id: str
+    data: dict
 
 
 @dataclass(frozen=True)
@@ -496,7 +535,7 @@ class Nothing:
     """No response at all — the adapter stays silent."""
 
 
-Outcome = Reply | Choose | Refuse | Ack | Nothing
+Outcome = Reply | Choose | Refuse | Ack | Nothing | Redraw
 
 NOTHING = Nothing()
 
@@ -1095,11 +1134,10 @@ class ChannelRouter:
         files: list[tuple[str, bytes]] | None = None,
         progress=None,
         stream=None,
+        cards: bool = False,
     ) -> Outcome:
-        """Run ``inbound`` and return what the adapter should render. ``progress`` is an
-        optional async ``(text, *, final) -> None`` given this turn's Tool trace as it
-        grows and once more when it ends; an adapter passing none gets today's turn.
-        ``stream`` is an optional async ``(text) -> None`` given the reply written so far."""
+        """Run ``inbound`` and return what the adapter should render; ``progress``,
+        ``stream`` and ``cards`` opt into the Tool trace, streamed text and drawn Cards."""
         if not should_respond(inbound):
             return NOTHING
         if not self.paired(inbound):
@@ -1146,6 +1184,7 @@ class ChannelRouter:
             return Ack()
 
         trace = ToolTrace(progress)
+        drawn = SurfaceCollector(gateway) if cards else None
         try:
             reply = await gateway.send_message(
                 text,
@@ -1154,9 +1193,9 @@ class ChannelRouter:
                 asker=asker,
                 attachments=attachments or [],
                 origin=peer_key(inbound.connection, inbound.chat_id),
-                # Wired only for an adapter that asked to trace; the rest run the
-                # unforwarded path.
-                on_event=trace if progress is not None else None,
+                # Wired only for an adapter that asked to trace or for cards; the rest
+                # run the unforwarded path.
+                on_event=fan_out(trace if progress is not None else None, drawn),
                 on_text=TextStream(stream) if stream is not None else None,
             )
         except Exception as exc:  # surface failures to the user
@@ -1167,4 +1206,30 @@ class ChannelRouter:
             await trace.settle()
         # A stopped turn comes back with nothing to say; say nothing rather than an
         # empty reply, so the adapter drops the placeholder instead of leaving it.
+        surfaces = tuple(drawn.surfaces) if drawn is not None else ()
+        if surfaces:
+            return Reply(reply, surfaces, chat_id)
         return Reply(reply) if reply else NOTHING
+
+    async def surfaces(self, inbound: InboundMessage) -> tuple[str, dict[str, A2UISurface]]:
+        """This Peer's Chat and the A2UI surfaces it holds, by id, over their latest data."""
+        if not self.paired(inbound):
+            return "", {}
+        runtime = self._runtime(inbound)
+        if not isinstance(runtime, tuple):
+            return "", {}
+        chat = self._chat_for(inbound)
+        return chat, await runtime[1].chat_surfaces(chat)
+
+    async def act(self, inbound: InboundMessage, click: A2UIIncomingAction, **turn) -> Outcome:
+        """Apply a tapped A2UI action from this Peer to its Chat: a server action runs
+        in place, any other becomes a Turn run as ``handle`` runs one (``turn`` kwargs)."""
+        if not self.paired(inbound):
+            return NOTHING
+        runtime = self._runtime(inbound)
+        if not isinstance(runtime, tuple):
+            return runtime
+        outcome = await submit_click(runtime[1], self._chat_for(inbound), click)
+        if outcome.turn_text is not None:
+            return await self.handle(replace(inbound, text=outcome.turn_text), **turn)
+        return Redraw(click.surface_id, outcome.data) if outcome.data is not None else NOTHING

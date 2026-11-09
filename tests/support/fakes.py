@@ -407,3 +407,113 @@ def pong_agent_factory():
     return fake_agent_factory(
         agent=lambda config, **kwargs: Agent(name="acp-settings-test", config=TestConfig("pong"))
     )
+
+
+class FakeTelegramMessage:
+    """A Telegram message the adapter edits, replies under or deletes; a reply it
+    puts up lands with `bot` when it has one. A rich message has no text."""
+
+    def __init__(
+        self, chat_id: int = 42, message_id: int = 1, thread_id: int | None = None, bot=None
+    ):
+        self.chat = types.SimpleNamespace(id=chat_id, type="private", PRIVATE="private")
+        self.message_id = message_id
+        self.message_thread_id = thread_id
+        self.is_topic_message = thread_id is not None
+        self.bot = bot
+        self.text: str | None = None
+        self.deleted = False
+
+    async def edit_text(self, text, reply_markup=None):
+        self.text = text
+
+    async def reply_text(self, text, reply_markup=None):
+        if self.bot is None:
+            return FakeTelegramMessage(self.chat.id)
+        return await self.bot.send_message(self.chat.id, text, reply_markup=reply_markup)
+
+    async def delete(self):
+        self.deleted = True
+
+
+class FakeTelegramBot:
+    """A Bot API peer keeping every message it was asked to put up; `refuse` rejects
+    the raw (rich) calls the way Telegram rejects a body it cannot parse."""
+
+    def __init__(self, refuse: bool = False) -> None:
+        self.refuse = refuse
+        self.messages: list[FakeTelegramMessage] = []
+        self.rich: dict[int, dict] = {}
+        self.markups: dict[int, object] = {}
+
+    def _put(self, chat_id, text, thread_id=None) -> FakeTelegramMessage:
+        message = FakeTelegramMessage(int(chat_id), len(self.messages) + 100, thread_id, self)
+        message.text = text
+        self.messages.append(message)
+        return message
+
+    def incoming(self, text: str, user_id: int = 7) -> FakeTelegramMessage:
+        """A direct text message from user `user_id`, as PTB hands it to the handler."""
+        message = FakeTelegramMessage(bot=self)
+        message.text = text
+        message.caption = None
+        message.from_user = types.SimpleNamespace(
+            id=user_id, full_name="Test User", username="tester"
+        )
+        message.reply_to_message = None
+        for attr in ("document", "photo", "audio", "voice", "video"):
+            setattr(message, attr, None)
+        return message
+
+    async def send_message(self, chat_id, text, reply_markup=None, message_thread_id=None):
+        message = self._put(chat_id, text, message_thread_id)
+        self.markups[message.message_id] = reply_markup
+        return message
+
+    async def send_message_draft(self, *args, **kwargs):
+        return True
+
+    async def edit_message_text(self, text, chat_id, message_id, reply_markup=None):
+        self.find(message_id).text = text
+        self.markups[message_id] = reply_markup
+
+    async def do_api_request(self, endpoint, api_kwargs=None):
+        if self.refuse:
+            raise RuntimeError("Bad Request: can't parse rich message")
+        kwargs = dict(api_kwargs or {})
+        if endpoint == "sendRichMessage":
+            message = self._put(kwargs["chat_id"], None, kwargs.get("message_thread_id"))
+        elif endpoint == "editMessageText":
+            message = self.find(kwargs["message_id"])
+            message.text = None
+        else:
+            raise RuntimeError(f"Bad Request: method {endpoint} not found")
+        self.rich[message.message_id] = json.loads(kwargs["rich_message"])
+        return {"message_id": message.message_id}
+
+    def find(self, message_id: int) -> FakeTelegramMessage:
+        return next(m for m in self.messages if m.message_id == message_id)
+
+    def shown(self) -> list[str | None]:
+        """What each message reads as now: its text, or its rich Markdown or HTML."""
+        out = []
+        for m in self.messages:
+            rich = self.rich.get(m.message_id, {})
+            out.append(m.text if m.text is not None else rich.get("markdown") or rich.get("html"))
+        return out
+
+
+def telegram_tap(data: str, message: FakeTelegramMessage, user_id: int = 7):
+    """The update Telegram delivers when user `user_id` taps a button under `message`."""
+
+    async def answer(*args, **kwargs):
+        return None
+
+    return types.SimpleNamespace(
+        callback_query=types.SimpleNamespace(
+            data=data,
+            message=message,
+            from_user=types.SimpleNamespace(id=user_id, full_name="Test User", username="tester"),
+            answer=answer,
+        )
+    )

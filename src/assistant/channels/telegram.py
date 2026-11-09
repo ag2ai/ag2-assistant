@@ -8,8 +8,13 @@ typing indicator isn't reliably rendered for bots on Desktop/Web).
 
 import asyncio
 import contextlib
+import hashlib
+import json
 import secrets
 import time
+import warnings
+from copy import copy
+from datetime import UTC, datetime
 
 from telegram import (
     Bot,
@@ -26,11 +31,22 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from telegram.warnings import PTBUserWarning
 
 from assistant.attachments import build_input
 from assistant.channels.base import Channel, InboundMessage
 from assistant.channels.formatting import markdown_to_plain, split_for_limit
-from assistant.channels.router import COMMANDS, ChannelRouter, Choose, Outcome, spoken_text
+from assistant.channels.rich_card import MAX_RICH_CHARS, RichCard, render_card
+from assistant.channels.router import (
+    COMMANDS,
+    ChannelRouter,
+    Choose,
+    Outcome,
+    Redraw,
+    Reply,
+    spoken_text,
+)
+from assistant.events import A2UISurface
 from assistant.hitl.base import Asker, PendingGuard, Question
 from assistant.hitl.channel import PendingAsks
 from assistant.observability import log_suppressed
@@ -45,7 +61,16 @@ FED_REACTION = "👀"  # "received, will use" on a message fed into a running tu
 TELEGRAM_LIMIT = 4096  # Telegram's per-message character cap
 _CB_PREFIX = "acw:"  # callback_data namespace for HITL question buttons
 _CHOICE_PREFIX = "acc:"  # callback_data namespace for router `Choose` option tokens
+_CARD_PREFIX = "a2u:"  # callback_data namespace for A2UI card buttons: a2u:<card>:<index>
+CARD_EXPIRED = "That card is no longer in this chat. Ask again for a fresh one."
+BUTTONS_ONLY = "👇"  # the text a plain-text card with nothing but buttons shows
 _ASK_TIMEOUT = 300.0
+
+# PTB 22.8 knows editMessageText only without `rich_message` (Bot API 10.1), so a rich
+# edit has to go through do_api_request; its nudge towards Bot.edit_message_text is noise.
+warnings.filterwarnings(
+    "ignore", message=r"Please use 'Bot\.editMessageText'", category=PTBUserWarning
+)
 _MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024  # Telegram bot download cap is ~20 MB
 
 
@@ -191,6 +216,31 @@ class TraceEditor:
             self.traced = True
 
 
+def _card_key(chat: str, surface_id: str) -> str:
+    """The short, fixed-size name a Chat's surface's buttons carry in their callback data."""
+    return hashlib.sha256(f"{chat}\n{surface_id}".encode()).hexdigest()[:12]
+
+
+def _thread_of(message) -> dict:
+    """The send kwargs that keep a new message in `message`'s forum topic."""
+    thread_id = getattr(message, "message_thread_id", None)
+    if getattr(message, "is_topic_message", False) and isinstance(thread_id, int):
+        return {"message_thread_id": thread_id}
+    return {}
+
+
+def _card_keyboard(key: str, card: RichCard) -> InlineKeyboardMarkup | None:
+    """A plain-text card's buttons, one per row, sending the rich buttons' callback data."""
+    if not card.actions:
+        return None
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton(action.label, callback_data=f"{_CARD_PREFIX}{key}:{index}")]
+            for index, action in enumerate(card.actions)
+        ]
+    )
+
+
 class TelegramChannel(Channel):
     platform = "telegram"
 
@@ -233,7 +283,8 @@ class TelegramChannel(Channel):
         await app.start()
         if app.updater is None:  # only when the builder is given updater=None
             raise RuntimeError("Telegram application has no updater to poll with")
-        await app.updater.start_polling()
+        # Named outright: Telegram keeps the last `allowed_updates` any poller sent.
+        await app.updater.start_polling(allowed_updates=[Update.MESSAGE, Update.CALLBACK_QUERY])
 
     def _require_bot(self) -> Bot:
         """The bot of the started application; a handler only runs once it is set."""
@@ -282,6 +333,8 @@ class TelegramChannel(Channel):
                 # The prompt is a transient modal — remove it once answered so it
                 # doesn't linger below the reply.
                 await self._delete(message)
+            elif query.data.startswith(_CARD_PREFIX):
+                await self._on_card_tap(query, chat_id)
             elif query.data.startswith(_CHOICE_PREFIX):
                 token = query.data[len(_CHOICE_PREFIX) :]
                 outcome = await self._require_router().choose(self._from_callback(query), token)
@@ -289,6 +342,107 @@ class TelegramChannel(Channel):
                 spoken = spoken_text(outcome)
                 if spoken:
                     await self._send(chat_id, spoken)
+
+    async def _on_card_tap(self, query, chat_id: str) -> None:
+        """Run the action behind a tapped card button, read from the Chat's own history;
+        its answer lands in this chat, and a server action redraws the card in place."""
+        key, _, index = query.data[len(_CARD_PREFIX) :].rpartition(":")
+        router = self._require_router()
+        inbound = self._from_callback(query)
+        chat, surfaces = await router.surfaces(inbound)
+        surface = next((s for sid, s in surfaces.items() if _card_key(chat, sid) == key), None)
+        actions = render_card(surface, f"{_CARD_PREFIX}{key}:").actions if surface else ()
+        if not index.isdigit() or int(index) >= len(actions):
+            await self._send(chat_id, CARD_EXPIRED)
+            return
+        placeholder = await self._require_bot().send_message(
+            int(chat_id), WORKING_PLACEHOLDER, **_thread_of(query.message)
+        )
+        tracer = TraceEditor(placeholder)
+        outcome = await router.act(
+            inbound,
+            actions[int(index)].incoming(datetime.now(UTC).isoformat()),
+            asker=self._asker_for(chat_id),
+            progress=tracer,
+            cards=True,
+        )
+        if isinstance(outcome, Redraw) and surface is not None:
+            redrawn = copy(surface)
+            redrawn.data = outcome.data
+            await self._redraw(query.message, key, redrawn)
+        await self._render(outcome, placeholder, placeholder, traced=tracer.traced)
+
+    async def _send_cards(self, message, chat: str, surfaces) -> None:
+        """Send each of `chat`'s A2UI surfaces into `message`'s chat and forum topic."""
+        for surface in surfaces:
+            key = _card_key(chat, surface.surface_id)
+            card = render_card(surface, f"{_CARD_PREFIX}{key}:")
+            if card.html:
+                await self._post_card(message.chat.id, _thread_of(message), key, card)
+
+    async def _post_card(self, chat_id: int, thread: dict, key: str, card: RichCard) -> None:
+        """Send `card` as a rich message, or as plain text under a keyboard when Telegram
+        will not take it."""
+        bot = self._require_bot()
+        if card.fits:
+            try:
+                await bot.do_api_request(
+                    "sendRichMessage",
+                    api_kwargs={
+                        "chat_id": chat_id,
+                        **thread,
+                        "rich_message": json.dumps({"html": card.html}),
+                    },
+                )
+                return
+            except Exception as exc:
+                log_suppressed("telegram rich card", exc)
+        chunks = split_for_limit(card.text or BUTTONS_ONLY, self._message_limit)
+        markup = _card_keyboard(key, card)
+        for index, chunk in enumerate(chunks):
+            last = index == len(chunks) - 1
+            try:
+                await bot.send_message(
+                    chat_id, chunk, reply_markup=markup if last else None, **thread
+                )
+            except Exception as exc:
+                log_suppressed("telegram plain card", exc)
+                return
+
+    async def _redraw(self, message, key: str, surface: A2UISurface) -> None:
+        """Draw `surface` over the card message it came from, or anew when that fails."""
+        card = render_card(surface, f"{_CARD_PREFIX}{key}:")
+        if not await self._edit_card(message, key, card):
+            await self._post_card(message.chat.id, _thread_of(message), key, card)
+
+    async def _edit_card(self, message, key: str, card: RichCard) -> bool:
+        """Replace the card `message` shows with `card`; whether Telegram took it.
+        A rich message reaches the bot with no text of its own."""
+        bot = self._require_bot()
+        rich = getattr(message, "text", None) is None
+        try:
+            if rich and card.fits:
+                await bot.do_api_request(
+                    "editMessageText",
+                    api_kwargs={
+                        "chat_id": message.chat.id,
+                        "message_id": message.message_id,
+                        "rich_message": json.dumps({"html": card.html}),
+                    },
+                )
+            elif not rich and len(card.text) <= self._message_limit:
+                await bot.edit_message_text(
+                    card.text or BUTTONS_ONLY,
+                    chat_id=message.chat.id,
+                    message_id=message.message_id,
+                    reply_markup=_card_keyboard(key, card),
+                )
+            else:
+                return False
+        except Exception as exc:
+            log_suppressed("telegram card redraw", exc)
+            return False
+        return True
 
     async def _delete(self, message: "MaybeInaccessibleMessage") -> None:
         """Remove a message this bot put up, by chat and id, tolerating a refusal.
@@ -324,8 +478,37 @@ class TelegramChannel(Channel):
 
     async def notify(self, chat_id: str, text: str) -> None:
         """Push a task-run outcome into a Telegram chat — no placeholder to edit,
-        this isn't a reply."""
-        await self._send(chat_id, text)
+        this isn't a reply. Rich Markdown where Telegram takes it, plain text otherwise."""
+        if not await self._rich(text, "sendRichMessage", lambda: {"chat_id": int(chat_id)}):
+            await self._send(chat_id, text)
+
+    async def _rich(self, text: str, endpoint: str, address) -> bool:
+        """Deliver the agent's Markdown as one rich message through `endpoint`, at the
+        chat (and message) `address()` names; whether Telegram took it."""
+        if len(text) > MAX_RICH_CHARS:
+            return False
+        try:
+            await self._require_bot().do_api_request(
+                endpoint,
+                api_kwargs={**address(), "rich_message": json.dumps({"markdown": text})},
+            )
+        except Exception as exc:
+            log_suppressed("telegram rich reply", exc)
+            return False
+        return True
+
+    async def _say_rich(self, text: str, placeholder, message) -> bool:
+        """The reply as rich Markdown: edited into `placeholder` when there is one, else
+        sent into `message`'s chat and topic."""
+        if placeholder is not None:
+            return await self._rich(
+                text,
+                "editMessageText",
+                lambda: {"chat_id": placeholder.chat.id, "message_id": placeholder.message_id},
+            )
+        return await self._rich(
+            text, "sendRichMessage", lambda: {"chat_id": message.chat.id, **_thread_of(message)}
+        )
 
     def _options_markup(self, question: Choose) -> InlineKeyboardMarkup | None:
         return (
@@ -469,6 +652,7 @@ class TelegramChannel(Channel):
                 files=files,
                 progress=tracer,
                 stream=draft,
+                cards=True,
             )
             if tracer is None:  # exactly the steered case: no placeholder to land in
                 await self._acknowledge(outcome, msg)
@@ -514,14 +698,21 @@ class TelegramChannel(Channel):
             await self._say(self.format_outbound(outcome.text), home, message, markup)
             return
 
+        carded = isinstance(outcome, Reply) and bool(outcome.surfaces)
+        if carded and isinstance(outcome, Reply):
+            # Cards stand above the text that speaks of them, as the web app draws them.
+            await self._send_cards(message, outcome.chat, outcome.surfaces)
+            home = None
         spoken = spoken_text(outcome)
-        if spoken is None:
-            if not traced:
-                # Nothing to say — drop the placeholder rather than leave it "working".
-                with contextlib.suppress(Exception):
-                    await placeholder.delete()
-            return
-        await self._say(self.format_outbound(spoken), home, message, None)
+        if isinstance(outcome, Reply) and spoken:
+            if not await self._say_rich(spoken, home, message):
+                await self._say(self.format_outbound(spoken), home, message, None)
+        elif spoken:
+            await self._say(self.format_outbound(spoken), home, message, None)
+        if not traced and (carded or not spoken):
+            # A placeholder nothing landed in goes, rather than stay "working".
+            with contextlib.suppress(Exception):
+                await placeholder.delete()
 
     async def _say(self, text: str, placeholder, message, markup) -> None:
         """Deliver text within Telegram's size cap: the first chunk edits the
