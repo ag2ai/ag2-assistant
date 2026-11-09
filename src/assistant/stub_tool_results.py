@@ -1,7 +1,7 @@
 """Stub old tool results in the model's view of a chat once its prompt cache has gone cold."""
 
 import copy
-from collections.abc import Collection, Sequence
+from collections.abc import Callable, Collection, Sequence
 
 from ag2.annotations import Context
 from ag2.events import (
@@ -113,23 +113,10 @@ class StubOldToolResultsMiddleware(BaseMiddleware):
         event: BaseEvent,
         context: Context,
         *,
-        idle_s: float,
-        keep_chars: int = 30_000,
-        min_chars: int = 300,
-        exclude: Collection[str] = (),
+        trim: Callable[[Sequence[BaseEvent]], list[BaseEvent]],
     ) -> None:
         super().__init__(event, context)
-        self._idle_s, self._keep_chars, self._min_chars = idle_s, keep_chars, min_chars
-        self._exclude = frozenset(exclude)
+        self._trim = trim
 
     async def on_llm_call(self, call_next: LLMCall, events: Sequence[BaseEvent], context: Context):
-        return await call_next(
-            stub_old_tool_results(
-                events,
-                idle_s=self._idle_s,
-                keep_chars=self._keep_chars,
-                min_chars=self._min_chars,
-                exclude=self._exclude,
-            ),
-            context,
-        )
+        return await call_next(self._trim(events), context)

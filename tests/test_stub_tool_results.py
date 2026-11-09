@@ -1,6 +1,7 @@
 """Stubbing old tool results once a chat's prompt cache is cold."""
 
 from dataclasses import dataclass
+from functools import partial
 
 from ag2.events import (
     DataInput,
@@ -166,7 +167,9 @@ async def test_middleware_hands_the_stubbed_events_to_the_model_call():
     async def call_next(events, context):
         seen.append(list(events))
 
-    middleware = StubOldToolResultsMiddleware(_request(0), None, idle_s=IDLE, keep_chars=1000)
+    middleware = StubOldToolResultsMiddleware(
+        _request(0), None, trim=partial(stub_old_tool_results, idle_s=IDLE, keep_chars=1000)
+    )
     await middleware.on_llm_call(call_next, _chat(gap=IDLE + 1), None)
     assert _texts(seen[0])[0].startswith("[tool result omitted")
 
