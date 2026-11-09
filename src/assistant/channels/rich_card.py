@@ -18,8 +18,8 @@ MAX_RICH_CHARS = 32_768
 MAX_RICH_BLOCKS = 500
 
 # Telegram draws at most this many table columns.
-_MAX_COLUMNS = 20
-_MAX_DEPTH = 32
+MAX_COLUMNS = 20
+MAX_DEPTH = 32
 _GLYPHS = {
     "sunny": "☀️",
     "partly-cloudy": "⛅",
@@ -31,6 +31,11 @@ _GLYPHS = {
     "windy": "💨",
 }
 _HEADINGS = {"h1": 2, "h2": 3, "h3": 4, "h4": 5}
+
+
+def is_number(value: Any) -> bool:
+    """Whether `value` is an int or a float, not a bool."""
+    return isinstance(value, int | float) and not isinstance(value, bool)
 
 
 @dataclass(frozen=True)
@@ -106,9 +111,7 @@ _WRAP_PLAIN = {
 
 def render_card(surface: A2UISurface, callback_prefix: str) -> RichCard:
     """Draw `surface`; Button `i` sends callback data `callback_prefix + str(i)`."""
-    nested = surface.component.get("_components")
-    components = nested if isinstance(nested, list) else [surface.component]
-    drawer = _Drawer(components, surface.data or {}, surface.surface_id, callback_prefix)
+    drawer = _Drawer(surface, callback_prefix)
     root = surface.component.get("id") or "root"
     blocks = drawer.draw(root, None, 0)
     if drawer.omitted:
@@ -116,6 +119,11 @@ def render_card(surface: A2UISurface, callback_prefix: str) -> RichCard:
         blocks.append(_Block(_Kind.BLOCK, f"<p><i>{note}</i></p>", plain=OMITTED_NOTE))
     body, text, count = _assemble(blocks)
     return RichCard(body, text, tuple(drawer.actions), tuple(drawer.omitted), count)
+
+
+def card_actions(surface: A2UISurface) -> tuple[CardAction, ...]:
+    """The action behind each of `surface`'s rich-card buttons, in callback index order."""
+    return render_card(surface, "").actions
 
 
 def _assemble(blocks: list[_Block]) -> tuple[str, str, int]:
@@ -160,12 +168,22 @@ def _inline(markup: str, plain: str) -> _Block:
     return _Block(_Kind.INLINE, markup, markup, plain)
 
 
-class _Drawer:
-    def __init__(self, components: list, data: dict, surface_id: str, prefix: str) -> None:
+def surface_components(surface: A2UISurface) -> list:
+    """The surface's components, as a list whether it was expanded or not."""
+    nested = surface.component.get("_components")
+    return nested if isinstance(nested, list) else [surface.component]
+
+
+class Bindings:
+    """A surface's components by id and its data model, read the way a renderer reads them;
+    `actions` collects each drawn Button's action, `omitted` what could not be drawn."""
+
+    def __init__(self, surface: A2UISurface, button_prefix: str) -> None:
+        components = surface_components(surface)
         self.by_id = {c["id"]: c for c in components if isinstance(c, dict) and "id" in c}
-        self.data = data
-        self.surface_id = surface_id
-        self.prefix = prefix
+        self.data = surface.data or {}
+        self.surface_id = surface.surface_id
+        self.button_prefix = button_prefix
         self.actions: list[CardAction] = []
         self.omitted: list[str] = []
 
@@ -214,11 +232,50 @@ class _Drawer:
         conditions = when if isinstance(when, list) else [when]
         return any(_there(self.resolve(c, item)) for c in conditions)
 
+    def delta(self, component: dict, item: Any) -> tuple[float, str] | None:
+        """A Metric's nonzero change with its suffix: `deltaPercent` with "%", else `delta`."""
+        change, suffix = self.resolve(component.get("deltaPercent"), item), "%"
+        if not is_number(change):
+            change, suffix = self.resolve(component.get("delta"), item), ""
+        return (change, suffix) if is_number(change) and change else None
+
+    def child_items(self, component: dict, item: Any) -> list[tuple[Any, Any]]:
+        """Each child id to draw, in order, with the item it is drawn for."""
+        found = [(component["child"], item)] if "child" in component else []
+        children = component.get("children")
+        if isinstance(children, list):
+            found.extend((cid, item) for cid in children)
+        elif isinstance(children, dict):
+            items = self.resolve({"path": children.get("path")}, item)
+            start = children.get("start") or 0
+            if isinstance(items, list) and isinstance(start, int):
+                found.extend((children.get("componentId"), each) for each in items[start:])
+        return found
+
+    def button(self, component: dict, item: Any, label: str) -> str | None:
+        """Record Button `component`'s action under `label`; the data its tap carries,
+        `button_prefix` and its index, None when it has no action."""
+        action = component.get("action")
+        event = action.get("event") if isinstance(action, dict) else None
+        if not isinstance(event, dict) or not event.get("name") or not label:
+            if "Button" not in self.omitted:
+                self.omitted.append("Button")
+            return None
+        context = event.get("context")
+        resolved = self.context(context, item) if isinstance(context, dict) else {}
+        component_id = str(component.get("id"))
+        self.actions.append(
+            CardAction(label, str(event["name"]), self.surface_id, component_id, resolved)
+        )
+        return f"{self.button_prefix}{len(self.actions) - 1}"
+
+
+class _Drawer(Bindings):
     # ---- tree ----
 
     def draw(self, cid: Any, item: Any, depth: int) -> list[_Block]:
         component = self.by_id.get(cid) if isinstance(cid, str) else None
-        if component is None or depth > _MAX_DEPTH or not self.present(component, item):
+        if component is None or depth > MAX_DEPTH or not self.present(component, item):
             return []
         kind = component.get("component")
         method = getattr(self, f"_draw_{str(kind).lower()}", None)
@@ -230,18 +287,7 @@ class _Drawer:
 
     def child_groups(self, component: dict, item: Any, depth: int) -> list[list[_Block]]:
         """The blocks each child draws, one list per child, in order."""
-        groups = [self.draw(component["child"], item, depth)] if "child" in component else []
-        children = component.get("children")
-        if isinstance(children, list):
-            groups.extend(self.draw(cid, item, depth) for cid in children)
-        elif isinstance(children, dict):
-            items = self.resolve({"path": children.get("path")}, item)
-            start = children.get("start") or 0
-            if isinstance(items, list) and isinstance(start, int):
-                groups.extend(
-                    self.draw(children.get("componentId"), each, depth) for each in items[start:]
-                )
-        return groups
+        return [self.draw(cid, each, depth) for cid, each in self.child_items(component, item)]
 
     def children(self, component: dict, item: Any, depth: int) -> list[_Block]:
         """Every child's blocks in order, without an eyebrow a heading right after repeats."""
@@ -268,11 +314,16 @@ class _Drawer:
     _draw_grid = _draw_card
 
     def _draw_row(self, component: dict, item: Any, depth: int) -> list[_Block]:
-        """Children that each draw one line of text join on one line; anything else
-        (a column of several lines, a list, a heading) keeps its own place."""
+        """Children that each draw one line of text join on one line; a repeated strip of
+        stacked lines is a table; anything else (a list, a heading) keeps its own place."""
+        groups = self.child_groups(component, item, depth)
+        repeated = isinstance(component.get("children"), dict)
+        strip = self._strip(groups) if repeated else []
+        if strip:
+            return strip
         merged: list[_Block] = []
         joinable = False
-        for group in self.child_groups(component, item, depth):
+        for group in groups:
             one_line = len(group) == 1 and group[0].kind is _Kind.INLINE
             if one_line and joinable:
                 last, block = merged[-1], group[0]
@@ -282,6 +333,24 @@ class _Drawer:
             joinable = one_line
         return merged
 
+    def _strip(self, groups: list[list[_Block]]) -> list[_Block]:
+        """Two or more children, each a column of several short lines, drawn as a table
+        with one column per child; nothing when the children are anything else."""
+        groups = [group for group in groups if group]
+        stacked = all(len(group) > 1 for group in groups)
+        if len(groups) < 2 or len(groups) > MAX_COLUMNS or not stacked:
+            return []
+        if any(block.kind is not _Kind.INLINE for group in groups for block in group):
+            return []
+        depth = max(len(group) for group in groups)
+        cells = [[g[line] if line < len(g) else None for g in groups] for line in range(depth)]
+        rows = "".join(
+            "<tr>" + "".join(f"<td>{b.flat if b else ''}</td>" for b in row) + "</tr>"
+            for row in cells
+        )
+        plain = "\n".join(" | ".join(b.plain if b else "" for b in row) for row in cells)
+        return [_Block(_Kind.BLOCK, f"<table>{rows}</table>", plain=plain)]
+
     def _draw_divider(self, component: dict, item: Any, depth: int) -> list[_Block]:
         return [_Block(_Kind.BLOCK, "<hr/>", plain="———")]
 
@@ -290,7 +359,7 @@ class _Drawer:
         rows = self.resolve(component.get("rows"), item)
         if not isinstance(columns, list) or not isinstance(rows, list):
             return []
-        columns = columns[:_MAX_COLUMNS]
+        columns = columns[:MAX_COLUMNS]
         lead = component.get("lead")
         headers = [self.draw(component.get("header"), col, depth) for col in columns]
         head = ("<th></th>" if lead else "") + "".join(f"<th>{self.flat(h)}</th>" for h in headers)
@@ -348,12 +417,9 @@ class _Drawer:
             return []
         label = self.raw(component.get("label"), item)
         unit = self.raw(component.get("unit"), item)
-        delta = self.resolve(component.get("deltaPercent"), item)
-        suffix = "%"
-        if not isinstance(delta, int | float) or isinstance(delta, bool):
-            delta, suffix = self.resolve(component.get("delta"), item), ""
         tail = f" {unit}" if unit else ""
-        if isinstance(delta, int | float) and not isinstance(delta, bool) and delta:
+        if found := self.delta(component, item):
+            delta, suffix = found
             arrow = "▲" if delta > 0 else "▼"
             tail += f" ({arrow} {delta:+g}{suffix})"
         if label:
@@ -410,21 +476,10 @@ class _Drawer:
         return [_Block(_Kind.ITEM, line, line, f"{box} {label}")]
 
     def _draw_button(self, component: dict, item: Any, depth: int) -> list[_Block]:
-        action = component.get("action")
-        event = action.get("event") if isinstance(action, dict) else None
         label = self.plain(self.children({"child": component.get("child")}, item, depth))
-        if not isinstance(event, dict) or not event.get("name") or not label:
-            if "Button" not in self.omitted:
-                self.omitted.append("Button")
+        data = self.button(component, item, label)
+        if data is None:
             return []
-        context = event.get("context")
-        resolved = self.context(context, item) if isinstance(context, dict) else {}
-        index = len(self.actions)
-        self.actions.append(
-            CardAction(
-                label, str(event["name"]), self.surface_id, str(component.get("id")), resolved
-            )
-        )
-        data = html.escape(f"{self.prefix}{index}")
+        data = html.escape(data)
         markup = f'<tg-button type="callback_data" data="{data}">{html.escape(label)}</tg-button>'
         return [_Block(_Kind.BUTTON, markup)]

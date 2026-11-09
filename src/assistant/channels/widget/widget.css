@@ -1,0 +1,58 @@
+/* The card's look in a Telegram widget, drawn in the chat's own theme colours. */
+* { box-sizing: border-box; }
+body { margin: 0; font: 15px/1.35 -apple-system, system-ui, sans-serif; color: var(--tg-theme-text-color, #111); }
+#page { padding: 12px; }
+.col, .row { display: flex; gap: 8px; min-width: 0; }
+.col { flex-direction: column; }
+.row { flex-wrap: wrap; align-items: center; }
+.grid { display: grid; gap: 8px; }
+.card { padding: 10px; border-radius: 12px; background: var(--tg-theme-secondary-bg-color, #f1f1f4); }
+.feature { padding: 0; background: none; }
+.marked { border-left: 3px solid currentColor; padding-left: 8px; }
+hr { width: 100%; border: 0; border-top: 1px solid var(--tg-theme-hint-color, #999); opacity: .3; margin: 2px 0; }
+hr.strong { border-top-width: 2px; opacity: .6; }
+.text { overflow-wrap: anywhere; }
+.heading { font-weight: 700; line-height: 1.15; }
+.h1 { font-size: 24px; }
+.h2 { font-size: 20px; }
+.h3 { font-size: 17px; }
+.h4 { font-size: 15px; }
+.caption { font-size: 13px; }
+.eyebrow { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.quote { border-left: 3px solid var(--tg-theme-accent-text-color, #3390ec); padding-left: 8px; font-style: italic; }
+.code { font-family: ui-monospace, monospace; font-size: 13px; }
+.pill, .badge { align-self: flex-start; padding: 1px 8px; border-radius: 99px; font-size: 12px; font-weight: 600; background: var(--tg-theme-secondary-bg-color, #f1f1f4); }
+.badge { text-transform: uppercase; border: 1px solid currentColor; background: none; }
+.muted { color: var(--tg-theme-hint-color, #888); }
+.accent { color: var(--tg-theme-accent-text-color, #3390ec); }
+.positive { color: #2fa866; }
+.negative { color: #e5484d; }
+.metric { min-width: 30%; flex: 1; }
+.metric-value { font-size: 20px; font-weight: 700; }
+.metric.sm .metric-value { font-size: 15px; }
+.metric.lg .metric-value { font-size: 28px; }
+.sky { position: relative; height: 112px; border-radius: 14px; overflow: hidden; color: #fff; background: linear-gradient(160deg, #6f8faf, #a9bccd); }
+.sky svg { position: absolute; right: 6px; top: 4px; width: 104px; height: 104px; }
+.degrees { position: absolute; left: 14px; bottom: 6px; font-size: 52px; font-weight: 300; text-shadow: 0 1px 6px #0003; }
+.sunny { background: linear-gradient(160deg, #2f8ff0, #7cc8f8); }
+.partly-cloudy { background: linear-gradient(160deg, #4a8fd8, #9cc6ec); }
+.cloudy { background: linear-gradient(160deg, #70869b, #a9b8c6); }
+.foggy { background: linear-gradient(160deg, #8f9aa5, #c9d0d6); }
+.rainy { background: linear-gradient(160deg, #3d5470, #6c84a0); }
+.thunderstorm { background: linear-gradient(160deg, #262f45, #4c5a78); }
+.snow { background: linear-gradient(160deg, #8fb0d2, #d4e2ef); }
+.windy { background: linear-gradient(160deg, #4f8aa6, #9fcbdc); }
+.weather { display: inline-flex; align-items: center; gap: 4px; }
+.weather > span { display: flex; width: 26px; height: 26px; border-radius: 6px; }
+.spark { width: 100%; height: 36px; fill: none; stroke: currentColor; stroke-width: 3; vector-effect: non-scaling-stroke; }
+.table-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { padding: 4px 6px; text-align: left; border-bottom: 1px solid #8883; }
+th { color: var(--tg-theme-hint-color, #888); font-weight: 600; }
+td.win { font-weight: 700; color: var(--tg-theme-accent-text-color, #3390ec); }
+.ranked b { color: var(--tg-theme-hint-color, #888); }
+a { color: var(--tg-theme-link-color, #3390ec); }
+button { width: 100%; padding: 10px; border: 0; border-radius: 10px; font: inherit; font-weight: 600; color: var(--tg-theme-button-text-color, #fff); background: var(--tg-theme-button-color, #3390ec); }
+button:disabled { opacity: .6; }
+button.failed { background: #e5484d; }
+.row > button { width: auto; flex: 1; }

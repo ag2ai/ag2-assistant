@@ -13,6 +13,7 @@ import json
 import secrets
 import time
 import warnings
+from collections.abc import Callable
 from copy import copy
 from datetime import UTC, datetime
 
@@ -29,6 +30,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     ContextTypes,
     MessageHandler,
+    TypeHandler,
     filters,
 )
 from telegram.warnings import PTBUserWarning
@@ -36,7 +38,13 @@ from telegram.warnings import PTBUserWarning
 from assistant.attachments import build_input
 from assistant.channels.base import Channel, InboundMessage
 from assistant.channels.formatting import markdown_to_plain, split_for_limit
-from assistant.channels.rich_card import MAX_RICH_CHARS, RichCard, render_card
+from assistant.channels.rich_card import (
+    MAX_RICH_CHARS,
+    CardAction,
+    RichCard,
+    card_actions,
+    render_card,
+)
 from assistant.channels.router import (
     COMMANDS,
     ChannelRouter,
@@ -46,6 +54,7 @@ from assistant.channels.router import (
     Reply,
     spoken_text,
 )
+from assistant.channels.widget_card import WidgetCard, render_widget, widget_actions
 from assistant.events import A2UISurface
 from assistant.hitl.base import Asker, PendingGuard, Question
 from assistant.hitl.channel import PendingAsks
@@ -63,6 +72,7 @@ _CB_PREFIX = "acw:"  # callback_data namespace for HITL question buttons
 _CHOICE_PREFIX = "acc:"  # callback_data namespace for router `Choose` option tokens
 _CARD_PREFIX = "a2u:"  # callback_data namespace for A2UI card buttons: a2u:<card>:<index>
 CARD_EXPIRED = "That card is no longer in this chat. Ask again for a fresh one."
+_WIDGET_QUERY = "widget_query"  # the update a widget button's request arrives as
 BUTTONS_ONLY = "👇"  # the text a plain-text card with nothing but buttons shows
 _ASK_TIMEOUT = 300.0
 
@@ -221,6 +231,19 @@ def _card_key(chat: str, surface_id: str) -> str:
     return hashlib.sha256(f"{chat}\n{surface_id}".encode()).hexdigest()[:12]
 
 
+def _card_button(data: str) -> tuple[str, str]:
+    """The card key and button index in a button's `a2u:<card>:<index>` data."""
+    key, _, index = data.removeprefix(_CARD_PREFIX).rpartition(":")
+    return key, index
+
+
+def _with_data(surface: A2UISurface, data: dict) -> A2UISurface:
+    """A copy of `surface` holding `data` as its data model."""
+    redrawn = copy(surface)
+    redrawn.data = data
+    return redrawn
+
+
 def _thread_of(message) -> dict:
     """The send kwargs that keep a new message in `message`'s forum topic."""
     thread_id = getattr(message, "message_thread_id", None)
@@ -274,6 +297,8 @@ class TelegramChannel(Channel):
         # Commands are NOT excluded: the router owns the command surface (ADR 0022),
         # so `/profile` has to reach it rather than being dropped here.
         app.add_handler(MessageHandler(filters.TEXT | filters.ATTACHMENT, self._on_message))
+        # Widget queries arrive as raw updates, read from their api_kwargs.
+        app.add_handler(TypeHandler(Update, self._on_widget_query), group=1)
 
         await app.initialize()
         me = await app.bot.get_me()
@@ -284,7 +309,9 @@ class TelegramChannel(Channel):
         if app.updater is None:  # only when the builder is given updater=None
             raise RuntimeError("Telegram application has no updater to poll with")
         # Named outright: Telegram keeps the last `allowed_updates` any poller sent.
-        await app.updater.start_polling(allowed_updates=[Update.MESSAGE, Update.CALLBACK_QUERY])
+        await app.updater.start_polling(
+            allowed_updates=[Update.MESSAGE, Update.CALLBACK_QUERY, _WIDGET_QUERY]
+        )
 
     def _require_bot(self) -> Bot:
         """The bot of the started application; a handler only runs once it is set."""
@@ -346,39 +373,139 @@ class TelegramChannel(Channel):
     async def _on_card_tap(self, query, chat_id: str) -> None:
         """Run the action behind a tapped card button, read from the Chat's own history;
         its answer lands in this chat, and a server action redraws the card in place."""
-        key, _, index = query.data[len(_CARD_PREFIX) :].rpartition(":")
-        router = self._require_router()
+        key, index = _card_button(query.data)
         inbound = self._from_callback(query)
-        chat, surfaces = await router.surfaces(inbound)
-        surface = next((s for sid, s in surfaces.items() if _card_key(chat, sid) == key), None)
-        actions = render_card(surface, f"{_CARD_PREFIX}{key}:").actions if surface else ()
-        if not index.isdigit() or int(index) >= len(actions):
-            await self._send(chat_id, CARD_EXPIRED)
+        found = await self._card_action(inbound, key, index, card_actions)
+        if found is None:
+            await self._tell_tapper(query, CARD_EXPIRED)
             return
+        surface, action = found
+
+        async def redraw(data: dict) -> None:
+            await self._redraw(query.message, key, _with_data(surface, data))
+
+        await self._act(inbound, query.message, action, redraw)
+
+    async def _on_widget_query(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Run the action behind a tapped widget button; a server action sends the card
+        anew in place of the widget, whose HTML Telegram cannot edit."""
+        raw = (update.api_kwargs or {}).get(_WIDGET_QUERY)
+        if not isinstance(raw, dict):
+            return
+        inbound = self._from_widget(raw)
+        # An unpaired account's query is dropped unanswered.
+        if inbound is None or not self._require_router().paired(inbound):
+            return
+        with self._request_hold():
+            try:
+                await self._require_bot().do_api_request(
+                    "answerWidgetQuery", api_kwargs={"widget_query_id": raw["id"]}
+                )
+            except Exception as exc:
+                log_suppressed("telegram widget answer", exc)
+            key, index = _card_button(str(raw.get("data", "")))
+            found = await self._card_action(inbound, key, index, widget_actions)
+            if found is None:
+                await self._send(inbound.chat_id, CARD_EXPIRED)
+                return
+            surface, action = found
+            chat_id, message_id = int(inbound.chat_id), raw.get("message_id")
+
+            async def redraw(data: dict) -> None:
+                if isinstance(message_id, int):
+                    with contextlib.suppress(Exception):
+                        await self._require_bot().delete_message(chat_id, message_id)
+                await self._post_surface(chat_id, {}, key, _with_data(surface, data), private=True)
+
+            await self._act(inbound, None, action, redraw)
+
+    async def _card_action(
+        self,
+        inbound: InboundMessage,
+        key: str,
+        index: str,
+        actions_of: Callable[[A2UISurface], tuple[CardAction, ...]],
+    ) -> tuple[A2UISurface, CardAction] | None:
+        """The surface named `key` in the Peer's Chat and its button `index` among
+        `actions_of(surface)`; None when the Chat no longer holds that button."""
+        chat, surfaces = await self._require_router().surfaces(inbound)
+        surface = next((s for sid, s in surfaces.items() if _card_key(chat, sid) == key), None)
+        if surface is None or not index.isdigit():
+            return None
+        actions = actions_of(surface)
+        return (surface, actions[int(index)]) if int(index) < len(actions) else None
+
+    async def _act(self, inbound: InboundMessage, message, action: CardAction, redraw) -> None:
+        """Run `action` as a turn answered beside `message`, redrawing on a server action."""
+        chat_id = inbound.chat_id
         placeholder = await self._require_bot().send_message(
-            int(chat_id), WORKING_PLACEHOLDER, **_thread_of(query.message)
+            int(chat_id), WORKING_PLACEHOLDER, **_thread_of(message)
         )
         tracer = TraceEditor(placeholder)
-        outcome = await router.act(
+        outcome = await self._require_router().act(
             inbound,
-            actions[int(index)].incoming(datetime.now(UTC).isoformat()),
+            action.incoming(datetime.now(UTC).isoformat()),
             asker=self._asker_for(chat_id),
             progress=tracer,
             cards=True,
         )
-        if isinstance(outcome, Redraw) and surface is not None:
-            redrawn = copy(surface)
-            redrawn.data = outcome.data
-            await self._redraw(query.message, key, redrawn)
+        if isinstance(outcome, Redraw):
+            await redraw(outcome.data)
         await self._render(outcome, placeholder, placeholder, traced=tracer.traced)
+
+    async def _tell_tapper(self, query, text: str) -> None:
+        """Say `text` only to whoever tapped, as an ephemeral reply to their tap;
+        to the whole chat, in the tapped message's topic, when Telegram will not take it."""
+        try:
+            await self._require_bot().do_api_request(
+                "sendMessage",
+                api_kwargs={
+                    "chat_id": query.message.chat.id,
+                    "text": text,
+                    "ephemeral_message_parameters": json.dumps({"callback_query_id": query.id}),
+                },
+            )
+        except Exception as exc:
+            log_suppressed("telegram ephemeral reply", exc)
+            await self._require_bot().send_message(
+                query.message.chat.id, text, **_thread_of(query.message)
+            )
 
     async def _send_cards(self, message, chat: str, surfaces) -> None:
         """Send each of `chat`'s A2UI surfaces into `message`'s chat and forum topic."""
+        private = message.chat.type == message.chat.PRIVATE
         for surface in surfaces:
             key = _card_key(chat, surface.surface_id)
-            card = render_card(surface, f"{_CARD_PREFIX}{key}:")
-            if card.html:
-                await self._post_card(message.chat.id, _thread_of(message), key, card)
+            await self._post_surface(
+                message.chat.id, _thread_of(message), key, surface, private=private
+            )
+
+    async def _post_surface(
+        self, chat_id: int, thread: dict, key: str, surface: A2UISurface, *, private: bool
+    ) -> None:
+        """Send `surface` as a widget where Telegram shows one (a private chat), else, or
+        when it will not take it, as a rich card."""
+        prefix = f"{_CARD_PREFIX}{key}:"
+        if private and await self._post_widget(chat_id, thread, render_widget(surface, prefix)):
+            return
+        card = render_card(surface, prefix)
+        if card.html:
+            await self._post_card(chat_id, thread, key, card)
+
+    async def _post_widget(self, chat_id: int, thread: dict, widget: WidgetCard | None) -> bool:
+        """Send `widget` as an HTML widget message; whether Telegram took it."""
+        if widget is None or not widget.fits:
+            return False
+        queries = {"allow_queries": True} if widget.actions else {}
+        try:
+            await self._require_bot().do_api_request(
+                "sendWidget",
+                api_kwargs={"chat_id": chat_id, **thread, "html": widget.html, **queries},
+            )
+        except Exception as exc:
+            log_suppressed("telegram widget card", exc)
+            return False
+        return True
 
     async def _post_card(self, chat_id: int, thread: dict, key: str, card: RichCard) -> None:
         """Send `card` as a rich message, or as plain text under a keyboard when Telegram
@@ -465,6 +592,25 @@ class TelegramChannel(Channel):
             sender_name=query.from_user.full_name if query.from_user else None,
             sender_handle=query.from_user.username if query.from_user else None,
             raw=query,
+        )
+
+    def _from_widget(self, raw: dict) -> InboundMessage | None:
+        """The Peer a widget query came from; None for one from an inline message."""
+        sender, chat = raw.get("from"), raw.get("chat")
+        if not isinstance(sender, dict) or not isinstance(chat, dict) or "id" not in chat:
+            return None
+        name = " ".join(str(sender[k]) for k in ("first_name", "last_name") if sender.get(k))
+        return InboundMessage(
+            text="",
+            sender_id=str(sender.get("id", "unknown")),
+            chat_id=str(chat["id"]),
+            platform=self.platform,
+            connection=self.connection,
+            is_direct=chat.get("type") == "private",
+            mentioned=True,
+            sender_name=name or None,
+            sender_handle=sender.get("username"),
+            raw=raw,
         )
 
     def format_outbound(self, text: str) -> str:
