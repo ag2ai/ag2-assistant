@@ -146,6 +146,47 @@ def test_a_reading_with_no_temperature_carries_none():
     assert "temperature" not in build_result(payload, "Nowhere", "celsius")
 
 
+def _slots(*readings):
+    """readings: (time, tempC, weatherCode) triples → a j1 `hourly` list."""
+    return [
+        {"time": t, "tempC": str(c), "tempF": str(c * 9 // 5 + 32), "weatherCode": str(code)}
+        for t, c, code in readings
+    ]
+
+
+def _ahead(observed="2026-11-09 01:15 PM"):
+    p = _payload(113, "Sunny")
+    p["current_condition"][0]["localObsDateTime"] = observed
+    p["weather"][0]["hourly"] = _slots(("900", 10, 113), ("1200", 12, 113), ("1500", 13, 116))
+    p["weather"][0]["hourly"] += _slots(("1800", 11, 119), ("2100", 9, 296))
+    p["weather"].append({"hourly": _slots(("0", 8, 296), ("300", 7, 326), ("600", 6, 143))})
+    return p
+
+
+def test_the_hourly_strip_starts_now_and_runs_on_into_tomorrow():
+    hours = build_result(_ahead(), "London")["hours"]
+
+    assert hours == [
+        {"time": "Now", "condition": "sunny", "temperature": "12°"},
+        {"time": "3pm", "condition": "partly-cloudy", "temperature": "13°"},
+        {"time": "6pm", "condition": "cloudy", "temperature": "11°"},
+        {"time": "9pm", "condition": "rainy", "temperature": "9°"},
+        {"time": "12am", "condition": "rainy", "temperature": "8°"},
+        {"time": "3am", "condition": "snow", "temperature": "7°"},
+    ]
+
+
+def test_the_hourly_strip_reads_in_the_selected_units():
+    hours = build_result(_ahead(), "London", "fahrenheit")["hours"]
+
+    assert [h["temperature"] for h in hours[:2]] == ["54°", "55°"]
+
+
+def test_a_reading_without_its_local_time_has_no_hourly_strip():
+    assert "hours" not in build_result(_ahead(observed="soon"), "London")
+    assert "hours" not in build_result(_payload(113, "Sunny"), "London")
+
+
 def test_weather_source_fetches_today_and_uses_the_selected_units():
     def respond(request):
         assert request.url.host == "wttr.in"

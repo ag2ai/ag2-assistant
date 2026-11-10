@@ -135,7 +135,14 @@ weather panel, a market board, an inbox digest. A Card is a *definition*: the
 fields it carries and how it looks. Cards are named, and the set available to the
 agent is offered to it as a catalog.
 _Avoid_: component (the A2UI protocol's word for a node in a rendered tree —
-including the primitive literally named `Card`), widget, template
+including the primitive literally named `Card`), widget (reserved for a **Telegram
+widget**), template
+
+**Telegram widget**:
+Telegram's own word for an HTML message sent with `sendWidget`: one way a **Card
+instance** is drawn in a private Telegram chat, beside the rich message. It names
+Telegram's message type only, never the Card itself.
+_Avoid_: widget alone, for anything that is not this Telegram message
 
 **Card instance**:
 A self-contained rendered **Card** message with its own appearance, values and

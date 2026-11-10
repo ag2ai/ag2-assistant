@@ -19,6 +19,19 @@ fields:
   summary:
     type: string
     description: "One honest line, e.g. 'Clear and mild all day.'"
+  hours:
+    type: array
+    description: The readings ahead, "Now" first, then the next few hours.
+    items:
+      type: object
+      properties:
+        time: {type: string}
+        condition:
+          type: string
+          enum: [sunny, partly-cloudy, cloudy, foggy, rainy, thunderstorm, snow, windy]
+        temperature: {type: string}
+      required: [time, condition, temperature]
+      additionalProperties: false
   rows:
     type: array
     description: One labelled reading each — temperature, wind, humidity, today's
@@ -34,7 +47,7 @@ required: [location, condition, rows]
 
 layout:
   - {id: root, component: Card, variant: feature, child: panel}
-  - {id: panel, component: Column, gap: lg, children: [masthead, rule_mast, glyph, deck, readings]}
+  - {id: panel, component: Column, gap: lg, children: [masthead, rule_mast, glyph, deck, hours, readings]}
 
   - {id: masthead, component: Row, justify: between, align: end, gap: md, children: [mast_left, mast_condition]}
   - {id: mast_left, component: Column, gap: none, grow: true, children: [kicker, place]}
@@ -61,6 +74,24 @@ layout:
   - {id: glyph, component: WeatherGlyph, condition: {path: /condition}, temperature: {path: /temperature}, size: lg}
   - {id: deck, component: Text, text: {path: /summary}, tone: muted}
 
+  # The hourly strip: one column per reading ahead, its condition as a symbol.
+  - {id: hours, component: Row, justify: between, gap: sm, when: {path: /hours}, children: {componentId: hour, path: /hours}}
+  - {id: hour, component: Column, align: center, gap: xs, children: [hour_time, hour_sky, hour_temp]}
+  - {id: hour_time, component: Text, text: {path: ./time}, variant: caption, tone: muted}
+  - id: hour_sky
+    component: Text
+    text: {path: ./condition}
+    map:
+      sunny: ☀️
+      partly-cloudy: ⛅
+      cloudy: ☁️
+      foggy: 🌫️
+      rainy: 🌧️
+      thunderstorm: ⛈️
+      snow: ❄️
+      windy: 💨
+  - {id: hour_temp, component: Text, text: {path: ./temperature}, emphasis: strong}
+
   - {id: readings, component: Row, gap: lg, children: {componentId: reading, path: /rows}}
   - {id: reading, component: Metric, label: {path: ./label}, value: {path: ./value}, size: sm}
 
@@ -69,6 +100,13 @@ example:
   condition: sunny
   temperature: 24°
   summary: 'Clear and mild, with a light north-westerly.'
+  hours:
+    - {time: Now, condition: sunny, temperature: 24°}
+    - {time: 3pm, condition: sunny, temperature: 25°}
+    - {time: 6pm, condition: partly-cloudy, temperature: 22°}
+    - {time: 9pm, condition: partly-cloudy, temperature: 18°}
+    - {time: 12am, condition: cloudy, temperature: 16°}
+    - {time: 3am, condition: cloudy, temperature: 15°}
   rows:
     - {label: Temperature, value: 24°C (feels 22°C)}
     - {label: Wind, value: 12 km/h NW}

@@ -437,11 +437,25 @@ class FakeTelegramMessage:
 
 
 class FakeTelegramBot:
-    """A Bot API peer keeping every message it was asked to put up; `refuse` rejects
-    the raw (rich) calls the way Telegram rejects a body it cannot parse."""
+    """A Bot API peer keeping every message, rich body, ephemeral reply and widget it was
+    sent; each flag makes it refuse or accept one kind of raw call."""
 
-    def __init__(self, refuse: bool = False) -> None:
+    def __init__(
+        self,
+        refuse: bool = False,
+        ephemeral_replies: bool = True,
+        accepts_widgets: bool = False,
+        widget_answers: bool = True,
+    ) -> None:
         self.refuse = refuse
+        self.ephemeral_replies = ephemeral_replies
+        self.accepts_widgets = accepts_widgets
+        self.widget_answers = widget_answers
+        # The sendWidget arguments per widget message, and (query id, data) per answer.
+        self.widgets: dict[int, dict] = {}
+        self.answered: list[tuple[str, str | None]] = []
+        # (callback_query_id, text) per ephemeral reply shown only to the tapper.
+        self.ephemeral: list[tuple[str, str]] = []
         self.messages: list[FakeTelegramMessage] = []
         self.rich: dict[int, dict] = {}
         self.markups: dict[int, object] = {}
@@ -481,6 +495,23 @@ class FakeTelegramBot:
         if self.refuse:
             raise RuntimeError("Bad Request: can't parse rich message")
         kwargs = dict(api_kwargs or {})
+        if "ephemeral_message_parameters" in kwargs:
+            if not self.ephemeral_replies:
+                raise RuntimeError("Bad Request: ephemeral replies are not allowed here")
+            if "chat_id" not in kwargs:
+                raise RuntimeError("Bad Request: chat_id is required")
+            params = json.loads(kwargs["ephemeral_message_parameters"])
+            self.ephemeral.append((params["callback_query_id"], kwargs["text"]))
+            return True
+        if self.accepts_widgets and endpoint == "sendWidget":
+            message = self._put(kwargs["chat_id"], None, kwargs.get("message_thread_id"))
+            self.widgets[message.message_id] = kwargs
+            return {"message_id": message.message_id}
+        if self.accepts_widgets and endpoint == "answerWidgetQuery":
+            if not self.widget_answers:
+                raise RuntimeError("Bad Request: query is too old")
+            self.answered.append((kwargs["widget_query_id"], kwargs.get("data")))
+            return True
         if endpoint == "sendRichMessage":
             message = self._put(kwargs["chat_id"], None, kwargs.get("message_thread_id"))
         elif endpoint == "editMessageText":
@@ -491,15 +522,25 @@ class FakeTelegramBot:
         self.rich[message.message_id] = json.loads(kwargs["rich_message"])
         return {"message_id": message.message_id}
 
+    async def delete_message(self, chat_id, message_id):
+        self.find(message_id).deleted = True
+        return True
+
     def find(self, message_id: int) -> FakeTelegramMessage:
         return next(m for m in self.messages if m.message_id == message_id)
 
     def shown(self) -> list[str | None]:
-        """What each message reads as now: its text, or its rich Markdown or HTML."""
+        """What each message still up reads as: its text, its rich Markdown or HTML, or
+        its widget's HTML."""
         out = []
         for m in self.messages:
+            if m.deleted:
+                continue
             rich = self.rich.get(m.message_id, {})
-            out.append(m.text if m.text is not None else rich.get("markdown") or rich.get("html"))
+            widget = self.widgets.get(m.message_id, {}).get("html")
+            out.append(
+                m.text if m.text is not None else rich.get("markdown") or rich.get("html") or widget
+            )
         return out
 
 
@@ -511,9 +552,25 @@ def telegram_tap(data: str, message: FakeTelegramMessage, user_id: int = 7):
 
     return types.SimpleNamespace(
         callback_query=types.SimpleNamespace(
+            id=f"tap-{user_id}-{message.message_id}",
             data=data,
             message=message,
             from_user=types.SimpleNamespace(id=user_id, full_name="Test User", username="tester"),
             answer=answer,
         )
     )
+
+
+def widget_tap(data: str, message: FakeTelegramMessage, user_id: int = 7):
+    """The update Telegram delivers when user `user_id` taps a button asking `data` in the
+    widget `message` shows, as PTB 22.8 hands it over: unparsed, in `api_kwargs`."""
+    query = {
+        "id": f"wq-{user_id}-{message.message_id}",
+        "from": {"id": user_id, "is_bot": False, "first_name": "Test", "username": "tester"},
+        "chat": {"id": message.chat.id, "type": message.chat.type},
+        "message_id": message.message_id,
+        "chat_instance": "ci",
+        "type": {"type": "data"},
+        "data": data,
+    }
+    return types.SimpleNamespace(api_kwargs={"widget_query": query})

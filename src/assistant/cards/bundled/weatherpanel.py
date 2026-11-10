@@ -2,6 +2,7 @@
 
 import json
 from contextlib import nullcontext
+from datetime import datetime
 from urllib.parse import quote
 
 import httpx
@@ -52,6 +53,9 @@ for _c in (
 
 # Sustained wind above Beaufort 6 is windy when there is no active precipitation.
 _WINDY_KMPH = 38.0
+
+# How many readings the hourly strip holds, "Now" included.
+HOURS = 6
 
 
 def condition_for(weather_code, windspeed_kmph=0.0) -> str:
@@ -131,6 +135,51 @@ def _rain_row(today: dict) -> dict | None:
     return {"label": "Rain", "value": value}
 
 
+def _observed_hour(current: dict) -> int | None:
+    """The local hour of the current reading, from wttr.in's `localObsDateTime`."""
+    try:
+        stamp = datetime.strptime(str(current.get("localObsDateTime")), "%Y-%m-%d %I:%M %p")
+    except ValueError:
+        return None
+    return stamp.hour
+
+
+def _hours(data: dict, current: dict, metric: bool) -> list[dict]:
+    """The strip of readings ahead: the current one as "Now", then the 3-hourly slots
+    after it, today's and on into tomorrow's, `HOURS` in all."""
+    hour = _observed_hour(current)
+    if hour is None:
+        return []
+    temp = current.get("temp_C") if metric else current.get("temp_F")
+    if temp is None:
+        return []
+    strip = [
+        {
+            "time": "Now",
+            "condition": condition_for(current.get("weatherCode"), current.get("windspeedKmph")),
+            "temperature": f"{temp}°",
+        }
+    ]
+    days = (data.get("weather") or [])[:2]
+    for day, slots in enumerate(d.get("hourly") or [] for d in days):
+        for slot in slots:
+            try:
+                at = int(slot.get("time", "")) // 100
+            except (TypeError, ValueError):
+                continue
+            slot_temp = slot.get("tempC") if metric else slot.get("tempF")
+            if (day == 0 and at <= hour) or slot_temp is None or len(strip) >= HOURS:
+                continue
+            strip.append(
+                {
+                    "time": _hour_label(slot.get("time")),
+                    "condition": condition_for(slot.get("weatherCode"), slot.get("windspeedKmph")),
+                    "temperature": f"{slot_temp}°",
+                }
+            )
+    return strip if len(strip) > 1 else []
+
+
 def build_result(data: dict, location: str, units: str = "celsius") -> dict:
     """Convert a wttr.in j1 payload to WeatherPanel fields."""
     metric = str(units).lower() != "fahrenheit"
@@ -172,12 +221,14 @@ def build_result(data: dict, location: str, units: str = "celsius") -> dict:
     summary = f"{label}: {desc}, {temp_txt}"
 
     assert condition in WEATHER_CONDITIONS  # mapping can't drift from the glyph
+    hours = _hours(data, cc, metric)
     return {
         "location": label,
         "condition": condition,
         # The temperature alone, for the glyph's own in-scene reading.
         **({"temperature": f"{temp}°"} if temp is not None else {}),
         "summary": summary,
+        **({"hours": hours} if hours else {}),
         "rows": rows,
     }
 

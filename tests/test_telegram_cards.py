@@ -3,6 +3,7 @@ messages — and what a tapped card button does, through the real router and age
 against a fake Bot API peer."""
 
 import json
+import re
 from types import SimpleNamespace
 
 from assistant.channels.router import Reply
@@ -11,7 +12,7 @@ from assistant.events import A2UISurface
 from assistant.pairing import PairingStore
 from assistant.profiles import ProfileRegistry
 from tests.support.apps import make_manager
-from tests.support.fakes import FakeTelegramBot, ScriptedModels, telegram_tap
+from tests.support.fakes import FakeTelegramBot, ScriptedModels, telegram_tap, widget_tap
 
 CATALOG = "https://ag2.ai/assistant/a2ui/catalog.json"
 
@@ -100,7 +101,7 @@ class _Install:
         card = self.card()
         rich = self.bot.rich.get(card.message_id)
         if rich is not None:
-            return rich["html"].split('data="')[1].split('"')[0]
+            return re.findall(r' data="([^"]+)"', rich["html"])[0]
         return self.bot.markups[card.message_id].inline_keyboard[0][0].callback_data
 
 
@@ -150,12 +151,35 @@ async def test_a_button_whose_card_is_not_in_the_chat_says_so(paths):
         await _say(app.channel(), app.bot, "hello")
         before = len(app.models.requests)
 
+        shown = app.bot.shown()
+        tap = telegram_tap("a2u:000000000000:0", app.bot.messages[0])
+
+        await app.channel()._on_callback(tap, None)
+
+        assert app.bot.ephemeral == [(tap.callback_query.id, CARD_EXPIRED)]
+        assert app.bot.shown() == shown  # nothing new for the rest of the chat
+        assert len(app.models.requests) == before
+
+
+async def test_an_expired_card_is_told_to_the_whole_chat_when_telegram_refuses_ephemeral(paths):
+    async with _Install(paths, BOOKING, FakeTelegramBot(ephemeral_replies=False)) as app:
+        await _say(app.channel(), app.bot, "hello")
+
         await app.channel()._on_callback(
             telegram_tap("a2u:000000000000:0", app.bot.messages[0]), None
         )
 
         assert app.bot.shown()[-1] == CARD_EXPIRED
-        assert len(app.models.requests) == before
+
+
+async def test_a_refused_ephemeral_reply_lands_in_the_tapped_messages_topic(paths):
+    async with _Install(paths, BOOKING, FakeTelegramBot(ephemeral_replies=False)) as app:
+        await _say(app.channel(), app.bot, "book?", thread_id=9)
+
+        await app.channel()._on_callback(telegram_tap("a2u:000000000000:0", app.card()), None)
+
+        told = app.bot.messages[-1]
+        assert (told.text, told.message_thread_id) == (CARD_EXPIRED, 9)
 
 
 async def test_a_button_from_an_earlier_chat_does_not_act_in_the_new_one(paths):
@@ -168,9 +192,10 @@ async def test_a_button_from_an_earlier_chat_does_not_act_in_the_new_one(paths):
         await _say(ch, app.bot, "book again?")
         before = len(app.models.requests)
 
-        await ch._on_callback(telegram_tap(old_button, old_card), None)
+        tap = telegram_tap(old_button, old_card)
+        await ch._on_callback(tap, None)
 
-        assert app.bot.shown()[-1] == CARD_EXPIRED
+        assert app.bot.ephemeral == [(tap.callback_query.id, CARD_EXPIRED)]
         assert len(app.models.requests) == before
 
 
@@ -280,4 +305,125 @@ async def test_a_card_whose_data_a_later_turn_wrote_keeps_its_buttons(paths):
         await ch._on_callback(telegram_tap(app.button(), card), None)
 
         assert CARD_EXPIRED not in app.bot.shown()
+        assert app.bot.ephemeral == []
         assert "<p>confirmed</p>" in app.bot.rich[card.message_id]["html"]
+
+
+def _widget(bot: FakeTelegramBot):
+    """The (only) widget message still up, and the query its first button asks."""
+    (message,) = [m for m in bot.messages if m.message_id in bot.widgets and not m.deleted]
+    query = re.findall(r'data-query="([^"]+)"', bot.widgets[message.message_id]["html"])[0]
+    return message, query
+
+
+async def test_in_a_private_chat_a_card_arrives_as_a_widget_that_takes_queries(paths):
+    async with _Install(paths, BOOKING, FakeTelegramBot(accepts_widgets=True)) as app:
+        await _say(app.channel(), app.bot, "book?")
+
+        message, _ = _widget(app.bot)
+        sent = app.bot.widgets[message.message_id]
+        assert "Book for 19:00?" in sent["html"] and "Book it</div></button>" in sent["html"]
+        assert sent["allow_queries"] is True
+        assert not any("tg-button" in r.get("html", "") for r in app.bot.rich.values())
+
+
+async def test_a_card_goes_rich_where_telegram_takes_no_widget(paths):
+    async with _Install(paths, BOOKING, FakeTelegramBot(accepts_widgets=False)) as app:
+        await _say(app.channel(), app.bot, "book?")
+
+        assert app.bot.widgets == {}
+        assert "tg-button" in app.bot.rich[app.card().message_id]["html"]
+
+
+async def test_tapping_a_widget_button_answers_the_query_and_runs_its_action(paths):
+    async with _Install(paths, BOOKING, FakeTelegramBot(accepts_widgets=True)) as app:
+        ch = app.channel()
+        await _say(ch, app.bot, "book?")
+        message, query = _widget(app.bot)
+        tap = widget_tap(query, message)
+
+        await ch._on_widget_query(tap, None)
+
+        assert app.bot.answered == [(tap.api_kwargs["widget_query"]["id"], None)]
+        assert "'book'" in app.asked() and "19:00" in app.asked()
+
+
+async def test_an_unpaired_widget_tap_is_neither_answered_nor_run(paths):
+    async with _Install(paths, BOOKING, FakeTelegramBot(accepts_widgets=True)) as app:
+        ch = app.channel()
+        await _say(ch, app.bot, "book?")
+        message, query = _widget(app.bot)
+        before = len(app.models.requests)
+
+        await ch._on_widget_query(widget_tap(query, message, user_id=8), None)
+
+        assert app.bot.answered == []
+        assert len(app.models.requests) == before
+
+
+async def test_a_widget_button_whose_card_is_gone_says_so_to_that_widget_alone(paths):
+    async with _Install(paths, BOOKING, FakeTelegramBot(accepts_widgets=True)) as app:
+        ch = app.channel()
+        await _say(ch, app.bot, "book?")
+        message, query = _widget(app.bot)
+        await _say(ch, app.bot, "/new")
+        shown = app.bot.shown()
+        tap = widget_tap(query, message)
+
+        await ch._on_widget_query(tap, None)
+
+        assert app.bot.answered == [(tap.api_kwargs["widget_query"]["id"], CARD_EXPIRED)]
+        assert app.bot.shown() == shown  # nothing new in the chat
+
+
+async def test_a_gone_card_is_told_to_the_chat_when_telegram_refuses_the_answer(paths):
+    bot = FakeTelegramBot(accepts_widgets=True, widget_answers=False)
+    async with _Install(paths, BOOKING, bot) as app:
+        ch = app.channel()
+        await _say(ch, app.bot, "book?")
+        message, query = _widget(app.bot)
+        await _say(ch, app.bot, "/new")
+
+        await ch._on_widget_query(widget_tap(query, message), None)
+
+        assert app.bot.shown()[-1] == CARD_EXPIRED
+
+
+async def test_an_update_that_is_no_widget_query_is_ignored(paths):
+    async with _Install(paths, BOOKING, FakeTelegramBot(accepts_widgets=True)) as app:
+        await app.channel()._on_widget_query(SimpleNamespace(api_kwargs={}), None)
+
+        assert app.bot.messages == []
+
+
+async def test_a_server_action_sends_the_widget_anew_in_place_of_the_old_one(paths):
+    """A server action deletes the tapped widget and sends the redrawn card as a new one."""
+    status = A2UISurface(
+        "status",
+        component={
+            "id": "root",
+            "_components": [
+                {"id": "root", "component": "Column", "children": ["state", "save"]},
+                {"id": "state", "component": "Text", "text": {"path": "/status"}},
+                *_button("save", "Confirm", "save_surface", {"data": {"path": "/next"}}),
+            ],
+        },
+        data={"status": "open", "next": {"status": "booked"}},
+    )
+    async with _Install(paths, "Here.", FakeTelegramBot(accepts_widgets=True)) as app:
+        ch = app.channel()
+        await _say(ch, app.bot, "status?")
+        gateway = app.manager.get(app.pid).require_gateway()
+        (chat,) = await gateway.list_chats()
+        await gateway.emit_event(chat["chat_id"], status)
+        placeholder = await app.bot.send_message(42, "⏳")
+        await ch._render(Reply("Here.", (status,), chat["chat_id"]), placeholder, placeholder)
+        old, query = _widget(app.bot)
+        before = len(app.models.requests)
+
+        await ch._on_widget_query(widget_tap(query, old), None)
+
+        new, _ = _widget(app.bot)
+        assert old.deleted and new is not old
+        assert '<div class="text body">booked</div>' in app.bot.widgets[new.message_id]["html"]
+        assert len(app.models.requests) == before  # a server action runs no turn

@@ -13,9 +13,17 @@ from ag2.context import ConversationContext
 from ag2.events import ToolCallEvent
 from ag2.stream import MemoryStream
 
+from assistant.a2ui import (
+    CARD_PRIMITIVES,
+    SUPPORTED_BASIC_COMPONENTS,
+    durable_surfaces_from_messages,
+    expanded_card_surface,
+)
 from assistant.a2ui_skill import A2UI_SKILL, PROTOCOL_RESOURCE, card_resource
 from assistant.agent import resolve_a2ui_skill
+from assistant.cards import bundled_cards_dir, load_cards
 from assistant.config import Config
+from assistant.events import A2UISurface
 from assistant.skills import FilteredSkillRuntime
 from tests.support.apps import api
 from tests.support.chat import logged
@@ -126,3 +134,20 @@ def snapshot_message(source: dict) -> dict:
         key: source[key]
         for key in ("version", "catalog_id", "component", "data", "title", "intent")
     }
+
+
+def flat_surface(*components, data=None) -> A2UISurface:
+    """A surface `s1` holding `components` flat, the one with id `root` drawn first."""
+    return A2UISurface("s1", component={"id": "root", "_components": list(components)}, data=data)
+
+
+def bundled_surface(name: str) -> A2UISurface:
+    """A bundled Card drawn with its own example, expanded the way a client is sent it."""
+    cards = load_cards(bundled_cards_dir(), SUPPORTED_BASIC_COMPONENTS | CARD_PRIMITIVES)
+    card = cards[name]
+    root = {**card.example, "id": "root", "component": card.name}
+    messages = [
+        {"version": "v1.0", "createSurface": {"surfaceId": "w1"}},
+        {"version": "v1.0", "updateComponents": {"surfaceId": "w1", "components": [root]}},
+    ]
+    return expanded_card_surface(durable_surfaces_from_messages(messages)[0], cards)

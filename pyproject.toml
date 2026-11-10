@@ -148,7 +148,13 @@ ignore-words-list = "ans,hsi,thur,unparseable,pre-empt,pre-selects,protext,padd,
 where = ["src"]
 
 [tool.setuptools.package-data]
-"assistant" = ["skills/*/SKILL.md", "cards/bundled/*.card.yaml", "cards/*.md"]
+"assistant" = [
+    "skills/*/SKILL.md",
+    "cards/bundled/*.card.yaml",
+    "cards/*.md",
+    "channels/widget/*.js",
+    "channels/widget/*.css",
+]
 "assistant.gateway" = [
     "static/*.html",
     "static/*.svg",
