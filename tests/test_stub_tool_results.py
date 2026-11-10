@@ -1,9 +1,15 @@
 """Stubbing old tool results once a chat's prompt cache is cold."""
 
+import copy
+import random
+import time
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from functools import partial
 
+import pytest
 from ag2.events import (
+    BaseEvent,
     DataInput,
     ModelMessage,
     ModelRequest,
@@ -16,6 +22,7 @@ from ag2.events import (
     ToolResultsEvent,
 )
 
+from assistant import stub_tool_results
 from assistant.config import apply_env_overrides
 from assistant.stub_tool_results import (
     STUB_TEMPLATE,
@@ -217,3 +224,132 @@ def test_off_unless_the_env_names_an_idle_threshold(config):
     assert cfg.memory.stub_tool_results_after_idle_s == 600
     assert cfg.memory.stub_keep_result_chars == 30_000
     assert cfg.memory.stub_exclude_tools == ["a", "b"]
+
+
+# The first implementation, kept as the oracle the single-pass one must agree with.
+def _reference_stub(
+    events: Sequence[BaseEvent],
+    *,
+    idle_s: float,
+    keep_chars: int,
+    min_chars: int = 300,
+    exclude: Collection[str] = (),
+) -> list[BaseEvent]:
+    """The events with tool results older than a cold-cache boundary replaced by stubs.
+
+    A boundary is a request sent more than `idle_s` after the previous model response.
+    At each one the newest `keep_chars` of results stay whole and older ones are stubbed;
+    a stubbed result stays stubbed, so the output depends only on the events.
+    """
+    events = list(events)
+    stubbed: set[tuple[int, int]] = set()  # (event index, result index)
+    last_response: float | None = None
+    for index, event in enumerate(events):
+        if isinstance(event, ModelResponse):
+            last_response = event.created_at
+        elif (
+            isinstance(event, ModelRequest)
+            and last_response is not None
+            and event.created_at - last_response > idle_s
+        ):
+            kept = 0
+            for position in range(index - 1, -1, -1):
+                prior = events[position]
+                if not isinstance(prior, ToolResultsEvent):
+                    continue
+                for slot in range(len(prior.results) - 1, -1, -1):
+                    result = prior.results[slot]
+                    size = stub_tool_results._text_size(result)
+                    if size is None or size < min_chars or result.name in exclude:
+                        continue
+                    kept += size
+                    if kept > keep_chars:
+                        stubbed.add((position, slot))
+    if not stubbed:
+        return events
+    out: list[BaseEvent] = []
+    for position, event in enumerate(events):
+        if isinstance(event, ToolResultsEvent) and any(
+            (position, slot) in stubbed for slot in range(len(event.results))
+        ):
+            replaced = copy.copy(event)
+            replaced.results = [
+                stub_tool_results._stub(result, stub_tool_results._text_size(result) or 0)
+                if (position, slot) in stubbed
+                else result
+                for slot, result in enumerate(event.results)
+            ]
+            event = replaced
+        out.append(event)
+    return out
+
+
+def _mixed_history(seed):
+    rng = random.Random(seed)
+    events, now = [], 0.0
+    for turn in range(rng.randint(2, 14)):
+        events.append(_request(now))
+        for step in range(rng.randint(0, 3)):
+            call_id = f"{turn}-{step}"
+            events.append(_call(call_id))
+            results = []
+            for slot in range(rng.randint(1, 3)):
+                name = rng.choice(["fetch_page", "get_task", "duckduckgo_search"])
+                payload = rng.choice(
+                    [
+                        ToolResult("t" * rng.choice([5, 400, 900, 3000])),
+                        ToolResult(DataInput(_Hits(["d" * rng.choice([5, 600, 2000])]))),
+                    ]
+                )
+                results.append(
+                    ToolResultEvent(parent_id=f"{call_id}.{slot}", name=name, result=payload)
+                )
+            events.append(ToolResultsEvent(results))
+        now += rng.choice([1, 5, 700, 4000])
+        events.append(_response(now))
+        now += rng.choice([1, 20, 900, 7200])
+    events.append(_request(now))
+    return events
+
+
+def _shape(events):
+    return [
+        [
+            (
+                r.name,
+                r.result.parts[0].content
+                if hasattr(r.result.parts[0], "content")
+                else repr(r.result.parts[0].data),
+            )
+            for r in e.results
+        ]
+        if isinstance(e, ToolResultsEvent)
+        else type(e).__name__
+        for e in events
+    ]
+
+
+@pytest.mark.parametrize("seed", range(60))
+@pytest.mark.parametrize("keep_chars", [0, 1500, 5000])
+def test_single_pass_matches_the_reference_on_mixed_histories(seed, keep_chars):
+    events = _mixed_history(seed)
+    settings = {"idle_s": IDLE, "keep_chars": keep_chars, "min_chars": 300, "exclude": {"get_task"}}
+    assert _shape(stub_old_tool_results(events, **settings)) == _shape(
+        _reference_stub(events, **settings)
+    )
+
+
+def test_cost_grows_linearly_with_the_number_of_cold_turns():
+    events = []
+    for turn in range(3000):
+        events += [
+            _request(turn * 1000.0),
+            _call(str(turn)),
+            _result(str(turn)),
+            _response(turn * 1000.0 + 10),
+        ]
+    events.append(_request(3000 * 1000.0))
+    started = time.perf_counter()
+    out = _stub(events, keep_chars=10_000)
+    assert time.perf_counter() - started < 1.0
+    assert _texts(out)[-1] == BIG

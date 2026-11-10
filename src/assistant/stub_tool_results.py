@@ -58,14 +58,15 @@ def stub_old_tool_results(
     min_chars: int = 300,
     exclude: Collection[str] = (),
 ) -> list[BaseEvent]:
-    """The events with tool results older than a cold-cache boundary replaced by stubs.
+    """The events with tool results older than the newest cold-cache boundary stubbed.
 
     A boundary is a request sent more than `idle_s` after the previous model response.
-    At each one the newest `keep_chars` of results stay whole and older ones are stubbed;
-    a stubbed result stays stubbed, so the output depends only on the events.
+    The newest `keep_chars` of results before it stay whole and older ones are stubbed;
+    earlier boundaries stub a subset of that, so one pass gives the output a stubbed
+    result keeps on every later call.
     """
     events = list(events)
-    stubbed: set[tuple[int, int]] = set()  # (event index, result index)
+    boundary: int | None = None
     last_response: float | None = None
     for index, event in enumerate(events):
         if isinstance(event, ModelResponse):
@@ -75,19 +76,23 @@ def stub_old_tool_results(
             and last_response is not None
             and event.created_at - last_response > idle_s
         ):
-            kept = 0
-            for position in range(index - 1, -1, -1):
-                prior = events[position]
-                if not isinstance(prior, ToolResultsEvent):
-                    continue
-                for slot in range(len(prior.results) - 1, -1, -1):
-                    result = prior.results[slot]
-                    size = _text_size(result)
-                    if size is None or size < min_chars or result.name in exclude:
-                        continue
-                    kept += size
-                    if kept > keep_chars:
-                        stubbed.add((position, slot))
+            boundary = index
+    if boundary is None:
+        return events
+    stubbed: dict[tuple[int, int], int] = {}  # (event index, result index) -> chars
+    kept = 0
+    for position in range(boundary - 1, -1, -1):
+        prior = events[position]
+        if not isinstance(prior, ToolResultsEvent):
+            continue
+        for slot in range(len(prior.results) - 1, -1, -1):
+            result = prior.results[slot]
+            size = _text_size(result)
+            if size is None or size < min_chars or result.name in exclude:
+                continue
+            kept += size
+            if kept > keep_chars:
+                stubbed[(position, slot)] = size
     if not stubbed:
         return events
     out: list[BaseEvent] = []
@@ -97,7 +102,7 @@ def stub_old_tool_results(
         ):
             replaced = copy.copy(event)
             replaced.results = [
-                _stub(result, _text_size(result) or 0) if (position, slot) in stubbed else result
+                _stub(result, stubbed[(position, slot)]) if (position, slot) in stubbed else result
                 for slot, result in enumerate(event.results)
             ]
             event = replaced
