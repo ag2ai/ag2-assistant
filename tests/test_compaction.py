@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from functools import partial
 
 import pytest
 from ag2 import tool
@@ -50,6 +51,7 @@ from assistant.gateway.history import ChatEventLog
 from assistant.memory import build_compaction_config
 from assistant.middleware import LLMRetryMiddleware
 from assistant.skills import FilteredSkillRuntime
+from assistant.stub_tool_results import stub_old_tool_results
 from tests.support.apps import compacting_agent
 from tests.support.fakes import CheckpointTestConfig, ControlledHistory, checkpoint_json
 
@@ -795,3 +797,56 @@ def test_summary_parts_skip_provider_search_citations() -> None:
     fetched = ToolResultEvent(parent_id="f", name="fetch", result=ToolResult(image))
 
     assert summary_parts(ToolResultsEvent(results=[search, fetched])) == [image]
+
+
+async def test_trimming_with_compaction_keeps_tool_history_paired_and_the_log_whole():
+    @tool
+    def read_part(part: int) -> str:
+        return str(part) * 1_500
+
+    def call(part):
+        calls = ToolCallsEvent(
+            [ToolCallEvent(name="read_part", arguments=json.dumps({"part": part}))]
+        )
+        return ModelResponse(ModelMessage(""), tool_calls=calls)
+
+    config = CheckpointTestConfig(call(1), "one", call(2), call(3), call(4), "done")
+    knowledge = build_compaction_config(max_tokens=2_500)
+    stream = MemoryStream()
+    trim = partial(stub_old_tool_results, idle_s=0, keep_chars=1_000)
+    agent = compacting_agent(config, knowledge, tools=[read_part], trim=trim)
+    reply = await agent.ask("read part 1", stream=stream)
+    reply = await reply.ask("read parts 2, 3 and 4")
+
+    requests = [
+        messages
+        for messages, _, options in config.requests
+        if options.get("response_schema") is not CHECKPOINT_SCHEMA
+    ]
+    assert any("tool result omitted" in str(messages) for messages in requests)
+    for messages in requests:
+        announced = {
+            call.id
+            for event in messages
+            if isinstance(event, ModelResponse)
+            for call in event.tool_calls.calls
+        }
+        answered = {
+            result.parent_id
+            for event in messages
+            if isinstance(event, ToolResultsEvent)
+            for result in event.results
+        }
+        assert announced == answered
+    current = list(await stream.history.get_events())
+    replay = await ChatEventLog(knowledge.store).replay(stream.id, current)
+    assert "tool result omitted" not in str(replay)
+    stored = [
+        part.content
+        for event in replay
+        if isinstance(event, ToolResultsEvent)
+        for result in event.results
+        for part in result.result.parts
+    ]
+    assert stored
+    assert all(len(text) == 1_500 for text in stored)

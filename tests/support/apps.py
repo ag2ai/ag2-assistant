@@ -39,7 +39,7 @@ from tests.support.fakes import (
 )
 
 
-def compacting_agent(config, knowledge, *, tools=(), **options):
+def compacting_agent(config, knowledge, *, tools=(), trim=None, **options):
     agent = CompactingAgent(
         "chat",
         config=BudgetedModelConfig(config),
@@ -49,7 +49,11 @@ def compacting_agent(config, knowledge, *, tools=(), **options):
     )
     agent.insert_middleware(
         Middleware(
-            CheckpointMiddleware, strategy=knowledge.compact, store=knowledge.store, actor="chat"
+            CheckpointMiddleware,
+            strategy=knowledge.compact,
+            store=knowledge.store,
+            actor="chat",
+            trim=trim,
         )
     )
     return agent

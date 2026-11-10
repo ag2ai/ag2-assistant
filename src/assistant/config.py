@@ -195,6 +195,14 @@ class MemoryConfig(BaseModel):
     compact_max_calls: int = Field(default=8, gt=0)
     compact_timeout_s: float = Field(default=60, gt=0)
     compact_summary_max_tokens: int = Field(default=2_000, gt=0)
+    # Seconds idle before old tool results are stubbed in the model's view; zero is off.
+    stub_tool_results_after_idle_s: float = Field(default=0, ge=0)
+    # Newest tool-result characters kept whole; older results are stubbed.
+    stub_keep_result_chars: int = Field(default=30_000, ge=0)
+    # Results shorter than this are never stubbed.
+    stub_min_result_chars: int = Field(default=300, ge=0)
+    # Tools whose results are never stubbed.
+    stub_exclude_tools: list[str] = Field(default_factory=list)
 
 
 # The Config sections a profile's config.yaml may overlay. Settings keys in the same
@@ -406,6 +414,18 @@ def apply_env_overrides(cfg: Config, env: Mapping[str, str]) -> None:
             cfg.memory.aggregate_every_n_turns = int(v)
         except ValueError:
             pass
+    for env_name, field_name, cast in (
+        ("AG2ASSISTANT_TRIM_IDLE_SECONDS", "stub_tool_results_after_idle_s", float),
+        ("AG2ASSISTANT_TRIM_KEEP_CHARS", "stub_keep_result_chars", int),
+        ("AG2ASSISTANT_TRIM_MIN_CHARS", "stub_min_result_chars", int),
+    ):
+        if v := get(env_name):
+            try:
+                setattr(cfg.memory, field_name, cast(v))
+            except ValueError:
+                pass
+    if v := get("AG2ASSISTANT_TRIM_EXCLUDE_TOOLS"):
+        cfg.memory.stub_exclude_tools = [name.strip() for name in v.split(",") if name.strip()]
     if v := get("AG2ASSISTANT_COMPACT_MAX_TOKENS"):
         try:
             cfg.memory.compact_max_tokens = int(v)

@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from copy import copy
 from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime, timezone
@@ -304,6 +304,8 @@ class CompactionSession:
     required_skills: set[str] = field(default_factory=set)
     excerpt_sources: set[str] = field(default_factory=set)
     excerpts: dict[str, tuple[int, ToolResultEvent]] = field(default_factory=dict)
+    # Applied to the guarded events just before the provider call, never to checkpoint sources.
+    trim: Callable[[Sequence[BaseEvent]], list[BaseEvent]] | None = None
 
 
 def _tool_results(events: list[BaseEvent]) -> list[ToolResultEvent]:
@@ -900,9 +902,11 @@ class CheckpointCompact:
 
 
 class CheckpointMiddleware(BaseMiddleware):
-    def __init__(self, event, context, *, strategy: CheckpointCompact, actor: str, store) -> None:
+    def __init__(
+        self, event, context, *, strategy: CheckpointCompact, actor: str, store, trim=None
+    ) -> None:
         super().__init__(event, context)
-        self.strategy, self.actor, self.store = strategy, actor, store
+        self.strategy, self.actor, self.store, self.trim = strategy, actor, store, trim
 
     async def on_turn(self, call_next, event, context):
         model = context.dependencies.get(MODEL_CONFIG_CONTEXT_DEPENDENCY_KEY)
@@ -910,7 +914,11 @@ class CheckpointMiddleware(BaseMiddleware):
             context.dependencies[MODEL_CONFIG_CONTEXT_DEPENDENCY_KEY] = model.config
         store = self.strategy.store or self.store
         session = CompactionSession(
-            self.strategy, store, self.actor, record=await load_checkpoint(store, context.stream.id)
+            self.strategy,
+            store,
+            self.actor,
+            record=await load_checkpoint(store, context.stream.id),
+            trim=self.trim,
         )
         session.excerpt_sources = {
             entry.removesuffix(".txt")
@@ -966,6 +974,8 @@ class BudgetedClient:
                 tools=options["tools"],
                 response_schema=options.get("response_schema"),
             )
+        if session is not None and session.trim is not None:
+            messages = session.trim(messages)
         return await self.client(stamp_requests(messages), context, **options)
 
 
