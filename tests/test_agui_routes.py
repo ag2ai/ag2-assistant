@@ -2,18 +2,25 @@
 
 import asyncio
 import base64
+from types import SimpleNamespace
 
 import pytest
 from ag2.context import ConversationContext
 from ag2.events import ModelMessage, ModelMessageChunk, ModelRequest, ModelResponse
-from ag_ui.core import RunAgentInput
+from ag_ui.core import ResumeEntry, RunAgentInput
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 from assistant.config import Config
+from assistant.events import InquiryRaised, TurnCompleted, TurnFailed, TurnStarted
 from assistant.gateway.agui.session import ChatRuns, TurnRequest
 from assistant.gateway.core import Gateway
+from assistant.gateway.routes.agui import build_profile_router
+from assistant.gateway.routes.chat import build_profile_router as build_chat_profile_router
+from assistant.hitl import HitlServer
 from tests.support.apps import api, make_profile_app
-from tests.support.chat import logged, run, run_input
+from tests.support.chat import logged, run, run_input, sse
 from tests.support.fakes import FakeReply, FakeRunMixin, fake_agent_factory
 
 
@@ -88,6 +95,10 @@ def test_an_inquiry_ends_the_run_as_an_interrupt_and_resume_finishes_the_turn(pa
             run_id="r2",
             resume=[{"interruptId": interrupt["id"], "status": "resolved", "payload": "yes"}],
         )
+        history = client.get(api(pid, "/chats/c1/events")).json()["events"]
+    starts = [e for e in history if e["type"] == "CUSTOM" and e["name"].endswith("TurnStarted")]
+    assert len(starts) == 1
+    assert starts[0]["value"]["request_id"] == "r1"
     assert second[-1]["outcome"]["type"] == "success"
     said = "".join(e["delta"] for e in second if e["type"] == "TEXT_MESSAGE_CONTENT")
     assert "you said yes" in said
@@ -311,3 +322,456 @@ async def test_a_client_joining_mid_stream_gets_the_text_written_so_far(paths):
     finally:
         await gateway.close()
     assert "".join(text) == "Hello world"
+
+
+class _DelayedTranscriptGateway(Gateway):
+    """Hold the second Turn's transcript write behind an explicit gate."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.saving = asyncio.Event()
+        self.save_allowed = asyncio.Event()
+
+    async def _append_transcript(self, chat_id, user_text, reply_text):
+        if user_text == "second":
+            self.saving.set()
+            await self.save_allowed.wait()
+        await super()._append_transcript(chat_id, user_text, reply_text)
+
+
+class _Interrupted(FakeRunMixin):
+    tools: list = []
+
+    def __init__(self, outcome, *, partial=False):
+        self.outcome = outcome
+        self.partial = partial
+        self.answer = asyncio.Event()
+
+    async def ask(self, *msg, stream, **kwargs):
+        context = ConversationContext(stream=stream)
+        await context.send(ModelRequest.ensure_request([msg[0]]))
+        if msg[0] in {"first", "third"}:
+            reply = "previous answer" if msg[0] == "first" else "queued answer"
+            await context.send(ModelResponse(ModelMessage(reply)))
+            return FakeReply(reply)
+        if self.partial:
+            await context.send(ModelMessageChunk("old partial"))
+        await context.send(
+            InquiryRaised("permission", question="Proceed?", kind="permission", options=["yes"])
+        )
+        await self.answer.wait()
+        if self.outcome == "failed":
+            raise RuntimeError("second turn failed")
+        if self.outcome == "empty":
+            return FakeReply(None)
+        await context.send(ModelResponse(ModelMessage("current answer")))
+        return FakeReply("current answer")
+
+
+@pytest.mark.parametrize("outcome", ["success", "failed", "empty", "cancelled"])
+@pytest.mark.parametrize("follow", ["watch", "resume"])
+async def test_follow_waits_for_interrupted_turn_persistence(paths, outcome, follow):
+    agent = _Interrupted(outcome)
+    config = Config.for_paths(paths)
+    config.gateway.chat_titles = False
+    gateway = _DelayedTranscriptGateway(
+        config, memory=False, agent_factory=fake_agent_factory(agent)
+    )
+    await gateway.start()
+    runs = ChatRuns()
+    body = RunAgentInput(
+        thread_id="c1", run_id="r1", state={}, messages=[], tools=[], context=[], forwarded_props={}
+    )
+    seen = []
+    terminal = asyncio.Event()
+
+    async def answer(_entry):
+        if outcome == "cancelled":
+            assert await gateway.cancel_turn("c1")
+        else:
+            agent.answer.set()
+
+    async def collect():
+        if follow == "resume":
+            resumed = body.model_copy(
+                update={
+                    "resume": [
+                        ResumeEntry(interrupt_id="permission", status="resolved", payload="yes")
+                    ]
+                }
+            )
+            source = runs.run(gateway, "c1", resumed, None, answer)
+        else:
+            source = runs.watch(gateway, "c1")
+        async for event in source:
+            seen.append(event)
+            if event.type == "RUN_STARTED" and follow == "watch":
+                await answer(None)
+            if event.type in {"RUN_FINISHED", "RUN_ERROR"}:
+                terminal.set()
+                return await gateway.transcript("c1")
+
+    watcher = None
+    try:
+        await gateway.send_message("first", chat_id="c1")
+        initial = [
+            event
+            async for event in runs.run(gateway, "c1", body, TurnRequest(text="second"), answer)
+        ]
+        assert initial[-1].outcome.type == "interrupt"
+        watcher = asyncio.create_task(collect())
+        await asyncio.wait_for(gateway.saving.wait(), 5)
+        assert gateway.is_running("c1")
+        assert gateway.can_accept_turn("c1")
+        assert not gateway.can_feed_message("c1")
+        assert not await gateway.feed_message("too late", "c1")
+        assert (await gateway.transcript("c1"))[-1]["text"] == "previous answer"
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(terminal.wait(), 0.4)
+        gateway.save_allowed.set()
+        saved = await asyncio.wait_for(watcher, 5)
+        assert not gateway.is_running("c1")
+        if outcome == "success":
+            assert seen[-1].type == "RUN_FINISHED"
+            assert saved[-1]["text"] == "current answer"
+            assert "current answer" in "".join(
+                event.delta for event in seen if event.type == "TEXT_MESSAGE_CONTENT"
+            )
+        else:
+            assert seen[-1].type == "RUN_ERROR"
+            assert seen[-1].message
+    finally:
+        agent.answer.set()
+        gateway.save_allowed.set()
+        if watcher is not None and not watcher.done():
+            watcher.cancel()
+            await asyncio.gather(watcher, return_exceptions=True)
+        await gateway.close()
+
+
+class _RejectNewRun(Gateway):
+    """Reject a new invocation before it accepts a Turn."""
+
+    def __init__(self, *args, rejection_gate=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.rejection_gate = rejection_gate
+        self.waiting = asyncio.Event()
+
+    async def send_message(self, text, **kwargs):
+        self.waiting.set()
+        if self.rejection_gate is not None:
+            await self.rejection_gate.wait()
+        raise RuntimeError("new invocation rejected")
+
+
+async def test_new_run_does_not_report_a_historical_turn_failure(paths):
+    gateway = _RejectNewRun(
+        Config.for_paths(paths),
+        memory=False,
+        agent_factory=fake_agent_factory(_Slow(asyncio.Event())),
+    )
+    await gateway.start()
+    body = RunAgentInput(
+        thread_id="c1", run_id="r1", state={}, messages=[], tools=[], context=[], forwarded_props={}
+    )
+    try:
+        await gateway.emit_event("c1", TurnFailed("c1", error="previous failure"))
+        events = [
+            event
+            async for event in ChatRuns().run(
+                gateway, "c1", body, TurnRequest(text="new request"), answer=None
+            )
+        ]
+        assert events[-1].type == "RUN_ERROR"
+        assert events[-1].message == "new invocation rejected"
+    finally:
+        await gateway.close()
+
+
+@pytest.mark.parametrize("outcome", ["success", "failed", "empty", "cancelled"])
+async def test_new_http_run_waits_for_previous_turn_persistence(paths, outcome):
+    config = Config.for_paths(paths)
+    config.gateway.chat_titles = False
+    agent = _Interrupted(outcome, partial=True)
+    gateway = _DelayedTranscriptGateway(
+        config, memory=False, agent_factory=fake_agent_factory(agent)
+    )
+    await gateway.start()
+    runtime = SimpleNamespace(
+        require_gateway=lambda: gateway,
+        require_config=lambda: config,
+        tasks=None,
+        hitl=HitlServer(),
+    )
+    app = FastAPI()
+    app.include_router(build_profile_router(None, lambda: runtime, surfaces={}))
+    raised = asyncio.Event()
+    stream = await gateway.stream_for("c1")
+    stream.where(InquiryRaised).subscribe(lambda event: raised.set())
+    first = asyncio.create_task(gateway.send_message("second", chat_id="c1"))
+    request = None
+    try:
+        await asyncio.wait_for(raised.wait(), 5)
+        if outcome == "cancelled":
+            assert await gateway.cancel_turn("c1")
+        else:
+            agent.answer.set()
+        await asyncio.wait_for(gateway.saving.wait(), 5)
+        assert gateway.is_running("c1")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            request = asyncio.create_task(
+                client.post("/chats/c1/agui", json=run_input(text="third", run_id="r2"))
+            )
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(asyncio.shield(request), 0.4)
+            gateway.save_allowed.set()
+            await asyncio.gather(first, return_exceptions=True)
+            response = await asyncio.wait_for(request, 5)
+        assert response.status_code == 200
+        events = sse(response)
+        assert events[-1]["type"] == "RUN_FINISHED"
+        text = "".join(
+            event["delta"] for event in events if event["type"] == "TEXT_MESSAGE_CONTENT"
+        )
+        assert "queued answer" in text
+        assert "old partial" not in text
+        assert "current answer" not in text
+        assert (await gateway.transcript("c1"))[-1]["text"] == "queued answer"
+    finally:
+        gateway.save_allowed.set()
+        if request is not None and not request.done():
+            request.cancel()
+            await asyncio.gather(request, return_exceptions=True)
+        await asyncio.gather(first, return_exceptions=True)
+        await gateway.close()
+
+
+async def test_late_prior_failure_does_not_mask_new_invocation_rejection(paths):
+    gate = asyncio.Event()
+    gateway = _RejectNewRun(
+        Config.for_paths(paths),
+        memory=False,
+        agent_factory=fake_agent_factory(_Slow(asyncio.Event())),
+        rejection_gate=gate,
+    )
+    await gateway.start()
+    body = RunAgentInput(
+        thread_id="c1", run_id="r1", state={}, messages=[], tools=[], context=[], forwarded_props={}
+    )
+    old_error_seen = asyncio.Event()
+    events = []
+
+    async def collect():
+        async for event in ChatRuns().run(
+            gateway, "c1", body, TurnRequest(text="new request"), answer=None
+        ):
+            events.append(event)
+            if event.type == "CUSTOM" and event.name.endswith("TurnFailed"):
+                old_error_seen.set()
+
+    request = asyncio.create_task(collect())
+    try:
+        await asyncio.wait_for(gateway.waiting.wait(), 5)
+        await gateway.emit_event("c1", TurnFailed("c1", error="late previous failure"))
+        await asyncio.wait_for(old_error_seen.wait(), 5)
+        gate.set()
+        await asyncio.wait_for(request, 5)
+        assert events[-1].type == "RUN_ERROR"
+        assert events[-1].message == "new invocation rejected"
+    finally:
+        gate.set()
+        await asyncio.gather(request, return_exceptions=True)
+        await gateway.close()
+
+
+def test_http_run_correlates_its_turn_with_the_request_id(paths):
+    app, pid, box = make_client(paths)
+    with TestClient(app) as client:
+        box["value"] = app.state.profiles.get(pid)
+        events = run(client, pid, text="same prompt", run_id="owned-request")
+        history = client.get(api(pid, "/chats/c1/events")).json()["events"]
+    [started] = [e for e in events if e["type"] == "CUSTOM" and e["name"].endswith("TurnStarted")]
+    [saved] = [e for e in history if e["type"] == "CUSTOM" and e["name"].endswith("TurnStarted")]
+    assert started["value"]["request_id"] == "owned-request"
+    assert saved["value"]["request_id"] == "owned-request"
+    assert saved["value"]["turn_id"] == started["value"]["turn_id"]
+
+
+class _CorrelatedGateway(_DelayedTranscriptGateway):
+    """Expose when an owned HTTP invocation is queued."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.owned_waiting = asyncio.Event()
+
+    async def send_message(self, text, *args, request_id="", **kwargs):
+        if request_id:
+            self.owned_waiting.set()
+        return await super().send_message(text, *args, request_id=request_id, **kwargs)
+
+
+class _SamePromptAgent(FakeRunMixin):
+    tools: list = []
+
+    def __init__(self, outcome):
+        self.outcome = outcome
+        self.prompts = []
+        self.foreign_answer = asyncio.Event()
+
+    async def ask(self, *msg, stream, **kwargs):
+        self.prompts.append(msg[0])
+        context = ConversationContext(stream=stream)
+        await context.send(ModelRequest.ensure_request([msg[0]]))
+        if msg[0] == "second":
+            reply = "warmup answer"
+        elif self.prompts.count("same prompt") == 1:
+            if self.outcome == "failed":
+                raise RuntimeError("foreign failure")
+            if self.outcome == "interrupt":
+                await context.send(InquiryRaised("foreign", question="Continue?"))
+                await self.foreign_answer.wait()
+            reply = "foreign answer"
+        else:
+            reply = "owned answer"
+        await context.send(ModelResponse(ModelMessage(reply)))
+        return FakeReply(reply)
+
+
+@pytest.mark.parametrize("outcome", ["success", "failed", "interrupt"])
+async def test_http_request_id_distinguishes_identical_foreign_turns(paths, outcome):
+    config = Config.for_paths(paths)
+    config.gateway.chat_titles = False
+    agent = _SamePromptAgent(outcome)
+    gateway = _CorrelatedGateway(config, memory=False, agent_factory=fake_agent_factory(agent))
+    await gateway.start()
+    runtime = SimpleNamespace(
+        require_gateway=lambda: gateway,
+        require_config=lambda: config,
+        tasks=None,
+        hitl=HitlServer(),
+    )
+    app = FastAPI()
+    app.include_router(build_profile_router(None, lambda: runtime, surfaces={}))
+    app.include_router(build_chat_profile_router(None, lambda: runtime))
+    owned_ids = []
+    owned_completed = asyncio.Event()
+    stream = await gateway.stream_for("c1")
+
+    async def started(event):
+        if event.request_id == "owned-request":
+            owned_ids.append(event.turn_id)
+
+    async def completed(event):
+        if event.turn_id in owned_ids:
+            owned_completed.set()
+
+    stream.where(TurnStarted).subscribe(started)
+    stream.where(TurnCompleted).subscribe(completed)
+    warmup = asyncio.create_task(gateway.send_message("second", chat_id="c1"))
+    foreign = None
+    request = None
+    try:
+        await asyncio.wait_for(gateway.saving.wait(), 5)
+        foreign = asyncio.create_task(gateway.send_message("same prompt", chat_id="c1"))
+        await asyncio.sleep(0)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            request = asyncio.create_task(
+                client.post(
+                    "/chats/c1/agui", json=run_input(text="same prompt", run_id="owned-request")
+                )
+            )
+            await asyncio.wait_for(gateway.owned_waiting.wait(), 5)
+            gateway.save_allowed.set()
+            response = await asyncio.wait_for(request, 5)
+            assert response.status_code == 200
+            events = sse(response)
+            starts = [
+                e["value"]
+                for e in events
+                if e["type"] == "CUSTOM" and e["name"].endswith("TurnStarted")
+            ]
+            assert starts[0]["request_id"] == ""
+            if outcome == "interrupt":
+                assert events[-1]["outcome"]["type"] == "interrupt"
+                assert not any(e["request_id"] == "owned-request" for e in starts)
+                agent.foreign_answer.set()
+            else:
+                assert starts[-1]["request_id"] == "owned-request"
+                assert starts[0]["turn_id"] != starts[-1]["turn_id"]
+            await asyncio.wait_for(owned_completed.wait(), 5)
+            history = (await client.get("/chats/c1/events")).json()["events"]
+        [saved] = [
+            e["value"]
+            for e in history
+            if e["type"] == "CUSTOM"
+            and e["name"].endswith("TurnStarted")
+            and e["value"]["request_id"] == "owned-request"
+        ]
+        assert saved["turn_id"] == owned_ids[0]
+        assert agent.prompts == ["second", "same prompt", "same prompt"]
+        await asyncio.gather(warmup, foreign, return_exceptions=True)
+    finally:
+        gateway.save_allowed.set()
+        agent.foreign_answer.set()
+        if request is not None and not request.done():
+            request.cancel()
+            await asyncio.gather(request, return_exceptions=True)
+        await asyncio.gather(
+            *(task for task in (warmup, foreign) if task is not None), return_exceptions=True
+        )
+        await gateway.close()
+
+
+async def test_request_id_survives_a_gateway_restart(paths):
+    config = Config.for_paths(paths)
+    config.gateway.chat_titles = False
+    for writing in (True, False):
+        gateway = Gateway(config, memory=False, agent_factory=fake_agent_factory(_Agent({})))
+        await gateway.start()
+        try:
+            if writing:
+                await gateway.send_message("same prompt", chat_id="c1", request_id="owned-request")
+            starts = [e for e in await gateway.replay_events("c1") if isinstance(e, TurnStarted)]
+            assert len(starts) == 1
+            assert starts[0].request_id == "owned-request"
+        finally:
+            await gateway.close()
+
+
+class _GatedChatRuns(ChatRuns):
+    def __init__(self):
+        super().__init__()
+        self.ready = asyncio.Queue()
+        self.release = asyncio.Event()
+
+    async def _turn(self, gateway, chat_id, request):
+        self.ready.put_nowait(chat_id)
+        await self.release.wait()
+        return await super()._turn(gateway, chat_id, request)
+
+
+async def test_reusing_a_turn_request_keeps_each_invocations_correlation(paths):
+    gateway = await _gateway(paths, _Agent({}))
+    runs = _GatedChatRuns()
+    request = TurnRequest(text="same prompt")
+
+    async def collect(chat, run_id):
+        body = RunAgentInput.model_validate(run_input(text="same prompt", chat=chat, run_id=run_id))
+        return [event async for event in runs.run(gateway, chat, body, request, answer=None)]
+
+    tasks = [
+        asyncio.create_task(collect("c1", "request-1")),
+        asyncio.create_task(collect("c2", "request-2")),
+    ]
+    try:
+        await asyncio.wait_for(asyncio.gather(runs.ready.get(), runs.ready.get()), 5)
+        runs.release.set()
+        results = await asyncio.wait_for(asyncio.gather(*tasks), 5)
+        for index, events in enumerate(results, 1):
+            [started] = [e for e in events if e.type == "CUSTOM" and e.name.endswith("TurnStarted")]
+            assert started.value["request_id"] == f"request-{index}"
+        assert request.request_id == ""
+    finally:
+        runs.release.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await gateway.close()

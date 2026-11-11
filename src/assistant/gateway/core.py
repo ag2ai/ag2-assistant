@@ -216,11 +216,11 @@ def is_internal_stream(chat_id: str) -> bool:
 
 @dataclass
 class _ActiveTurn:
-    """A Chat-lock holder preparing or running a Turn, with its cancellation reason.
-    The task drives preparation until the AG2 run's result task takes over."""
+    """A Chat-lock holder through preparation, execution and persistence."""
 
     run: AgentRun | None
     task: "asyncio.Task"
+    invocation: "asyncio.Task"
     cancelled: bool = False
     reason: str = "Stopped"
 
@@ -698,10 +698,19 @@ class Gateway:
         return self._activity.track(detail)
 
     def is_running(self, chat_id: str = "default") -> bool:
-        """Whether a turn is in flight on this chat — what a message sent now would be
-        fed into rather than starting a second one."""
+        """Whether a Turn still holds this Chat, including its persistence and cleanup."""
         active = self._active.get(chat_id)
-        return active is not None and not active.task.done()
+        return active is not None and not active.invocation.done()
+
+    def can_accept_turn(self, chat_id: str = "default") -> bool:
+        """Whether a new Turn can be accepted without interrupting preparation or model work."""
+        active = self._active.get(chat_id)
+        return active is None or active.task.done()
+
+    def can_feed_message(self, chat_id: str = "default") -> bool:
+        """Whether the current model run can still accept another message."""
+        active = self._active.get(chat_id)
+        return active is not None and active.run is not None and not active.task.done()
 
     async def feed_message(self, text: str, chat_id: str = "default", attachments=None) -> bool:
         """Feed a message into the turn already running on this chat.
@@ -1038,6 +1047,7 @@ class Gateway:
         attachment_names: tuple[str, ...] = (),
         chat_model: str = "",
         on_text=None,
+        request_id: str = "",
     ) -> str:
         """Run a message with Profile shutdown and invocation scope ownership."""
         if self._closing:
@@ -1060,6 +1070,7 @@ class Gateway:
                     attachment_names,
                     chat_model,
                     on_text,
+                    request_id,
                 )
                 self._schedule_memory_update(chat_id)
             return reply
@@ -1081,6 +1092,7 @@ class Gateway:
         attachment_names: tuple[str, ...] = (),
         chat_model: str = "",
         on_text=None,
+        request_id: str = "",
     ) -> str:
         """Send a user message to the universal agent and return its reply.
 
@@ -1132,7 +1144,7 @@ class Gateway:
             async with self._resources.lease() as lease:
                 invocation = asyncio.current_task()
                 assert invocation is not None
-                active = _ActiveTurn(None, invocation)
+                active = _ActiveTurn(None, invocation, invocation)
                 self._active[chat_id] = active
                 a2ui_handle = None
                 effective = self._config
@@ -1148,7 +1160,9 @@ class Gateway:
                     hitl_pending = human_watch
                 try:
                     turn_id = new_id("turn")
-                    await self.emit_event(chat_id, TurnStarted(chat_id, turn_id=turn_id))
+                    await self.emit_event(
+                        chat_id, TurnStarted(chat_id, turn_id=turn_id, request_id=request_id)
+                    )
                     async with self._preparation_lock:
                         effective, agent, extra, a2ui_runtime = await self._prepare_turn(
                             lease, chat_id, llm_config_id, chat_model, asker, task_id, surface

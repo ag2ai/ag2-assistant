@@ -632,7 +632,7 @@ class ChannelRouter:
             return False
         chat = self._attached_chat(inbound)
         runtime = self._runtime(inbound)
-        return chat is not None and isinstance(runtime, tuple) and runtime[1].is_running(chat)
+        return chat is not None and isinstance(runtime, tuple) and runtime[1].can_feed_message(chat)
 
     # ---- who may be served (ADR 0021) ----
 

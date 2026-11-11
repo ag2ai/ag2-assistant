@@ -137,6 +137,17 @@ added to every turn of every profile, on chat, task runs and the ACP listener. A
 tools, prompt text, middleware, observers and dependencies, so host-specific behaviour stays in
 the host.
 
+AG-UI clients send a unique `runId` with each new `POST /api/p/{pid}/chats/{id}/agui`
+request. Its owned `assistant.events.TurnStarted` custom event carries that value as
+`value.request_id`, alongside the server's stable `value.turn_id`. Clients match the
+request id before binding the turn id for follow streams or event-history recovery;
+chat events and frame boundaries alone do not establish request ownership. The
+client's message id is not reused as the server's message or turn id.
+
+A resumed exchange has its own frame `runId` and keeps the original Turn's request
+correlation. Non-AG-UI turns and historical records without a request id use an empty
+string, which means unknown ownership. Request ids never enter the model's input.
+
 ### 5.2 Universal agent — `src/assistant/agent.py`
 
 One shared `ag2` `Agent`, built by `create_agent()` (`agent.py:320`).

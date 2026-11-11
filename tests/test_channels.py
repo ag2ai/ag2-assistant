@@ -227,6 +227,9 @@ class _OneGateway:
     def is_running(self, chat_id: str = "default") -> bool:
         return False
 
+    def can_feed_message(self, chat_id: str = "default") -> bool:
+        return False
+
     async def feed_message(self, text: str, chat_id: str = "default", attachments=None) -> bool:
         return False
 

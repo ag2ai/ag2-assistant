@@ -230,6 +230,7 @@ class TurnStarted(AssistantEvent):
 
     chat_id: str = Field(kw_only=False)
     turn_id: str = ""
+    request_id: str = ""
 
 
 class TurnCompleted(AssistantEvent):

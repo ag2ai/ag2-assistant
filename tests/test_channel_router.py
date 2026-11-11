@@ -94,6 +94,7 @@ class FakeGateway:
         self.inquiries: dict[str, dict] = {}
         # Chats with a turn in flight, and what has been fed into those turns.
         self.running: set[str] = set()
+        self.saving: set[str] = set()
         self.fed: list[dict] = []
         # Tool calls the next turn makes, one ToolCallsEvent per batch.
         self.tool_batches: list[tuple[tuple[str, dict], ...]] = []
@@ -114,8 +115,11 @@ class FakeGateway:
     def is_running(self, chat_id: str = "default") -> bool:
         return chat_id in self.running
 
+    def can_feed_message(self, chat_id: str = "default") -> bool:
+        return chat_id in self.running and chat_id not in self.saving
+
     async def feed_message(self, text: str, chat_id: str = "default", attachments=None) -> bool:
-        if chat_id not in self.running:
+        if not self.can_feed_message(chat_id):
             return False
         self.fed.append({"text": text, "chat_id": chat_id, "attachments": attachments})
         return True
@@ -2763,7 +2767,7 @@ async def test_files_from_a_message_are_saved_where_the_agent_can_read_them(path
 
 async def test_the_reply_is_streamed_to_the_adapter_as_it_is_written(paths):
     router, gateway = _router(paths)
-    gateway.streamed = [ModelMessageChunk("Hel"), ModelMessageChunk("lo")]
+    gateway.streamed = [ModelMessageChunk("He"), ModelMessageChunk("llo")]
     shown: list[str] = []
 
     async def show(text: str) -> None:
@@ -2771,7 +2775,7 @@ async def test_the_reply_is_streamed_to_the_adapter_as_it_is_written(paths):
 
     await router.handle(_inbound("hi"), stream=show)
 
-    assert shown == ["Hel", "Hello"]
+    assert shown == ["He", "Hello"]
 
 
 async def test_a_new_model_message_starts_its_stream_afresh(paths):
@@ -2790,3 +2794,13 @@ async def test_a_new_model_message_starts_its_stream_afresh(paths):
     await router.handle(_inbound("hi"), stream=show)
 
     assert shown == ["Let me look.", "Done."]
+
+
+async def test_a_message_during_persistence_gets_its_own_reply(paths):
+    router, gateway, chat = await _mid_turn(paths)
+    gateway.saving.add(chat)
+
+    assert gateway.is_running(chat)
+    assert not router.steers(_inbound("another question"))
+    assert isinstance(await router.handle(_inbound("another question")), Reply)
+    assert gateway.fed == []

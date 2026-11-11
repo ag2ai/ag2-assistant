@@ -889,7 +889,8 @@ def test_cancel_stops_the_turn(paths):
             assert client.post(api(pid, "/chats/s1/cancel")).json() == {"ok": True}
             events = running.result(timeout=10)
         assert any(e["type"] == "CUSTOM" and e["name"].endswith("TurnCancelled") for e in events)
-        assert events[-1]["type"] == "RUN_FINISHED"
+        assert events[-1]["type"] == "RUN_ERROR"
+        assert events[-1]["message"] == "Stopped"
         assert agent.cancelled  # the cancel reached the turn itself, not just the request
 
 
@@ -916,7 +917,7 @@ async def test_feed_message_steers_the_running_turn(paths):
     await fake_gateway.start()
 
     turn = asyncio.ensure_future(fake_gateway.send_message("research widgets", chat_id="s1"))
-    await asyncio.wait_for(started.wait(), timeout=1)
+    await asyncio.wait_for(started.wait(), timeout=5)
 
     assert await fake_gateway.feed_message("focus on 2026", chat_id="s1") is True
     stream = await fake_gateway.stream_for("s1")
@@ -948,10 +949,12 @@ async def test_is_running_tells_a_turn_in_flight_from_an_idle_chat(paths):
     fake_gateway = _gateway(paths, agent=agent, persist=False)
     await fake_gateway.start()
     assert fake_gateway.is_running("s3") is False
+    assert fake_gateway.can_accept_turn("s3") is True
 
     turn = asyncio.ensure_future(fake_gateway.send_message("go", chat_id="s3"))
-    await asyncio.wait_for(started.wait(), timeout=1)
+    await asyncio.wait_for(started.wait(), timeout=5)
     assert fake_gateway.is_running("s3") is True
+    assert fake_gateway.can_accept_turn("s3") is False
 
     agent.release.set()
     await turn

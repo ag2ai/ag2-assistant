@@ -5,7 +5,7 @@ import contextlib
 import logging
 import uuid
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from ag2.events import BaseEvent
@@ -22,7 +22,7 @@ from ag_ui.core import (
     TextPart,
 )
 
-from assistant.events import Attachment, InquiryRaised
+from assistant.events import Attachment, InquiryRaised, TurnCancelled, TurnFailed, TurnStarted
 from assistant.gateway.agui.projection import Projector
 from assistant.gateway.history import event_cursor
 from assistant.gateway.wire import as_drawn
@@ -42,6 +42,7 @@ class TurnRequest:
     surface: str = ""
     uploads: tuple[tuple[str, str], ...] = ()
     chat_model: str = ""
+    request_id: str = ""
 
 
 def user_text(body: RunAgentInput) -> str:
@@ -91,9 +92,16 @@ class ChatListener:
         self._sub: Any = None
         self.projector = Projector()
         self.written: list[Event] = []
+        self.error: str | None = None
 
     def feed(self, event: BaseEvent) -> list[Event]:
         """The AG-UI events ``event`` becomes, with Cards expanded as a client draws them."""
+        if isinstance(event, TurnStarted):
+            self.error = None
+        elif isinstance(event, TurnFailed):
+            self.error = event.error
+        elif isinstance(event, TurnCancelled):
+            self.error = event.reason
         return self.projector.feed(
             as_drawn(event, self._gateway.catalog, self._gateway.card_sources)
         )
@@ -154,6 +162,7 @@ class ChatRuns:
             surface=request.surface,
             attachment_names=tuple(name for _, name in request.uploads),
             chat_model=request.chat_model,
+            request_id=request.request_id,
         )
 
     def start(self, gateway: Any, chat_id: str, request: TurnRequest) -> asyncio.Task:
@@ -195,7 +204,8 @@ class ChatRuns:
                     for entry in body.resume:
                         await answer(entry)
                 elif request is not None:
-                    turn = self.start(gateway, chat_id, request)
+                    listener.error = None
+                    turn = self.start(gateway, chat_id, replace(request, request_id=run_id))
                 while True:
                     event = await listener.next()
                     if event is None:
@@ -221,6 +231,10 @@ class ChatRuns:
                     yield out
                 if turn is not None and not turn.cancelled() and (error := turn.exception()):
                     yield RunErrorEvent(message=str(error) or repr(error))
+                elif listener.error is not None:
+                    yield RunErrorEvent(message=listener.error)
+                elif turn is not None and turn.cancelled():
+                    yield RunErrorEvent(message="Turn cancelled")
                 else:
                     yield finished(chat_id, run_id)
 
@@ -242,7 +256,10 @@ class ChatRuns:
                     if run_id is not None and not gateway.is_running(chat_id):
                         for out in listener.projector.close():
                             yield out
-                        yield finished(chat_id, run_id)
+                        if listener.error is not None:
+                            yield RunErrorEvent(message=listener.error)
+                        else:
+                            yield finished(chat_id, run_id)
                         run_id = None
                     continue
                 projected = listener.feed(event)
