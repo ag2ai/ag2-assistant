@@ -702,6 +702,11 @@ class Gateway:
         active = self._active.get(chat_id)
         return active is not None and not active.invocation.done()
 
+    def can_feed_message(self, chat_id: str = "default") -> bool:
+        """Whether the current model run can still accept another message."""
+        active = self._active.get(chat_id)
+        return active is not None and active.run is not None and not active.task.done()
+
     async def feed_message(self, text: str, chat_id: str = "default", attachments=None) -> bool:
         """Feed a message into the turn already running on this chat.
 

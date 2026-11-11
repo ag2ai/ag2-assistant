@@ -10,7 +10,7 @@ from ag_ui.core import ResumeEntry, RunAgentInput
 from fastapi.testclient import TestClient
 
 from assistant.config import Config
-from assistant.events import InquiryRaised
+from assistant.events import InquiryRaised, TurnFailed
 from assistant.gateway.agui.session import ChatRuns, TurnRequest
 from assistant.gateway.core import Gateway
 from tests.support.apps import api, make_profile_app
@@ -408,6 +408,7 @@ async def test_follow_waits_for_interrupted_turn_persistence(paths, outcome, fol
         watcher = asyncio.create_task(collect())
         await asyncio.wait_for(gateway.saving.wait(), 5)
         assert gateway.is_running("c1")
+        assert not gateway.can_feed_message("c1")
         assert not await gateway.feed_message("too late", "c1")
         assert (await gateway.transcript("c1"))[-1]["text"] == "previous answer"
         with pytest.raises(TimeoutError):
@@ -430,4 +431,35 @@ async def test_follow_waits_for_interrupted_turn_persistence(paths, outcome, fol
         if watcher is not None and not watcher.done():
             watcher.cancel()
             await asyncio.gather(watcher, return_exceptions=True)
+        await gateway.close()
+
+
+class _RejectNewRun(Gateway):
+    """Reject a new invocation before it accepts a Turn."""
+
+    async def send_message(self, text, **kwargs):
+        raise RuntimeError("new invocation rejected")
+
+
+async def test_new_run_does_not_report_a_historical_turn_failure(paths):
+    gateway = _RejectNewRun(
+        Config.for_paths(paths),
+        memory=False,
+        agent_factory=fake_agent_factory(_Slow(asyncio.Event())),
+    )
+    await gateway.start()
+    body = RunAgentInput(
+        thread_id="c1", run_id="r1", state={}, messages=[], tools=[], context=[], forwarded_props={}
+    )
+    try:
+        await gateway.emit_event("c1", TurnFailed("c1", error="previous failure"))
+        events = [
+            event
+            async for event in ChatRuns().run(
+                gateway, "c1", body, TurnRequest(text="new request"), answer=None
+            )
+        ]
+        assert events[-1].type == "RUN_ERROR"
+        assert events[-1].message == "new invocation rejected"
+    finally:
         await gateway.close()

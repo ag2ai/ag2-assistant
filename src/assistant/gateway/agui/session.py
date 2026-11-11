@@ -202,6 +202,7 @@ class ChatRuns:
                     for entry in body.resume:
                         await answer(entry)
                 elif request is not None:
+                    listener.error = None
                     turn = self.start(gateway, chat_id, request)
                 while True:
                     event = await listener.next()
