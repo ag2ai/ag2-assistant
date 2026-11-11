@@ -227,12 +227,12 @@ class ChatRuns:
                         yield out
                 for out in listener.projector.close():
                     yield out
-                if listener.error is not None:
+                if turn is not None and not turn.cancelled() and (error := turn.exception()):
+                    yield RunErrorEvent(message=str(error) or repr(error))
+                elif listener.error is not None:
                     yield RunErrorEvent(message=listener.error)
                 elif turn is not None and turn.cancelled():
                     yield RunErrorEvent(message="Turn cancelled")
-                elif turn is not None and (error := turn.exception()):
-                    yield RunErrorEvent(message=str(error) or repr(error))
                 else:
                     yield finished(chat_id, run_id)
 

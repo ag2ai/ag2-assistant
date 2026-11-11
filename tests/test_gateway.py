@@ -949,10 +949,12 @@ async def test_is_running_tells_a_turn_in_flight_from_an_idle_chat(paths):
     fake_gateway = _gateway(paths, agent=agent, persist=False)
     await fake_gateway.start()
     assert fake_gateway.is_running("s3") is False
+    assert fake_gateway.can_accept_turn("s3") is True
 
     turn = asyncio.ensure_future(fake_gateway.send_message("go", chat_id="s3"))
     await asyncio.wait_for(started.wait(), timeout=1)
     assert fake_gateway.is_running("s3") is True
+    assert fake_gateway.can_accept_turn("s3") is False
 
     agent.release.set()
     await turn

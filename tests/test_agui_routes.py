@@ -2,19 +2,24 @@
 
 import asyncio
 import base64
+from types import SimpleNamespace
 
 import pytest
 from ag2.context import ConversationContext
 from ag2.events import ModelMessage, ModelMessageChunk, ModelRequest, ModelResponse
 from ag_ui.core import ResumeEntry, RunAgentInput
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 from assistant.config import Config
 from assistant.events import InquiryRaised, TurnFailed
 from assistant.gateway.agui.session import ChatRuns, TurnRequest
 from assistant.gateway.core import Gateway
+from assistant.gateway.routes.agui import build_profile_router
+from assistant.hitl import HitlServer
 from tests.support.apps import api, make_profile_app
-from tests.support.chat import logged, run, run_input
+from tests.support.chat import logged, run, run_input, sse
 from tests.support.fakes import FakeReply, FakeRunMixin, fake_agent_factory
 
 
@@ -332,16 +337,20 @@ class _DelayedTranscriptGateway(Gateway):
 class _Interrupted(FakeRunMixin):
     tools: list = []
 
-    def __init__(self, outcome):
+    def __init__(self, outcome, *, partial=False):
         self.outcome = outcome
+        self.partial = partial
         self.answer = asyncio.Event()
 
     async def ask(self, *msg, stream, **kwargs):
         context = ConversationContext(stream=stream)
         await context.send(ModelRequest.ensure_request([msg[0]]))
-        if msg[0] == "first":
-            await context.send(ModelResponse(ModelMessage("previous answer")))
-            return FakeReply("previous answer")
+        if msg[0] in {"first", "third"}:
+            reply = "previous answer" if msg[0] == "first" else "queued answer"
+            await context.send(ModelResponse(ModelMessage(reply)))
+            return FakeReply(reply)
+        if self.partial:
+            await context.send(ModelMessageChunk("old partial"))
         await context.send(
             InquiryRaised("permission", question="Proceed?", kind="permission", options=["yes"])
         )
@@ -408,6 +417,7 @@ async def test_follow_waits_for_interrupted_turn_persistence(paths, outcome, fol
         watcher = asyncio.create_task(collect())
         await asyncio.wait_for(gateway.saving.wait(), 5)
         assert gateway.is_running("c1")
+        assert gateway.can_accept_turn("c1")
         assert not gateway.can_feed_message("c1")
         assert not await gateway.feed_message("too late", "c1")
         assert (await gateway.transcript("c1"))[-1]["text"] == "previous answer"
@@ -437,7 +447,15 @@ async def test_follow_waits_for_interrupted_turn_persistence(paths, outcome, fol
 class _RejectNewRun(Gateway):
     """Reject a new invocation before it accepts a Turn."""
 
+    def __init__(self, *args, rejection_gate=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.rejection_gate = rejection_gate
+        self.waiting = asyncio.Event()
+
     async def send_message(self, text, **kwargs):
+        self.waiting.set()
+        if self.rejection_gate is not None:
+            await self.rejection_gate.wait()
         raise RuntimeError("new invocation rejected")
 
 
@@ -462,4 +480,100 @@ async def test_new_run_does_not_report_a_historical_turn_failure(paths):
         assert events[-1].type == "RUN_ERROR"
         assert events[-1].message == "new invocation rejected"
     finally:
+        await gateway.close()
+
+
+@pytest.mark.parametrize("outcome", ["success", "failed", "empty", "cancelled"])
+async def test_new_http_run_waits_for_previous_turn_persistence(paths, outcome):
+    config = Config.for_paths(paths)
+    config.gateway.chat_titles = False
+    agent = _Interrupted(outcome, partial=True)
+    gateway = _DelayedTranscriptGateway(
+        config, memory=False, agent_factory=fake_agent_factory(agent)
+    )
+    await gateway.start()
+    runtime = SimpleNamespace(
+        require_gateway=lambda: gateway,
+        require_config=lambda: config,
+        tasks=None,
+        hitl=HitlServer(),
+    )
+    app = FastAPI()
+    app.include_router(build_profile_router(None, lambda: runtime, surfaces={}))
+    raised = asyncio.Event()
+    stream = await gateway.stream_for("c1")
+    stream.where(InquiryRaised).subscribe(lambda event: raised.set())
+    first = asyncio.create_task(gateway.send_message("second", chat_id="c1"))
+    request = None
+    try:
+        await asyncio.wait_for(raised.wait(), 5)
+        if outcome == "cancelled":
+            assert await gateway.cancel_turn("c1")
+        else:
+            agent.answer.set()
+        await asyncio.wait_for(gateway.saving.wait(), 5)
+        assert gateway.is_running("c1")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            request = asyncio.create_task(
+                client.post("/chats/c1/agui", json=run_input(text="third", run_id="r2"))
+            )
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(asyncio.shield(request), 0.4)
+            gateway.save_allowed.set()
+            await asyncio.gather(first, return_exceptions=True)
+            response = await asyncio.wait_for(request, 5)
+        assert response.status_code == 200
+        events = sse(response)
+        assert events[-1]["type"] == "RUN_FINISHED"
+        text = "".join(
+            event["delta"] for event in events if event["type"] == "TEXT_MESSAGE_CONTENT"
+        )
+        assert "queued answer" in text
+        assert "old partial" not in text
+        assert "current answer" not in text
+        assert (await gateway.transcript("c1"))[-1]["text"] == "queued answer"
+    finally:
+        gateway.save_allowed.set()
+        if request is not None and not request.done():
+            request.cancel()
+            await asyncio.gather(request, return_exceptions=True)
+        await asyncio.gather(first, return_exceptions=True)
+        await gateway.close()
+
+
+async def test_late_prior_failure_does_not_mask_new_invocation_rejection(paths):
+    gate = asyncio.Event()
+    gateway = _RejectNewRun(
+        Config.for_paths(paths),
+        memory=False,
+        agent_factory=fake_agent_factory(_Slow(asyncio.Event())),
+        rejection_gate=gate,
+    )
+    await gateway.start()
+    body = RunAgentInput(
+        thread_id="c1", run_id="r1", state={}, messages=[], tools=[], context=[], forwarded_props={}
+    )
+    old_error_seen = asyncio.Event()
+    events = []
+
+    async def collect():
+        async for event in ChatRuns().run(
+            gateway, "c1", body, TurnRequest(text="new request"), answer=None
+        ):
+            events.append(event)
+            if event.type == "CUSTOM" and event.name.endswith("TurnFailed"):
+                old_error_seen.set()
+
+    request = asyncio.create_task(collect())
+    try:
+        await asyncio.wait_for(gateway.waiting.wait(), 5)
+        await gateway.emit_event("c1", TurnFailed("c1", error="late previous failure"))
+        await asyncio.wait_for(old_error_seen.wait(), 5)
+        gate.set()
+        await asyncio.wait_for(request, 5)
+        assert events[-1].type == "RUN_ERROR"
+        assert events[-1].message == "new invocation rejected"
+    finally:
+        gate.set()
+        await asyncio.gather(request, return_exceptions=True)
         await gateway.close()

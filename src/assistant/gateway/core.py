@@ -702,6 +702,11 @@ class Gateway:
         active = self._active.get(chat_id)
         return active is not None and not active.invocation.done()
 
+    def can_accept_turn(self, chat_id: str = "default") -> bool:
+        """Whether a new Turn can be accepted without interrupting preparation or model work."""
+        active = self._active.get(chat_id)
+        return active is None or active.task.done()
+
     def can_feed_message(self, chat_id: str = "default") -> bool:
         """Whether the current model run can still accept another message."""
         active = self._active.get(chat_id)

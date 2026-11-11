@@ -102,7 +102,7 @@ def build_profile_router(d: GatewayDeps, get_runtime, *, surfaces: Mapping[str, 
             request = await resolve(runtime, chat_id, body)
             if not request.text:
                 raise HTTPException(status_code=422, detail="No user message to run")
-            if gateway.is_running(chat_id):
+            if not gateway.can_accept_turn(chat_id):
                 raise HTTPException(status_code=409, detail="A turn is already running")
             request.asker = chat_asker(runtime, chat_id)
 
