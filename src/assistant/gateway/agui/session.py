@@ -5,7 +5,7 @@ import contextlib
 import logging
 import uuid
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from ag2.events import BaseEvent
@@ -42,6 +42,7 @@ class TurnRequest:
     surface: str = ""
     uploads: tuple[tuple[str, str], ...] = ()
     chat_model: str = ""
+    request_id: str = ""
 
 
 def user_text(body: RunAgentInput) -> str:
@@ -161,6 +162,7 @@ class ChatRuns:
             surface=request.surface,
             attachment_names=tuple(name for _, name in request.uploads),
             chat_model=request.chat_model,
+            request_id=request.request_id,
         )
 
     def start(self, gateway: Any, chat_id: str, request: TurnRequest) -> asyncio.Task:
@@ -203,7 +205,7 @@ class ChatRuns:
                         await answer(entry)
                 elif request is not None:
                     listener.error = None
-                    turn = self.start(gateway, chat_id, request)
+                    turn = self.start(gateway, chat_id, replace(request, request_id=run_id))
                 while True:
                     event = await listener.next()
                     if event is None:

@@ -1047,6 +1047,7 @@ class Gateway:
         attachment_names: tuple[str, ...] = (),
         chat_model: str = "",
         on_text=None,
+        request_id: str = "",
     ) -> str:
         """Run a message with Profile shutdown and invocation scope ownership."""
         if self._closing:
@@ -1069,6 +1070,7 @@ class Gateway:
                     attachment_names,
                     chat_model,
                     on_text,
+                    request_id,
                 )
                 self._schedule_memory_update(chat_id)
             return reply
@@ -1090,6 +1092,7 @@ class Gateway:
         attachment_names: tuple[str, ...] = (),
         chat_model: str = "",
         on_text=None,
+        request_id: str = "",
     ) -> str:
         """Send a user message to the universal agent and return its reply.
 
@@ -1157,7 +1160,9 @@ class Gateway:
                     hitl_pending = human_watch
                 try:
                     turn_id = new_id("turn")
-                    await self.emit_event(chat_id, TurnStarted(chat_id, turn_id=turn_id))
+                    await self.emit_event(
+                        chat_id, TurnStarted(chat_id, turn_id=turn_id, request_id=request_id)
+                    )
                     async with self._preparation_lock:
                         effective, agent, extra, a2ui_runtime = await self._prepare_turn(
                             lease, chat_id, llm_config_id, chat_model, asker, task_id, surface

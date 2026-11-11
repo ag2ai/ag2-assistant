@@ -19,10 +19,12 @@ from assistant.events import (
     InquiryRaised,
     TaskCreated,
     TaskScheduled,
+    TurnStarted,
 )
 from assistant.gateway.wire import as_drawn, is_binary_event, to_wire
 
 _SAMPLES = [
+    TurnStarted("c1", turn_id="turn-1", request_id="request-1"),
     TaskCreated("task-1", title="Weather report", kind="scheduled"),
     TaskScheduled("task-1", scheduled_for="2026-06-18T08:00:00+10:00", recurrence="0 8 * * *"),
     DeliverableProduced(
@@ -104,3 +106,11 @@ def test_anything_that_is_not_a_surface_is_passed_through_untouched(config):
     event = TaskCreated("task-1", title="Weather report", kind="scheduled")
 
     assert as_drawn(event, CardCatalog(config)) is event
+
+
+def test_legacy_turn_started_has_no_inferred_request_id():
+    data = TurnStarted("c1", turn_id="legacy-turn").to_dict()
+    data.pop("request_id")
+    restored = TurnStarted.from_dict(data)
+    assert restored.request_id == ""
+    assert restored.turn_id == "legacy-turn"
