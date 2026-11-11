@@ -6,10 +6,11 @@ import base64
 import pytest
 from ag2.context import ConversationContext
 from ag2.events import ModelMessage, ModelMessageChunk, ModelRequest, ModelResponse
-from ag_ui.core import RunAgentInput
+from ag_ui.core import ResumeEntry, RunAgentInput
 from fastapi.testclient import TestClient
 
 from assistant.config import Config
+from assistant.events import InquiryRaised
 from assistant.gateway.agui.session import ChatRuns, TurnRequest
 from assistant.gateway.core import Gateway
 from tests.support.apps import api, make_profile_app
@@ -311,3 +312,122 @@ async def test_a_client_joining_mid_stream_gets_the_text_written_so_far(paths):
     finally:
         await gateway.close()
     assert "".join(text) == "Hello world"
+
+
+class _DelayedTranscriptGateway(Gateway):
+    """Hold the second Turn's transcript write behind an explicit gate."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.saving = asyncio.Event()
+        self.save_allowed = asyncio.Event()
+
+    async def _append_transcript(self, chat_id, user_text, reply_text):
+        if user_text == "second":
+            self.saving.set()
+            await self.save_allowed.wait()
+        await super()._append_transcript(chat_id, user_text, reply_text)
+
+
+class _Interrupted(FakeRunMixin):
+    tools: list = []
+
+    def __init__(self, outcome):
+        self.outcome = outcome
+        self.answer = asyncio.Event()
+
+    async def ask(self, *msg, stream, **kwargs):
+        context = ConversationContext(stream=stream)
+        await context.send(ModelRequest.ensure_request([msg[0]]))
+        if msg[0] == "first":
+            await context.send(ModelResponse(ModelMessage("previous answer")))
+            return FakeReply("previous answer")
+        await context.send(
+            InquiryRaised("permission", question="Proceed?", kind="permission", options=["yes"])
+        )
+        await self.answer.wait()
+        if self.outcome == "failed":
+            raise RuntimeError("second turn failed")
+        if self.outcome == "empty":
+            return FakeReply(None)
+        await context.send(ModelResponse(ModelMessage("current answer")))
+        return FakeReply("current answer")
+
+
+@pytest.mark.parametrize("outcome", ["success", "failed", "empty", "cancelled"])
+@pytest.mark.parametrize("follow", ["watch", "resume"])
+async def test_follow_waits_for_interrupted_turn_persistence(paths, outcome, follow):
+    agent = _Interrupted(outcome)
+    config = Config.for_paths(paths)
+    config.gateway.chat_titles = False
+    gateway = _DelayedTranscriptGateway(
+        config, memory=False, agent_factory=fake_agent_factory(agent)
+    )
+    await gateway.start()
+    runs = ChatRuns()
+    body = RunAgentInput(
+        thread_id="c1", run_id="r1", state={}, messages=[], tools=[], context=[], forwarded_props={}
+    )
+    seen = []
+    terminal = asyncio.Event()
+
+    async def answer(_entry):
+        if outcome == "cancelled":
+            assert await gateway.cancel_turn("c1")
+        else:
+            agent.answer.set()
+
+    async def collect():
+        if follow == "resume":
+            resumed = body.model_copy(
+                update={
+                    "resume": [
+                        ResumeEntry(interrupt_id="permission", status="resolved", payload="yes")
+                    ]
+                }
+            )
+            source = runs.run(gateway, "c1", resumed, None, answer)
+        else:
+            source = runs.watch(gateway, "c1")
+        async for event in source:
+            seen.append(event)
+            if event.type == "RUN_STARTED" and follow == "watch":
+                await answer(None)
+            if event.type in {"RUN_FINISHED", "RUN_ERROR"}:
+                terminal.set()
+                return await gateway.transcript("c1")
+
+    watcher = None
+    try:
+        await gateway.send_message("first", chat_id="c1")
+        initial = [
+            event
+            async for event in runs.run(gateway, "c1", body, TurnRequest(text="second"), answer)
+        ]
+        assert initial[-1].outcome.type == "interrupt"
+        watcher = asyncio.create_task(collect())
+        await asyncio.wait_for(gateway.saving.wait(), 5)
+        assert gateway.is_running("c1")
+        assert not await gateway.feed_message("too late", "c1")
+        assert (await gateway.transcript("c1"))[-1]["text"] == "previous answer"
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(terminal.wait(), 0.4)
+        gateway.save_allowed.set()
+        saved = await asyncio.wait_for(watcher, 5)
+        assert not gateway.is_running("c1")
+        if outcome == "success":
+            assert seen[-1].type == "RUN_FINISHED"
+            assert saved[-1]["text"] == "current answer"
+            assert "current answer" in "".join(
+                event.delta for event in seen if event.type == "TEXT_MESSAGE_CONTENT"
+            )
+        else:
+            assert seen[-1].type == "RUN_ERROR"
+            assert seen[-1].message
+    finally:
+        agent.answer.set()
+        gateway.save_allowed.set()
+        if watcher is not None and not watcher.done():
+            watcher.cancel()
+            await asyncio.gather(watcher, return_exceptions=True)
+        await gateway.close()

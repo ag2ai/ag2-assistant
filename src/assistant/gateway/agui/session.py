@@ -22,7 +22,7 @@ from ag_ui.core import (
     TextPart,
 )
 
-from assistant.events import Attachment, InquiryRaised
+from assistant.events import Attachment, InquiryRaised, TurnCancelled, TurnFailed, TurnStarted
 from assistant.gateway.agui.projection import Projector
 from assistant.gateway.history import event_cursor
 from assistant.gateway.wire import as_drawn
@@ -91,9 +91,16 @@ class ChatListener:
         self._sub: Any = None
         self.projector = Projector()
         self.written: list[Event] = []
+        self.error: str | None = None
 
     def feed(self, event: BaseEvent) -> list[Event]:
         """The AG-UI events ``event`` becomes, with Cards expanded as a client draws them."""
+        if isinstance(event, TurnStarted):
+            self.error = None
+        elif isinstance(event, TurnFailed):
+            self.error = event.error
+        elif isinstance(event, TurnCancelled):
+            self.error = event.reason
         return self.projector.feed(
             as_drawn(event, self._gateway.catalog, self._gateway.card_sources)
         )
@@ -219,7 +226,11 @@ class ChatRuns:
                         yield out
                 for out in listener.projector.close():
                     yield out
-                if turn is not None and not turn.cancelled() and (error := turn.exception()):
+                if listener.error is not None:
+                    yield RunErrorEvent(message=listener.error)
+                elif turn is not None and turn.cancelled():
+                    yield RunErrorEvent(message="Turn cancelled")
+                elif turn is not None and (error := turn.exception()):
                     yield RunErrorEvent(message=str(error) or repr(error))
                 else:
                     yield finished(chat_id, run_id)
@@ -242,7 +253,10 @@ class ChatRuns:
                     if run_id is not None and not gateway.is_running(chat_id):
                         for out in listener.projector.close():
                             yield out
-                        yield finished(chat_id, run_id)
+                        if listener.error is not None:
+                            yield RunErrorEvent(message=listener.error)
+                        else:
+                            yield finished(chat_id, run_id)
                         run_id = None
                     continue
                 projected = listener.feed(event)

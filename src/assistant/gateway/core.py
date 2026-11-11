@@ -216,11 +216,11 @@ def is_internal_stream(chat_id: str) -> bool:
 
 @dataclass
 class _ActiveTurn:
-    """A Chat-lock holder preparing or running a Turn, with its cancellation reason.
-    The task drives preparation until the AG2 run's result task takes over."""
+    """A Chat-lock holder through preparation, execution and persistence."""
 
     run: AgentRun | None
     task: "asyncio.Task"
+    invocation: "asyncio.Task"
     cancelled: bool = False
     reason: str = "Stopped"
 
@@ -698,10 +698,9 @@ class Gateway:
         return self._activity.track(detail)
 
     def is_running(self, chat_id: str = "default") -> bool:
-        """Whether a turn is in flight on this chat — what a message sent now would be
-        fed into rather than starting a second one."""
+        """Whether a Turn still holds this Chat, including its persistence and cleanup."""
         active = self._active.get(chat_id)
-        return active is not None and not active.task.done()
+        return active is not None and not active.invocation.done()
 
     async def feed_message(self, text: str, chat_id: str = "default", attachments=None) -> bool:
         """Feed a message into the turn already running on this chat.
@@ -1132,7 +1131,7 @@ class Gateway:
             async with self._resources.lease() as lease:
                 invocation = asyncio.current_task()
                 assert invocation is not None
-                active = _ActiveTurn(None, invocation)
+                active = _ActiveTurn(None, invocation, invocation)
                 self._active[chat_id] = active
                 a2ui_handle = None
                 effective = self._config

@@ -889,7 +889,8 @@ def test_cancel_stops_the_turn(paths):
             assert client.post(api(pid, "/chats/s1/cancel")).json() == {"ok": True}
             events = running.result(timeout=10)
         assert any(e["type"] == "CUSTOM" and e["name"].endswith("TurnCancelled") for e in events)
-        assert events[-1]["type"] == "RUN_FINISHED"
+        assert events[-1]["type"] == "RUN_ERROR"
+        assert events[-1]["message"] == "Stopped"
         assert agent.cancelled  # the cancel reached the turn itself, not just the request
 
 
