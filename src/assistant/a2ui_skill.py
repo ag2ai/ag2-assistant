@@ -17,6 +17,7 @@ from ag2.tools.skills.skill_types import Resource, Script, Skill, SkillMetadata
 from assistant.a2ui import CATALOG_ID, CardCatalog, HeldCardCatalog
 from assistant.cards import Card, expand_card_messages, generation_contract
 from assistant.config import Config
+from assistant.events import A2UI_WIRE_VERSION
 from assistant.skills import SkillStateStore
 from assistant.state_store import ORIGIN_BUNDLED
 
@@ -147,10 +148,10 @@ def _card_messages(card: Card, fields: dict[str, Any]) -> list[ServerToClientMes
     root = {**fields, "id": "root", "component": card.name}
     return [
         CreateSurfaceMessage(
-            version="v1.0", createSurface={"surfaceId": surface, "catalogId": CATALOG_ID}
+            version=A2UI_WIRE_VERSION, createSurface={"surfaceId": surface, "catalogId": CATALOG_ID}
         ),
         UpdateComponentsMessage(
-            version="v1.0", updateComponents={"surfaceId": surface, "components": [root]}
+            version=A2UI_WIRE_VERSION, updateComponents={"surfaceId": surface, "components": [root]}
         ),
     ]
 

@@ -224,7 +224,6 @@ def build_profile_router(d: GatewayDeps, get_runtime, *, surfaces: Mapping[str, 
                 chat_id,
                 parse_click(req.message),
                 req.state,
-                version=req.message.get("version", "v1.0"),
             )
         except InvalidClick as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

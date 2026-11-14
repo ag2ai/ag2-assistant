@@ -27,7 +27,7 @@ def instance():
         "request_hash": "0" * 64,
         "message": {
             "surface_id": identity,
-            "version": "v1.0",
+            "version": "1.0",
             "catalog_id": "catalog",
             "component": {"id": "root", "component": "Text", "text": {"path": "/summary"}},
             "data": {

@@ -12,6 +12,8 @@ a task was spawned from a chat, a deliverable was produced, a task was scheduled
 and the durable-inquiry lifecycle.
 """
 
+from typing import Literal
+
 from ag2.events import BaseEvent, Field
 
 # AG2 exports `Field` as a descriptor class, so every field declaration below reads
@@ -67,6 +69,10 @@ class ImageGenerated(AssistantEvent):
     media_type: str = "image/png"
 
 
+A2UI_WIRE_VERSION: Literal["1.0"] = "1.0"
+"""The ``version`` A2UI v1.0 messages carry: the protocol is named ``v1.0``, its wire drops the ``v``."""
+
+
 class A2UISurface(AssistantEvent):
     """A declarative A2UI surface for the web client to render inline.
 
@@ -77,7 +83,7 @@ class A2UISurface(AssistantEvent):
 
     surface_id: str = Field(kw_only=False)
     catalog_id: str = "https://ag2.ai/assistant/a2ui/catalog.json"
-    version: str = "v1.0"
+    version: str = A2UI_WIRE_VERSION
     component: dict = Field(default_factory=dict)
     data: dict = Field(default_factory=dict)
     title: str = ""

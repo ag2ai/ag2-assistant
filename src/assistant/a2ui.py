@@ -1,16 +1,16 @@
 """A2UI configuration for AG2 Assistant's chat/task surfaces."""
 
+import hashlib
 import json
+import re
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
-from urllib.parse import quote
+from urllib.parse import unquote
 
 from ag2.a2ui import a2ui_action
 from ag2.a2ui.actions import collect_action_declarations, collect_server_actions
 from ag2.a2ui.middleware import A2UIValidationMiddleware, _A2UIValidationMiddleware
 from ag2.a2ui.parser import A2UIResponseParser
-from referencing import Resource
-from referencing.jsonschema import DRAFT202012
 
 from assistant.cards import (
     CARDS_DIR,
@@ -27,7 +27,7 @@ from assistant.cards import (
     root_component,
 )
 from assistant.config import Config
-from assistant.events import A2UISurface
+from assistant.events import A2UI_WIRE_VERSION, A2UISurface
 from assistant.state_store import ORIGIN_BUNDLED, ORIGIN_GLOBAL, ORIGIN_PROFILE
 
 if TYPE_CHECKING:
@@ -234,7 +234,7 @@ def durable_surfaces_from_messages(messages: list[Any]) -> list[A2UISurface]:
         message = _message_dict(raw)
         if not message:
             continue
-        version = message.get("version") or "v1.0"
+        version = message.get("version") or A2UI_WIRE_VERSION
         if create := message.get("createSurface"):
             surface_id = create.get("surfaceId")
             if not surface_id:
@@ -302,7 +302,7 @@ def durable_surfaces_from_messages(messages: list[Any]) -> list[A2UISurface]:
         A2UISurface(
             final["surface_id"],
             catalog_id=final.get("catalog_id") or CATALOG_ID,
-            version=final.get("version") or "v1.0",
+            version=final.get("version") or A2UI_WIRE_VERSION,
             component=final.get("component") or {},
             data=final.get("data") or {},
             title=_surface_title(final.get("data") or {}),
@@ -315,37 +315,135 @@ def durable_surfaces_from_messages(messages: list[Any]) -> list[A2UISurface]:
     ]
 
 
+# Keys whose values are annotations or literal data, not subschemas (as ag2's catalog check reads them).
+_NON_SCHEMA_KEYS = frozenset({"metadata", "examples", "const", "default", "enum", "description"})
+
+# Keywords whose value maps any names to subschemas, so a name there is never a keyword.
+_SCHEMA_MAPS = frozenset(
+    {"properties", "patternProperties", "$defs", "definitions", "dependentSchemas"}
+)
+
+
+def _schema_nodes(schema: Any, path: tuple = ()):
+    """Each subschema of ``schema`` with its path, skipping literal data."""
+    if isinstance(schema, list):
+        for index, item in enumerate(schema):
+            yield from _schema_nodes(item, (*path, index))
+        return
+    if not isinstance(schema, dict):
+        return
+    yield path, schema
+    for key, value in schema.items():
+        if key in _SCHEMA_MAPS and isinstance(value, dict):
+            for name, subschema in value.items():
+                yield from _schema_nodes(subschema, (*path, key, name))
+        elif key not in _NON_SCHEMA_KEYS:
+            yield from _schema_nodes(value, (*path, key))
+
+
+def _local_target(root: dict, ref: str) -> tuple | None:
+    """The path in ``root`` a local reference names: ``#``, a JSON pointer or an anchor."""
+    fragment = unquote(ref[1:])
+    if not fragment:
+        return ()
+    if not fragment.startswith("/"):
+        return next(
+            (
+                path
+                for path, node in _schema_nodes(root)
+                if fragment in (node.get("$anchor"), node.get("$dynamicAnchor"))
+            ),
+            None,
+        )
+    node: Any = root
+    path: list[str | int] = []
+    for token in fragment[1:].split("/"):
+        key = token.replace("~1", "/").replace("~0", "~")
+        if isinstance(node, list) and key.isdigit() and int(key) < len(node):
+            node = node[int(key)]
+            path.append(int(key))
+        elif isinstance(node, dict) and key in node:
+            node = node[key]
+            path.append(key)
+        else:
+            return None
+    return tuple(path)
+
+
+def _card_prefix(name: str) -> str:
+    """A name for one Card's ``$defs`` and anchors: its own when that is already an
+    identifier, else a cleaned one made distinct by a hash of the real name."""
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+        return name
+    cleaned = re.sub(r"[^A-Za-z0-9_]", "_", name)
+    return f"_{cleaned}_{hashlib.sha256(name.encode()).hexdigest()[:8]}"
+
+
 def _component_schema(
     name: str, description: str, properties: dict, required: list[str] | None = None
-) -> dict:
-    """Each Card's field references stay rooted in its own schema resource."""
-    schema_id = f"{CATALOG_ID}/cards/{quote(name, safe='')}"
+) -> tuple[dict, dict]:
+    """One Card's catalog entry, plus the ``$defs`` its field references point at.
 
-    def scoped(value: Any) -> Any:
-        if isinstance(value, list):
-            return [scoped(item) for item in value]
-        if isinstance(value, dict):
-            return {
-                key: schema_id + item
-                if key in {"$ref", "$dynamicRef"} and isinstance(item, str) and item.startswith("#")
-                else scoped(item)
-                for key, item in value.items()
-            }
-        return value
-
-    props = {
-        "id": {"type": "string"},
-        "component": {"const": name},
-        **scoped(properties),
-    }
-    return {
-        "$id": schema_id,
+    A v1.0 catalog may ``$ref`` only what it declares at its top level, and anchors are
+    found only through schema keywords, never under ``components``. So every subschema
+    a local reference or an anchor names moves into the catalog's ``$defs`` under a name
+    of this Card, leaving a ``$ref`` to it in its place. Anchors take the same prefix,
+    keeping two Cards that name an anchor alike apart in the one catalog resource.
+    """
+    prefix = _card_prefix(name)
+    schema: dict = {
         "type": "object",
         "description": description,
-        "properties": props,
+        "properties": {
+            "id": {"type": "string"},
+            "component": {"const": name},
+            **json.loads(json.dumps(properties)),
+        },
         "required": ["id", "component", *(required or [])],
         "additionalProperties": False,
     }
+    nodes = list(_schema_nodes(schema))
+    schema_paths = {path for path, _ in nodes}
+    keys: dict[tuple, str] = {}
+
+    def key_for(path: tuple) -> str:
+        return keys.setdefault(path, f"{prefix}__{len(keys)}")
+
+    references: list[tuple[dict, str, tuple]] = []
+    for path, node in nodes:
+        if any(isinstance(node.get(anchor), str) for anchor in ("$anchor", "$dynamicAnchor")):
+            key_for(path)
+        for keyword in ("$ref", "$dynamicRef"):
+            ref = node.get(keyword)
+            if not isinstance(ref, str) or not ref.startswith("#"):
+                continue
+            if keyword == "$dynamicRef" and ref[1:2] not in ("", "/"):
+                continue  # names a dynamic anchor, renamed below
+            target = _local_target(schema, ref)
+            if target is not None and target in schema_paths:
+                references.append((node, keyword, target))
+                if target:
+                    key_for(target)
+    for node, keyword, target in references:
+        # A pointer names one subschema, which is what a plain $ref says.
+        del node[keyword]
+        node["$ref"] = f"#/$defs/{keys[target]}" if target else f"#/components/{name}"
+    for _, node in nodes:
+        dynamic = node.get("$dynamicRef")
+        if isinstance(dynamic, str) and dynamic.startswith("#") and dynamic[1:2] not in ("", "/"):
+            node["$dynamicRef"] = f"#{prefix}__{dynamic[1:]}"
+        for anchor in ("$anchor", "$dynamicAnchor"):
+            if isinstance(node.get(anchor), str):
+                node[anchor] = f"{prefix}__{node[anchor]}"
+    definitions: dict[str, Any] = {}
+    # Deepest first, so a moved subschema already holds references to those inside it.
+    for path in sorted(keys, key=len, reverse=True):
+        parent: Any = schema
+        for step in path[:-1]:
+            parent = parent[step]
+        definitions[keys[path]] = parent[path[-1]]
+        parent[path[-1]] = {"$ref": f"#/$defs/{keys[path]}"}
+    return schema, definitions
 
 
 def assistant_catalog(cards: dict[str, Card] | None = None) -> dict:
@@ -354,6 +452,13 @@ def assistant_catalog(cards: dict[str, Card] | None = None) -> dict:
     Every Card in ``cards`` is advertised — and validated — under the schema its own
     file declares.
     """
+    components: dict[str, dict] = {}
+    definitions: dict[str, dict] = {}
+    for card in (bundled_cards() if cards is None else cards).values():
+        components[card.name], card_definitions = _component_schema(
+            card.name, card.description, *generation_contract(card)
+        )
+        definitions.update(card_definitions)
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": CATALOG_ID,
@@ -366,16 +471,8 @@ def assistant_catalog(cards: dict[str, Card] | None = None) -> dict:
             "choose by the shape of the answer, not by a fixed list of topics. For "
             "mixed answers, compose several with the basic A2UI layout components."
         ),
-        "components": {
-            **{
-                card.name: _component_schema(
-                    card.name,
-                    card.description,
-                    *generation_contract(card),
-                )
-                for card in (bundled_cards() if cards is None else cards).values()
-            },
-        },
+        "components": components,
+        "$defs": definitions,
     }
 
 
@@ -487,12 +584,7 @@ class _AssistantA2UIRuntime:
             custom_catalog_rules=CATALOG_RULES,
         )
         self.catalog_id = self.schema_manager.catalog_id
-        component_schemas = self.schema_manager.get_component_schemas()
-        registry = self.schema_manager.build_schema_registry().with_resources(
-            (schema_id, Resource.from_contents(schema, default_specification=DRAFT202012))
-            for schema in component_schemas.values()
-            if isinstance(schema_id := schema.get("$id"), str)
-        )
+        registry = self.schema_manager.build_schema_registry()
         self.parser = A2UIResponseParser(
             version_string=self.schema_manager.version_string,
             server_to_client_schema=self.schema_manager.server_to_client_schema,

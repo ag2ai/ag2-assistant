@@ -32,7 +32,7 @@ class RecordingAgent(FakeRunMixin):
 
 def _msg(name="apply", *, context=None, surface_id=SURFACE):
     return {
-        "version": "v1.0",
+        "version": "1.0",
         "action": {
             "name": name,
             "surfaceId": surface_id,

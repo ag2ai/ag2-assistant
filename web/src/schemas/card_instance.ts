@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 export const CardInstanceMessage = z.object({
-  surface_id: z.string(), version: z.literal('v1.0'), catalog_id: z.string(),
+  surface_id: z.string(), version: z.literal('1.0'), catalog_id: z.string(),
   component: z.record(z.string(), z.unknown()), data: z.record(z.string(), z.unknown()),
   title: z.string(), intent: z.string(),
 })
