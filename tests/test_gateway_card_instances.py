@@ -290,7 +290,7 @@ def test_invalid_instances_and_destinations_are_contained_and_source_is_repairab
             "invalid: [",
             yaml.safe_dump(unsupported),
             "kind: card-instance\ndata: &a [*a]",
-            original.text.replace("v1.0", "v99"),
+            yaml.safe_dump({**document, "message": {**document["message"], "version": "v99"}}),
         ]:
             assert (
                 client.put(raw_url, params={"path": request["path"]}, content=content).status_code
@@ -405,7 +405,7 @@ def test_an_older_composite_draft_keeps_nested_bindings_and_complete_local_value
             client,
             pid,
             {
-                "version": "v1.0",
+                "version": "1.0",
                 "action": {
                     "name": "save_surface",
                     "surfaceId": old["surface_id"],

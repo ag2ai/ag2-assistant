@@ -497,7 +497,7 @@ function ensureSurface(
     item = {
       id: nextItemId(),
       kind: 'a2ui',
-      version: version || 'v1.0',
+      version: version || '1.0',
       catalogId: catalogId || BETA_CATALOG_ID,
       surfaceId,
       title: SURFACE_TITLE,
@@ -513,7 +513,7 @@ function ensureSurface(
 
 export function applyA2UIMessage(items: ThreadItem[], message: unknown): A2UIItem | null {
   if (!isRecord(message)) return null
-  const version = str(message.version) || 'v1.0'
+  const version = str(message.version) || '1.0'
   if (isRecord(message.createSurface)) {
     const s = message.createSurface
     const item = ensureSurface(items, str(s.surfaceId) || nextSurfaceId(), str(s.catalogId) || BETA_CATALOG_ID, version)

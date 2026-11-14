@@ -9,7 +9,7 @@ from ag2.a2ui.incoming import A2UIIncomingAction, A2UIIncomingActionResult, pars
 from ag2.a2ui.server_action import build_server_action_context, run_server_action
 
 from assistant.a2ui import A2UI_SERVER_ACTIONS
-from assistant.events import A2UIActionSubmitted, A2UISurfaceDataUpdated
+from assistant.events import A2UI_WIRE_VERSION, A2UIActionSubmitted, A2UISurfaceDataUpdated
 
 # Cap on the data model a click carries, bounding any client-supplied body.
 MAX_A2UI_STATE_BYTES = 256 * 1024
@@ -57,7 +57,7 @@ def _oversized_model(model: dict) -> bool:
 
 
 async def submit_click(
-    gateway, chat_id: str, click: A2UIIncomingAction, state: Any = None, version: Any = "v1.0"
+    gateway, chat_id: str, click: A2UIIncomingAction, state: Any = None
 ) -> ClickOutcome:
     """Apply one clicked action to `chat_id`'s stream."""
     action = A2UI_SERVER_ACTIONS.get(click.name)
@@ -79,7 +79,7 @@ async def submit_click(
     messages = await run_server_action(
         action,
         scoped,
-        version=version,
+        version=A2UI_WIRE_VERSION,
         context=build_server_action_context(gateway.require_agent()),
     )
     written = None

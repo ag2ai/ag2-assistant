@@ -122,7 +122,7 @@ def test_ephemeral_inputs_actions_and_links_use_the_ordinary_surface_path(paths)
             client,
             pid,
             {
-                "version": "v1.0",
+                "version": "1.0",
                 "action": {
                     "name": "save_surface",
                     "surfaceId": surface,
@@ -140,7 +140,7 @@ def test_ephemeral_inputs_actions_and_links_use_the_ordinary_surface_path(paths)
             client,
             pid,
             {
-                "version": "v1.0",
+                "version": "1.0",
                 "action": {
                     "name": "apply_note",
                     "surfaceId": surface,

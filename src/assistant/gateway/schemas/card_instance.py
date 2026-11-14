@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict
 class CardInstanceMessage(BaseModel):
     model_config = ConfigDict(extra="forbid")
     surface_id: str
-    version: Literal["v1.0"]
+    version: Literal["1.0"]
     catalog_id: str
     component: dict[str, Any]
     data: dict[str, Any]

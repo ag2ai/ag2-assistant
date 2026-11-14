@@ -97,11 +97,11 @@ def test_durable_surfaces_project_transient_a2ui_messages():
     surfaces = durable_surfaces_from_messages(
         [
             {
-                "version": "v1.0",
+                "version": "1.0",
                 "createSurface": {"surfaceId": "s1", "catalogId": CATALOG_ID},
             },
             {
-                "version": "v1.0",
+                "version": "1.0",
                 "updateComponents": {
                     "surfaceId": "s1",
                     "components": [
@@ -131,7 +131,7 @@ def test_durable_surfaces_project_transient_a2ui_messages():
 def test_durable_surfaces_skip_create_only_messages():
     assert (
         durable_surfaces_from_messages(
-            [{"version": "v1.0", "createSurface": {"surfaceId": "s1", "catalogId": CATALOG_ID}}]
+            [{"version": "1.0", "createSurface": {"surfaceId": "s1", "catalogId": CATALOG_ID}}]
         )
         == []
     )
@@ -140,9 +140,9 @@ def test_durable_surfaces_skip_create_only_messages():
 def test_durable_surfaces_preserve_composed_component_tree():
     surfaces = durable_surfaces_from_messages(
         [
-            {"version": "v1.0", "createSurface": {"surfaceId": "s1", "catalogId": CATALOG_ID}},
+            {"version": "1.0", "createSurface": {"surfaceId": "s1", "catalogId": CATALOG_ID}},
             {
-                "version": "v1.0",
+                "version": "1.0",
                 "updateComponents": {
                     "surfaceId": "s1",
                     "components": [
@@ -175,8 +175,8 @@ def test_durable_surfaces_preserve_composed_component_tree():
 # --- tolerant recovery of un-wrapped A2UI (models that omit <a2ui-json>) ---
 
 _BARE_ARRAY = (
-    '[{"version":"v1.0","createSurface":{"surfaceId":"s1","catalogId":"c"}},'
-    '{"version":"v1.0","updateComponents":{"surfaceId":"s1","components":'
+    '[{"version":"1.0","createSurface":{"surfaceId":"s1","catalogId":"c"}},'
+    '{"version":"1.0","updateComponents":{"surfaceId":"s1","components":'
     '[{"id":"root","component":"MarketBoard","quotes":[{"symbol":"AAPL","price":313}]}]}}]'
 )
 
@@ -185,13 +185,13 @@ def test_wrap_bare_a2ui_makes_untagged_array_parseable():
 
     text = "Here are the quotes. " + _BARE_ARRAY
     # Baseline: the raw response is NOT recognised by the parser (the live bug).
-    assert A2UIResponseParser("v1.0").parse(text).has_a2ui is False
+    assert A2UIResponseParser("1.0").parse(text).has_a2ui is False
 
     wrapped = wrap_bare_a2ui(text)
     assert wrapped is not None
     assert A2UI_JSON_OPEN_TAG in wrapped and A2UI_JSON_CLOSE_TAG in wrapped
 
-    result = A2UIResponseParser("v1.0").parse(wrapped)
+    result = A2UIResponseParser("1.0").parse(wrapped)
     assert result.has_a2ui is True
     assert len(result.operations) == 2
     assert result.text.strip() == "Here are the quotes."  # prose preserved, JSON removed
@@ -216,9 +216,9 @@ def test_data_model_update_writes_into_one_repeated_row():
 def test_durable_surface_keeps_a_layout_that_repeats_one_template():
     surfaces = durable_surfaces_from_messages(
         [
-            {"version": "v1.0", "createSurface": {"surfaceId": "s1", "catalogId": CATALOG_ID}},
+            {"version": "1.0", "createSurface": {"surfaceId": "s1", "catalogId": CATALOG_ID}},
             {
-                "version": "v1.0",
+                "version": "1.0",
                 "updateComponents": {
                     "surfaceId": "s1",
                     "components": [
@@ -232,7 +232,7 @@ def test_durable_surface_keeps_a_layout_that_repeats_one_template():
                 },
             },
             {
-                "version": "v1.0",
+                "version": "1.0",
                 "updateDataModel": {
                     "surfaceId": "s1",
                     "path": "/runs",
@@ -260,9 +260,9 @@ def test_data_model_update_ignores_a_pointer_no_row_answers_to():
 def _emit(root: dict) -> list[dict]:
     """The two messages a model writes to draw one Card as the whole surface."""
     return [
-        {"version": "v1.0", "createSurface": {"surfaceId": "s1", "catalogId": CATALOG_ID}},
+        {"version": "1.0", "createSurface": {"surfaceId": "s1", "catalogId": CATALOG_ID}},
         {
-            "version": "v1.0",
+            "version": "1.0",
             "updateComponents": {"surfaceId": "s1", "components": [root]},
         },
     ]
@@ -981,9 +981,9 @@ def test_a_card_nested_in_a_layout_draws_what_it_draws_on_its_own():
 
     composed = expand_card_messages(
         [
-            {"version": "v1.0", "createSurface": {"surfaceId": "s1", "catalogId": CATALOG_ID}},
+            {"version": "1.0", "createSurface": {"surfaceId": "s1", "catalogId": CATALOG_ID}},
             {
-                "version": "v1.0",
+                "version": "1.0",
                 "updateComponents": {
                     "surfaceId": "s1",
                     "components": [
@@ -1124,9 +1124,9 @@ def test_the_recommendation_and_the_verdict_are_drawn_only_when_they_are_there()
 def test_a_nested_table_reads_the_instances_own_options():
     drawn = expand_card_messages(
         [
-            {"version": "v1.0", "createSurface": {"surfaceId": "s1", "catalogId": CATALOG_ID}},
+            {"version": "1.0", "createSurface": {"surfaceId": "s1", "catalogId": CATALOG_ID}},
             {
-                "version": "v1.0",
+                "version": "1.0",
                 "updateComponents": {
                     "surfaceId": "s1",
                     "components": [

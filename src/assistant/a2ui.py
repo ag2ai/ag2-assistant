@@ -27,7 +27,7 @@ from assistant.cards import (
     root_component,
 )
 from assistant.config import Config
-from assistant.events import A2UISurface
+from assistant.events import A2UI_WIRE_VERSION, A2UISurface
 from assistant.state_store import ORIGIN_BUNDLED, ORIGIN_GLOBAL, ORIGIN_PROFILE
 
 if TYPE_CHECKING:
@@ -234,7 +234,7 @@ def durable_surfaces_from_messages(messages: list[Any]) -> list[A2UISurface]:
         message = _message_dict(raw)
         if not message:
             continue
-        version = message.get("version") or "v1.0"
+        version = message.get("version") or A2UI_WIRE_VERSION
         if create := message.get("createSurface"):
             surface_id = create.get("surfaceId")
             if not surface_id:
@@ -302,7 +302,7 @@ def durable_surfaces_from_messages(messages: list[Any]) -> list[A2UISurface]:
         A2UISurface(
             final["surface_id"],
             catalog_id=final.get("catalog_id") or CATALOG_ID,
-            version=final.get("version") or "v1.0",
+            version=final.get("version") or A2UI_WIRE_VERSION,
             component=final.get("component") or {},
             data=final.get("data") or {},
             title=_surface_title(final.get("data") or {}),
