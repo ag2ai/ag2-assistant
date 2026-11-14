@@ -11,7 +11,7 @@ from ag2.exceptions import SkillNotFoundError
 from ag2.tools.skills import SkillsToolkit
 from ag2.utils import CONTEXT_OPTION_NAME
 
-from assistant.a2ui import CARD_VOCABULARY, bundled_cards
+from assistant.a2ui import CARD_VOCABULARY, _component_schema, bundled_cards
 from assistant.a2ui_skill import (
     A2UI_SKILL,
     PROTOCOL_RESOURCE,
@@ -351,6 +351,95 @@ async def test_saved_cards_keep_local_schema_references_and_fixed_axes(config, r
         reply, published = await draw(config, "Calendar", invalid)
         assert reply.startswith("Not drawn")
         assert published == []
+
+
+def _save_label_card(config, name: str, extra: dict, label: dict, example: object = "Hi") -> None:
+    """A Card drawing one ``label`` field, whose schema and siblings are the test's."""
+    definition = {
+        "name": name,
+        "description": "One label.",
+        "fields": {"label": label, **extra},
+        "required": ["label"],
+        "layout": [{"id": "root", "component": "Text", "text": {"path": "/label"}}],
+        "example": {"label": example},
+    }
+    directory = config.workspace_dir / CARDS_DIR
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / f"{name}.card.yaml").write_text(json.dumps(definition))
+
+
+@pytest.mark.parametrize(
+    ("extra", "label"),
+    [
+        pytest.param(
+            {"next": {"anyOf": [{"type": "null"}, {"$ref": "#"}]}},
+            {"type": "string"},
+            id="the-card-itself",
+        ),
+        pytest.param(
+            {"my text": {"type": "string"}}, {"$ref": "#/properties/my%20text"}, id="escaped"
+        ),
+        pytest.param(
+            {"text": {"type": "string"}}, {"$dynamicRef": "#/properties/text"}, id="dynamic-pointer"
+        ),
+        pytest.param(
+            {
+                "raw": {"type": "string"},
+                "text": {
+                    "$defs": {"default": {"$ref": "#/properties/raw"}},
+                    "$ref": "#/properties/text/$defs/default",
+                },
+            },
+            {"$ref": "#/properties/text"},
+            id="def-named-like-a-keyword",
+        ),
+        pytest.param(
+            {"text": {"$anchor": "text", "type": "string"}}, {"$ref": "#text"}, id="anchor"
+        ),
+    ],
+)
+async def test_every_local_reference_form_draws_its_card_and_keeps_its_type(config, extra, label):
+    _save_label_card(config, "Label", extra, label)
+
+    reply, published = await draw(config, "Label", {"label": "Ship it"})
+    assert "drawn in the chat" in reply and published
+    reply, published = await draw(config, "Label", {"label": 5})
+    assert reply.startswith("Not drawn") and published == []
+    # The other Cards still load beside it.
+    reply, _ = await draw(config, "Checklist", CHECKLIST)
+    assert "drawn" in reply
+
+
+async def test_cards_whose_names_clean_alike_keep_their_own_field_types(config):
+    _save_label_card(config, "My-Card", {"text": {"type": "string"}}, {"$ref": "#/properties/text"})
+    _save_label_card(
+        config, "My_Card", {"count": {"type": "number"}}, {"$ref": "#/properties/count"}, example=1
+    )
+
+    assert "drawn in the chat" in (await draw(config, "My-Card", {"label": "Ship it"}))[0]
+    assert "drawn in the chat" in (await draw(config, "My_Card", {"label": 5}))[0]
+    assert (await draw(config, "My-Card", {"label": 5}))[0].startswith("Not drawn")
+
+
+def test_an_anchor_is_declared_once_in_the_catalog():
+    schema, definitions = _component_schema(
+        "Label",
+        "One label.",
+        {"text": {"$anchor": "text", "type": "string"}, "label": {"$ref": "#text"}},
+    )
+
+    anchors = [node["$anchor"] for node in _walk([schema, definitions]) if "$anchor" in node]
+    assert anchors == ["Label__text"]
+
+
+def _walk(node):
+    if isinstance(node, dict):
+        yield node
+        for value in node.values():
+            yield from _walk(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _walk(value)
 
 
 async def test_every_shape_a_model_sends_its_fields_in_draws_the_card(config):
