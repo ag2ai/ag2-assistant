@@ -13,9 +13,9 @@ requires-python = ">=3.12"
 dependencies = [
     # Dev installs, CI and the Docker image all resolve this through uv.lock, so they
     # run the same AG2 the published wheel asks for. ddgs powers the native
-    # DuckDuckSearchTool; mcp powers the MCP server toolkit. Model provider libraries
-    # are extras (see below).
-    "ag2[ddgs,acp,ag-ui,mcp]>=1.3.2",
+    # DuckDuckSearchTool; mcp powers the MCP server toolkit; a2ui backs Cards. Model
+    # provider libraries are extras (see below).
+    "ag2[ddgs,acp,ag-ui,a2ui,mcp]>=1.3.2",
     "typer>=0.15.0",
     "python-dotenv>=1.0.0",
     "pydantic>=2.0.0",
