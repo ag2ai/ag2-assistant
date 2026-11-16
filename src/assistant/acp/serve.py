@@ -123,7 +123,7 @@ async def serve_stdio(
         pid, config, factory = resolve_active_profile(profile, paths=paths, env=env)
     except (UnknownProfile, ArchivedProfile) as exc:
         agent = cold_start_agent(str(exc))
-        # Unconfigured ⇒ advertise terminal/env_var and gate sessions (ADR-0035).
+        # Unconfigured ⇒ advertise terminal and gate sessions (ADR-0035).
         acp_agent = ACPAgent(
             agent, name="AG2 Assistant", version=__version__, auth=choose_auth(None, env or {})
         )

@@ -604,7 +604,9 @@ async def test_an_acp_request_is_work_until_its_answer_is_delivered(paths):
     scope = served.bind(_SlowClient())
     await scope.initialize(protocol_version=1)
     session = await scope.new_session(cwd=".", mcp_servers=[])
-    turn = asyncio.ensure_future(scope.prompt(session.session_id, [acp.text_block("hi")]))
+    turn = asyncio.ensure_future(
+        scope.prompt(session.session_id, [acp.schema.TextContentBlock(text="hi")])
+    )
     await asyncio.wait_for(delivering.wait(), 5)
     assert _work(activity) == {"acp_prompt": 1}  # the agent is done; delivery is not
     gate.set()

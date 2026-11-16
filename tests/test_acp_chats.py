@@ -47,7 +47,7 @@ async def test_prompt_answer_produces_a_real_chat(paths):
         session = await client.new_session(cwd=".")
         response = await client.prompt(
             session_id=session.session_id,
-            prompt=[acp.text_block("what is the answer")],
+            prompt=[acp.schema.TextContentBlock(text="what is the answer")],
         )
     assert response.stop_reason == "end_turn"
 
@@ -91,7 +91,9 @@ async def test_drop_history_keeps_the_chat_and_transcript(paths):
 
     async with connect(served) as (client, _recorder):
         session = await client.new_session(cwd=".")
-        await client.prompt(session_id=session.session_id, prompt=[acp.text_block("hi")])
+        await client.prompt(
+            session_id=session.session_id, prompt=[acp.schema.TextContentBlock(text="hi")]
+        )
         agent_session = await served.sessions.get(session.session_id)
         stream_id = agent_session.stream_id
         await served.sessions.close(session.session_id)
@@ -113,7 +115,9 @@ async def test_reconnect_creates_a_second_chat(paths):
     async def one_turn(text: str) -> str:
         async with connect(served) as (client, _recorder):
             session = await client.new_session(cwd=".")
-            await client.prompt(session_id=session.session_id, prompt=[acp.text_block(text)])
+            await client.prompt(
+                session_id=session.session_id, prompt=[acp.schema.TextContentBlock(text=text)]
+            )
             return session.session_id
 
     first_session = await one_turn("first")
@@ -158,7 +162,9 @@ async def test_turns_mirror_onto_the_gateway_stream(paths):
     )
     async with connect(served) as (client, _recorder):
         session = await client.new_session(cwd=".")
-        await client.prompt(session_id=session.session_id, prompt=[acp.text_block("hello")])
+        await client.prompt(
+            session_id=session.session_id, prompt=[acp.schema.TextContentBlock(text="hello")]
+        )
 
     kinds = [type(e).__name__ for _, e in mirrored]
     assert kinds == ["ModelRequest", "ModelResponse"]
@@ -183,13 +189,17 @@ async def test_session_loads_into_a_storage_that_never_served_it(paths):
     async with connect(first) as (client, _recorder):
         session = await client.new_session(cwd=".")
         session_id = session.session_id
-        await client.prompt(session_id=session_id, prompt=[acp.text_block("remember me")])
+        await client.prompt(
+            session_id=session_id, prompt=[acp.schema.TextContentBlock(text="remember me")]
+        )
 
     # A brand-new agent + storage pair: nothing of the first is carried over.
     second, second_storage, _ = make_acp_agent(paths, pid)
     async with connect(second) as (client, _recorder):
         await client.load_session(session_id=session_id, cwd=".")
-        await client.prompt(session_id=session_id, prompt=[acp.text_block("still there?")])
+        await client.prompt(
+            session_id=session_id, prompt=[acp.schema.TextContentBlock(text="still there?")]
+        )
         agent_session = await second.sessions.get(session_id)
 
     replayed = list(await second_storage.get_history(agent_session.stream_id))
@@ -230,7 +240,9 @@ async def test_deleting_a_chat_takes_its_replay_history_with_it(paths):
     async with connect(served) as (client, _recorder):
         session = await client.new_session(cwd=".")
         session_id = session.session_id
-        await client.prompt(session_id=session_id, prompt=[acp.text_block("remember me")])
+        await client.prompt(
+            session_id=session_id, prompt=[acp.schema.TextContentBlock(text="remember me")]
+        )
 
     gw = await _reader_gateway(config)
     chat_id = (await gw.list_chats())[0]["chat_id"]
@@ -264,13 +276,18 @@ async def test_two_connections_hold_sessions_without_cross_talk(paths):
         session_b = await client_b.new_session(cwd=".")
         assert session_a.session_id != session_b.session_id
 
-        await client_a.prompt(session_id=session_a.session_id, prompt=[acp.text_block("from A")])
-        await client_b.prompt(session_id=session_b.session_id, prompt=[acp.text_block("from B")])
+        await client_a.prompt(
+            session_id=session_a.session_id, prompt=[acp.schema.TextContentBlock(text="from A")]
+        )
+        await client_b.prompt(
+            session_id=session_b.session_id, prompt=[acp.schema.TextContentBlock(text="from B")]
+        )
 
         # Neither connection can reach the other's session.
         with pytest.raises(acp.RequestError):
             await client_a.prompt(
-                session_id=session_b.session_id, prompt=[acp.text_block("A reaching for B")]
+                session_id=session_b.session_id,
+                prompt=[acp.schema.TextContentBlock(text="A reaching for B")],
             )
 
         # Both live streams sit in the one storage the connections share, each
@@ -304,7 +321,9 @@ async def test_one_connection_runs_concurrent_turns_on_separate_sessions(paths):
 
         responses = await asyncio.gather(
             *[
-                client.prompt(session_id=sid, prompt=[acp.text_block(f"from {room}")])
+                client.prompt(
+                    session_id=sid, prompt=[acp.schema.TextContentBlock(text=f"from {room}")]
+                )
                 for sid, room in zip(sessions, rooms, strict=True)
             ]
         )

@@ -81,7 +81,9 @@ async def test_session_new_metadata_becomes_the_peers_destination_and_the_tasks_
     served, _storage, _config = make_acp_agent(paths, pid)
     async with connect(served) as (client, _recorder):
         session = await client.new_session(cwd=".", **{DESTINATION_META_KEY: {"chat_id": ROOM}})
-        await client.prompt(session_id=session.session_id, prompt=[acp.text_block("hi")])
+        await client.prompt(
+            session_id=session.session_id, prompt=[acp.schema.TextContentBlock(text="hi")]
+        )
     peers = PeerStore(paths)
     peer = peers.get_peer("acp:test", session.session_id)
     assert peer is not None and peer.destination == ROOM
@@ -102,7 +104,9 @@ async def test_a_session_without_a_destination_keeps_the_session_id_as_origin(pa
     served, _storage, _config = make_acp_agent(paths, pid)
     async with connect(served) as (client, _recorder):
         session = await client.new_session(cwd=".")
-        await client.prompt(session_id=session.session_id, prompt=[acp.text_block("hi")])
+        await client.prompt(
+            session_id=session.session_id, prompt=[acp.schema.TextContentBlock(text="hi")]
+        )
     peers = PeerStore(paths)
     peer = peers.get_peer("acp:test", session.session_id)
     assert peer is not None and peer.destination is None

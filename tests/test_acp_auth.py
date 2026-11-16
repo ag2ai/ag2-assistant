@@ -1,5 +1,5 @@
-"""Terminal + env_var auth methods (ADR 0035), and the credential-state seam that
-picks between advertising them and staying ungated.
+"""The terminal auth method (ADR 0035), and the credential-state seam that
+picks between advertising it and staying ungated.
 
 Drives real ``ag2.acp`` connections in-process (``ag2.acp.testing.connect``) — no
 real LLM (``ag2.testing.TestConfig``), no subprocess.
@@ -57,7 +57,7 @@ def test_profile_has_credentials_openai_subscription_reads_codex_tokens(config, 
 
 
 async def test_unconfigured_advertises_methods_and_session_new_fails_auth_required():
-    """Cold/keyless: ``initialize`` carries both methods; ``session/new`` fails
+    """Cold/keyless: ``initialize`` carries the terminal method; ``session/new`` fails
     ``auth_required`` promptly rather than hanging."""
     agent = Agent(name="acp-test", config=TestConfig("42"))
     acp_agent = ACPAgent(
@@ -67,7 +67,7 @@ async def test_unconfigured_advertises_methods_and_session_new_fails_auth_requir
     async with connect(acp_agent, initialize=False) as (client, _recorder):
         init = await asyncio.wait_for(client.initialize(protocol_version=acp.PROTOCOL_VERSION), 5)
         ids = {m.id for m in init.auth_methods}
-        assert ids == {"terminal", "env_var"}
+        assert ids == {"terminal"}
 
         with pytest.raises(acp.RequestError) as exc_info:
             await asyncio.wait_for(client.new_session(cwd="."), 5)
@@ -87,17 +87,17 @@ async def test_credentialed_profile_serves_session_new_and_prompt_with_no_authen
 
     async with connect(acp_agent) as (client, recorder):
         session = await client.new_session(cwd=".")
-        response = await client.prompt(session_id=session.session_id, prompt=[acp.text_block("hi")])
+        response = await client.prompt(
+            session_id=session.session_id, prompt=[acp.schema.TextContentBlock(text="hi")]
+        )
     assert response.stop_reason == "end_turn"
 
 
-async def test_authenticate_always_rejects_terminal_and_env_var():
-    """Both methods complete out of band — ``authenticate`` never succeeds for either."""
+async def test_authenticate_always_rejects_terminal():
+    """Terminal setup completes out of band — ``authenticate`` never succeeds."""
     provider = AssistantAuthMethods()
     with pytest.raises(Exception, match="terminal"):
         await provider.authenticate("terminal")
-    with pytest.raises(Exception, match="env_var"):
-        await provider.authenticate("env_var")
 
 
 async def test_authenticate_over_the_wire_surfaces_as_a_request_error():

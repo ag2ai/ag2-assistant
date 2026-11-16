@@ -1,5 +1,7 @@
 # ACP auth advertises terminal + env_var, never an OAuth flow
 
+*(Amended — see "Amendment: `env_var` left the stable schema" below.)*
+
 The served agent's `authMethods` are `terminal` and `env_var`. There is nothing to "sign in" to:
 AG2 Assistant has no account system — it is a local shell over the owner's own provider keys —
 so the Registry's Agent-Auth model (agent-run OAuth against a vendor) has no honest referent
@@ -19,3 +21,11 @@ chooses at construction: credentials resolvable for the bound Profile ⇒ `auth=
 ungated; methods not advertised — the accepted trade); unconfigured ⇒ the provider (methods
 advertised honestly, sessions answer `auth_required` until setup completes and the listener
 restarts). The restart wrinkle is exactly what the upstream probe removes.
+
+## Amendment: `env_var` left the stable schema
+
+ACP v1 (`agent-client-protocol` 1.0) keeps only `terminal` and `agent` as stable auth methods;
+`EnvVarAuthMethod` is gone. The listener now advertises `terminal` alone, and its description
+names the provider-key route (set `GEMINI_API_KEY`, `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`
+before starting the listener) that `env_var` used to carry. `terminal` was already the method
+that satisfies the Registry's listing gate, so the gate is unaffected; `agent` stays unadvertised.

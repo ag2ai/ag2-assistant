@@ -11,7 +11,7 @@ mount into the shared gateway app, which serves every profile.
 import asyncio
 import contextlib
 import secrets
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, MutableMapping
 from typing import Any
 
 import uvicorn
@@ -35,9 +35,10 @@ from assistant.hitl import DesktopAsker
 from assistant.paths import Paths
 from assistant.version import __version__
 
-Scope = dict[str, Any]
-Receive = Callable[[], Awaitable[dict[str, Any]]]
-Send = Callable[[dict[str, Any]], Awaitable[None]]
+# Starlette's ASGI shapes (MutableMapping messages), so ours pass straight through.
+Scope = MutableMapping[str, Any]
+Receive = Callable[[], Awaitable[MutableMapping[str, Any]]]
+Send = Callable[[MutableMapping[str, Any]], Awaitable[None]]
 AsgiApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 
 # Loopback names ``--host`` may legitimately be; anything else needs a token.
@@ -185,7 +186,7 @@ async def serve_ws(
         pid, config, factory = resolve_active_profile(profile, paths=paths, env=env)
     except (UnknownProfile, ArchivedProfile) as exc:
         agent = cold_start_agent(str(exc))
-        # Unconfigured ⇒ advertise terminal/env_var and gate sessions (ADR-0035).
+        # Unconfigured ⇒ advertise terminal and gate sessions (ADR-0035).
         acp_agent = ACPAgent(
             agent, name="AG2 Assistant", version=__version__, auth=choose_auth(None, env or {})
         )

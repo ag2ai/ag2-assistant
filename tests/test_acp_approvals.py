@@ -115,7 +115,7 @@ async def test_allow_runs_the_gated_tool_via_the_owner_asker(config):
         async with connect(acp_agent) as (client, recorder):
             session = await client.new_session(cwd=".")
             response = await client.prompt(
-                session_id=session.session_id, prompt=[acp.text_block("go")]
+                session_id=session.session_id, prompt=[acp.schema.TextContentBlock(text="go")]
             )
             assert response.stop_reason == "end_turn"
             _assert_no_approval_leaked(recorder, session.session_id)
@@ -145,13 +145,13 @@ async def test_deny_fails_the_tool_call_and_session_stays_usable(config):
         async with connect(acp_agent) as (client, recorder):
             session = await client.new_session(cwd=".")
             first = await client.prompt(
-                session_id=session.session_id, prompt=[acp.text_block("go")]
+                session_id=session.session_id, prompt=[acp.schema.TextContentBlock(text="go")]
             )
             assert first.stop_reason == "end_turn"
             # Session usable: a second turn still asks — a stale denial carried
             # over from turn 1 would skip the ask (permissions.py's `_any_denied`).
             second = await client.prompt(
-                session_id=session.session_id, prompt=[acp.text_block("again")]
+                session_id=session.session_id, prompt=[acp.schema.TextContentBlock(text="again")]
             )
             assert second.stop_reason == "end_turn"
             _assert_no_approval_leaked(recorder, session.session_id)
@@ -177,7 +177,9 @@ async def test_cancel_mid_approval_denies_with_no_side_effect_and_no_hang(config
         async with connect(acp_agent) as (client, recorder):
             session = await client.new_session(cwd=".")
             prompt_task = asyncio.ensure_future(
-                client.prompt(session_id=session.session_id, prompt=[acp.text_block("go")])
+                client.prompt(
+                    session_id=session.session_id, prompt=[acp.schema.TextContentBlock(text="go")]
+                )
             )
             # Cancel once the turn is actually parked on the (hanging) approval.
             await _wait_until(lambda: fake_asker.questions)

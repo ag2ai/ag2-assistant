@@ -56,7 +56,9 @@ async def test_list_and_transcript_carry_origin_for_a_live_acp_chat(app_over, pa
 
     async with connect(served) as (acp_client, _recorder):
         session = await acp_client.new_session(cwd=".")
-        await acp_client.prompt(session_id=session.session_id, prompt=[acp.text_block("hi")])
+        await acp_client.prompt(
+            session_id=session.session_id, prompt=[acp.schema.TextContentBlock(text="hi")]
+        )
 
         rows = client.get(api(pid, "/chats")).json()["chats"]
         assert len(rows) == 1
@@ -77,7 +79,9 @@ async def test_list_and_transcript_carry_origin_for_a_live_acp_chat(app_over, pa
 
         # The session is gone: the client can no longer prompt it.
         with pytest.raises(Exception):  # noqa: B017 - the SDK's own protocol error
-            await acp_client.prompt(session_id=session.session_id, prompt=[acp.text_block("again")])
+            await acp_client.prompt(
+                session_id=session.session_id, prompt=[acp.schema.TextContentBlock(text="again")]
+            )
 
     # The Chat survives the close — only the live badge drops.
     rows = client.get(api(pid, "/chats")).json()["chats"]
@@ -101,7 +105,9 @@ async def test_close_is_409_once_the_session_has_already_ended(app_over, paths):
 
     async with connect(served) as (acp_client, _recorder):
         session = await acp_client.new_session(cwd=".")
-        await acp_client.prompt(session_id=session.session_id, prompt=[acp.text_block("hi")])
+        await acp_client.prompt(
+            session_id=session.session_id, prompt=[acp.schema.TextContentBlock(text="hi")]
+        )
         chat_id = client.get(api(pid, "/chats")).json()["chats"][0]["chat_id"]
 
         first = client.post(api(pid, f"/chats/{chat_id}/acp/close"))
@@ -116,7 +122,9 @@ async def test_origin_name_falls_back_to_the_raw_connection_id_when_unregistered
 
     async with connect(served) as (acp_client, _recorder):
         session = await acp_client.new_session(cwd=".")
-        await acp_client.prompt(session_id=session.session_id, prompt=[acp.text_block("hi")])
+        await acp_client.prompt(
+            session_id=session.session_id, prompt=[acp.schema.TextContentBlock(text="hi")]
+        )
 
     row = client.get(api(pid, "/chats")).json()["chats"][0]
     assert row["origin_platform"] == "acp"

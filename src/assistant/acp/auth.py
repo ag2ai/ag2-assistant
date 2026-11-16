@@ -1,14 +1,16 @@
 """Auth methods an ACP listener advertises.
 
-Advertises ``terminal`` + ``env_var`` only, never ``agent``: the only OAuth client
-this install owns is ``codex_auth.py``'s, which ADR 0035 rules out as a listed
-agent's advertised sign-in (it impersonates OpenAI's own Codex CLI). Both methods
-complete out of band (a terminal command, or an env var set before the listener
-starts), so ``authenticate`` always rejects — see ``AssistantAuthMethods``.
+Advertises ``terminal`` only, never ``agent``: the only OAuth client this install
+owns is ``codex_auth.py``'s, which ADR 0035 rules out as a listed agent's advertised
+sign-in (it impersonates OpenAI's own Codex CLI). ACP v1 dropped ``env_var`` from its
+stable auth methods, so the provider-key route is named in ``terminal``'s description
+instead. Setup completes out of band (a terminal command, or a key set in the
+environment before the listener starts), so ``authenticate`` always rejects — see
+``AssistantAuthMethods``.
 
 Upstream deadlock workaround (ADR 0035): ``ag2.acp.agent`` seeds a connection's
 ``_authenticated`` flag from ``owner._auth is None`` and only a wire ``authenticate``
-call ever flips it — which terminal/env_var auth never makes. So passing a
+call ever flips it — which terminal auth never makes. So passing a
 provider gates every session forever. ``choose_auth`` sidesteps this by choosing
 the auth object at construction time from on-disk credential state: credentialed
 ⇒ ``None`` (ungated, methods unadvertised); otherwise ⇒ the provider (advertised,
@@ -29,13 +31,16 @@ from assistant.secrets import KEY_ENV
 __all__ = ("AssistantAuthMethods", "choose_auth", "profile_has_credentials")
 
 _TERMINAL_METHOD_ID = "terminal"
-_ENV_VAR_METHOD_ID = "env_var"
 _SETUP_HINT = "Run `ag2-assistant onboard` in a terminal, then restart the listener."
+_KEY_HINT = (
+    "Or set one model provider's API key (GEMINI_API_KEY, OPENAI_API_KEY or "
+    "ANTHROPIC_API_KEY) in the environment before starting the listener."
+)
 
 
 class AssistantAuthMethods:
-    """Declares ``terminal`` + ``env_var``. Both complete out of band, so
-    ``authenticate`` always rejects with a pointer at terminal setup."""
+    """Declares ``terminal``. Setup completes out of band, so ``authenticate``
+    always rejects with a pointer at terminal setup."""
 
     def methods(self) -> "list[AuthMethod]":
         return [
@@ -43,24 +48,7 @@ class AssistantAuthMethods:
                 type="terminal",
                 id=_TERMINAL_METHOD_ID,
                 name="Terminal setup",
-                description=_SETUP_HINT,
-            ),
-            schema.EnvVarAuthMethod(
-                type="env_var",
-                id=_ENV_VAR_METHOD_ID,
-                name="Provider API key",
-                description=(
-                    "Set one model provider's API key as an environment variable "
-                    "before starting this listener (see `ag2-assistant onboard`)."
-                ),
-                vars=[
-                    schema.AuthEnvVar(name=name, label=label, optional=True)
-                    for name, label in (
-                        ("GEMINI_API_KEY", "Gemini API key"),
-                        ("OPENAI_API_KEY", "OpenAI API key"),
-                        ("ANTHROPIC_API_KEY", "Anthropic API key"),
-                    )
-                ],
+                description=f"{_SETUP_HINT} {_KEY_HINT}",
             ),
         ]
 
