@@ -70,7 +70,7 @@
     if (readOnly) return
     a2uiAction(
       {
-        version: item.version || 'v1.0',
+        version: item.version || '1.0',
         action: { ...action, surfaceId: item.surfaceId, timestamp: new Date().toISOString() },
       },
       { surfaceId: item.surfaceId, data: inputData },

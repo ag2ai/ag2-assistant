@@ -53,9 +53,9 @@ def _shelf(description: str = "Use when the user asks what is on their shelf.") 
 def _emit(component: str) -> list[dict]:
     """The two messages a model writes to draw one Card as the whole surface."""
     return [
-        {"version": "v1.0", "createSurface": {"surfaceId": "s1", "catalogId": CATALOG_ID}},
+        {"version": "1.0", "createSurface": {"surfaceId": "s1", "catalogId": CATALOG_ID}},
         {
-            "version": "v1.0",
+            "version": "1.0",
             "updateComponents": {
                 "surfaceId": "s1",
                 "components": [{"id": "root", "component": component, "title": "Paperbacks"}],

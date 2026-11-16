@@ -19,7 +19,7 @@ export function captureInstance(item: RenderedMessage, data: A2UIData, path: str
   return JSON.parse(JSON.stringify({
     surface_id: item.surfaceId, path, request_id: requestId,
     message: {
-      version: item.version || 'v1.0', catalog_id: item.catalogId || 'https://ag2.ai/assistant/a2ui/catalog.json',
+      version: item.version || '1.0', catalog_id: item.catalogId || 'https://ag2.ai/assistant/a2ui/catalog.json',
       component: { ...item.component, _components: components }, data,
       title: item.title || '', intent: item.intent || '',
     },

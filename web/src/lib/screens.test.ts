@@ -19,7 +19,7 @@ test('a Screen opens independently of Chats and routes back to a fresh Chat', ()
 
 test('typed file events update all references while keeping independent copies unchanged', () => {
   const screen = Screen.parse({ path: 'morning.screen.yaml', title: 'Morning',
-    message: { surface_id: 'screen', version: 'v1.0', catalog_id: 'catalog', title: 'Morning', intent: '',
+    message: { surface_id: 'screen', version: '1.0', catalog_id: 'catalog', title: 'Morning', intent: '',
       component: { id: 'root', component: 'Column' },
       data: { _cards: { one: { summary: 'Old' }, two: { summary: 'Old' }, copy: { summary: 'Copied' } } },
     },

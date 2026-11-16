@@ -147,7 +147,7 @@ def bundled_surface(name: str) -> A2UISurface:
     card = cards[name]
     root = {**card.example, "id": "root", "component": card.name}
     messages = [
-        {"version": "v1.0", "createSurface": {"surfaceId": "w1"}},
-        {"version": "v1.0", "updateComponents": {"surfaceId": "w1", "components": [root]}},
+        {"version": "1.0", "createSurface": {"surfaceId": "w1"}},
+        {"version": "1.0", "updateComponents": {"surfaceId": "w1", "components": [root]}},
     ]
     return expanded_card_surface(durable_surfaces_from_messages(messages)[0], cards)

@@ -15,7 +15,7 @@ from pathlib import PurePosixPath
 
 from assistant.a2ui import CATALOG_ID, _component_data
 from assistant.coding.diff import FileDiff
-from assistant.events import A2UISurface, A2UISurfaceDataUpdated
+from assistant.events import A2UI_WIRE_VERSION, A2UISurface, A2UISurfaceDataUpdated
 
 # The Card the run is drawn as; its name is the one inside the Card file.
 CARD = "CodingSession"
@@ -108,7 +108,7 @@ def build_surface(surface_id: str, fields: dict) -> A2UISurface:
     return A2UISurface(
         surface_id,
         catalog_id=CATALOG_ID,
-        version="v1.0",
+        version=A2UI_WIRE_VERSION,
         component={**root, "_components": [root]},
         data=_component_data(root),
         title="Coding session",

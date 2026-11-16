@@ -25,7 +25,7 @@ wheels = [
 
 [[package]]
 name = "ag2"
-version = "1.3.0"
+version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -34,9 +34,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/89/0c/3f9d4771cb7cf8f4927964e94049fc7d4f0a67049e11bb144213fcc6b454/ag2-1.3.0.tar.gz", hash = "sha256:3aed813f204fdda5d4b6bb56eac204dce44fd17f5c920f0463db3fde9abe329c", size = 1023664, upload-time = "2026-11-04T09:22:13.006Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/63/ad/7b54d626faa2361ba9360f94a87fa4f474a3ba7341dff8fa8cd7a7fb5f1f/ag2-1.3.1.tar.gz", hash = "sha256:c517c3c44e6bfa7ca1a8ca2ed6a36732142bdfc308adf41ed95bdf4738175749", size = 1047205, upload-time = "2026-11-10T21:03:55.519Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ee/ab/6813a0c3c7c53f2866be1090754b30d394c9050be1bb2a12cd469aa56635/ag2-1.3.0-py3-none-any.whl", hash = "sha256:4cd44942de4553010cc58aff0f681d2c8bf31f170cdd82334fafa096f580770b", size = 1302130, upload-time = "2026-11-04T09:22:11.517Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/e4/b9a9d1d21d0b0b578187fe735302b9de0d68ab66ecac6d41ca7f24a6b505/ag2-1.3.1-py3-none-any.whl", hash = "sha256:f689bc1278bf12ca72fd00f404997e9cbfdb4a3ba27e19cf7d43bf8b227524b4", size = 1332409, upload-time = "2026-11-10T21:03:53.754Z" },
 ]
 
 [package.optional-dependencies]
@@ -134,12 +134,12 @@ openai = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ag2", extras = ["anthropic"], marker = "extra == 'anthropic'", specifier = ">=1.3.0" },
-    { name = "ag2", extras = ["ddgs", "acp", "ag-ui"], specifier = ">=1.3.0" },
-    { name = "ag2", extras = ["gemini"], marker = "extra == 'gemini'", specifier = ">=1.3.0" },
-    { name = "ag2", extras = ["gemini", "openai"], marker = "extra == 'dev'", specifier = ">=1.3.0" },
-    { name = "ag2", extras = ["ollama"], marker = "extra == 'ollama'", specifier = ">=1.3.0" },
-    { name = "ag2", extras = ["openai"], marker = "extra == 'openai'", specifier = ">=1.3.0" },
+    { name = "ag2", extras = ["anthropic"], marker = "extra == 'anthropic'", specifier = ">=1.3.1" },
+    { name = "ag2", extras = ["ddgs", "acp", "ag-ui"], specifier = ">=1.3.1" },
+    { name = "ag2", extras = ["gemini"], marker = "extra == 'gemini'", specifier = ">=1.3.1" },
+    { name = "ag2", extras = ["gemini", "openai"], marker = "extra == 'dev'", specifier = ">=1.3.1" },
+    { name = "ag2", extras = ["ollama"], marker = "extra == 'ollama'", specifier = ">=1.3.1" },
+    { name = "ag2", extras = ["openai"], marker = "extra == 'openai'", specifier = ">=1.3.1" },
     { name = "ag2-assistant", extras = ["gemini", "openai", "anthropic", "ollama", "google"], marker = "extra == 'all'" },
     { name = "beautifulsoup4", specifier = ">=4.12.0" },
     { name = "cron-descriptor", specifier = ">=1.4" },

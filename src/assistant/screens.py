@@ -12,6 +12,7 @@ from assistant.a2ui import CARD_VOCABULARY, CATALOG_ID
 from assistant.card_instances import InstanceError, check_json, read_document
 from assistant.card_sources.schema import sources_from
 from assistant.cards import CardError, namespace_components, validate_layout
+from assistant.events import A2UI_WIRE_VERSION
 from assistant.gateway.schemas.card_instance import CardInstanceMessage, CardInstanceResponse
 from assistant.gateway.schemas.screen import (
     ScreenDocument,
@@ -154,7 +155,7 @@ def expand_screen(
         sources=sources,
         message=CardInstanceMessage(
             surface_id=path,
-            version="v1.0",
+            version=A2UI_WIRE_VERSION,
             catalog_id=CATALOG_ID,
             component={**component, "_components": list(checked)},
             data=data,

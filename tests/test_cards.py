@@ -184,9 +184,9 @@ def test_a_drawn_card_is_followed_by_the_writes_its_fields_make(tmp_path):
 
     messages = expand_card_messages(
         [
-            {"version": "v1.0", "createSurface": {"surfaceId": "s1", "catalogId": "c"}},
+            {"version": "1.0", "createSurface": {"surfaceId": "s1", "catalogId": "c"}},
             {
-                "version": "v1.0",
+                "version": "1.0",
                 "updateComponents": {"surfaceId": "s1", "components": [_instance(title="Mine")]},
             },
         ],
@@ -197,7 +197,7 @@ def test_a_drawn_card_is_followed_by_the_writes_its_fields_make(tmp_path):
     drawn = messages[1]["updateComponents"]["components"]
     assert all(component["component"] != "RunTracker" for component in drawn)
     assert messages[2] == {
-        "version": "v1.0",
+        "version": "1.0",
         "updateDataModel": {"surfaceId": "s1", "path": "/title", "value": "Mine"},
     }
 
@@ -206,7 +206,7 @@ def test_messages_that_draw_no_card_are_left_alone(tmp_path):
     _write(tmp_path, "runs.card.yaml", CARD)
     original = [
         {
-            "version": "v1.0",
+            "version": "1.0",
             "updateComponents": {
                 "surfaceId": "s1",
                 "components": [{"id": "root", "component": "Text", "text": "hello"}],

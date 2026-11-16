@@ -28,16 +28,16 @@ def _button(cid: str, label: str, name: str, context=None) -> list[dict]:
 def _drawing(text: str, *components, data=None) -> str:
     """A model reply saying `text` and drawing one surface of `components`."""
     messages = [
-        {"version": "v1.0", "createSurface": {"surfaceId": "booking", "catalogId": CATALOG}},
+        {"version": "1.0", "createSurface": {"surfaceId": "booking", "catalogId": CATALOG}},
         {
-            "version": "v1.0",
+            "version": "1.0",
             "updateComponents": {"surfaceId": "booking", "components": list(components)},
         },
     ]
     if data is not None:
         messages.append(
             {
-                "version": "v1.0",
+                "version": "1.0",
                 "updateDataModel": {"surfaceId": "booking", "path": "/", "value": data},
             }
         )

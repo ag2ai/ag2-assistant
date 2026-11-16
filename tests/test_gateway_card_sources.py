@@ -38,7 +38,7 @@ def document(source=None):
         "request_hash": "0" * 64,
         "message": {
             "surface_id": identity,
-            "version": "v1.0",
+            "version": "1.0",
             "catalog_id": "https://ag2.ai/assistant/a2ui/catalog.json",
             "component": {"id": "root", "component": "Text", "text": {"path": "/summary"}},
             "data": {

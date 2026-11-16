@@ -9,6 +9,7 @@ import yaml
 from ag2.events import ToolCallEvent
 from fastapi.testclient import TestClient
 
+from assistant.card_instances import validate_message
 from assistant.gateway.app import create_app
 from assistant.profiles import ProfileRegistry
 from tests.support.apps import api, make_manager
@@ -290,7 +291,7 @@ def test_invalid_instances_and_destinations_are_contained_and_source_is_repairab
             "invalid: [",
             yaml.safe_dump(unsupported),
             "kind: card-instance\ndata: &a [*a]",
-            original.text.replace("v1.0", "v99"),
+            yaml.safe_dump({**document, "message": {**document["message"], "version": "v99"}}),
         ]:
             assert (
                 client.put(raw_url, params={"path": request["path"]}, content=content).status_code
@@ -299,6 +300,14 @@ def test_invalid_instances_and_destinations_are_contained_and_source_is_repairab
             invalid = client.get(api(pid, "/card-instances"), params={"path": request["path"]})
             assert invalid.status_code == 400, invalid.text
             assert client.get(raw_url, params={"path": request["path"]}).text == content
+        # A file saved before ag2 1.3.1 carries the v1.0 wire version with its "v".
+        legacy = yaml.safe_dump({**document, "message": {**document["message"], "version": "v1.0"}})
+        assert (
+            client.put(raw_url, params={"path": request["path"]}, content=legacy).status_code == 200
+        )
+        opened = client.get(api(pid, "/card-instances"), params={"path": request["path"]})
+        assert opened.status_code == 200, opened.text
+        assert opened.json()["message"]["version"] == "1.0"
         assert (
             client.put(raw_url, params={"path": request["path"]}, content=original.text).status_code
             == 200
@@ -405,7 +414,7 @@ def test_an_older_composite_draft_keeps_nested_bindings_and_complete_local_value
             client,
             pid,
             {
-                "version": "v1.0",
+                "version": "1.0",
                 "action": {
                     "name": "save_surface",
                     "surfaceId": old["surface_id"],
@@ -528,3 +537,19 @@ def test_a_file_write_failure_leaves_previous_files_and_chat_intact(paths):
             client.post(api(pid, "/chats/drafts/card-instances/save"), json=request).status_code
             == 200
         )
+
+
+def test_a_surface_drawn_before_ag2_1_3_1_still_saves_as_an_instance():
+    # Chats replay surfaces whose version still reads "v1.0"; the client sends it back on Save.
+    instance_id = "00000000-0000-0000-0000-000000000000"
+    message = {
+        "surface_id": "s1",
+        "version": "v1.0",
+        "catalog_id": "https://ag2.ai/assistant/a2ui/catalog.json",
+        "component": {"id": "root", "component": "Text", "text": "Hi"},
+        "data": {},
+        "title": "",
+        "intent": "",
+    }
+
+    assert validate_message(message, instance_id).version == "1.0"

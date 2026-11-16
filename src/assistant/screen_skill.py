@@ -28,7 +28,7 @@ from assistant.cards import (
     validate_card,
     validate_card_data,
 )
-from assistant.events import CardInstanceReference
+from assistant.events import A2UI_WIRE_VERSION, CardInstanceReference
 from assistant.screens import SCREEN_SUFFIX, decode_screen, expand_screen, list_screens
 from assistant.visual_preview import VisualPreview
 
@@ -239,7 +239,7 @@ class ScreenSkillRuntime(MemoryRuntime):
                 "request_hash": "0" * 64,
                 "message": {
                     "surface_id": identity,
-                    "version": "v1.0",
+                    "version": A2UI_WIRE_VERSION,
                     "catalog_id": CATALOG_ID,
                     "title": card.name,
                     "intent": "",

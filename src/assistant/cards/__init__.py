@@ -22,6 +22,7 @@ from referencing.exceptions import Unresolvable
 
 from assistant.card_sources.schema import SOURCE_KEY, CardSource, SourceDefinition
 from assistant.cards.layout import validate_primitive
+from assistant.events import A2UI_WIRE_VERSION
 from assistant.state_store import ORIGIN_GLOBAL, StateStore
 
 logger = logging.getLogger(__name__)
@@ -461,7 +462,7 @@ def expand_card_messages(messages: list[Any], cards: dict[str, Card]) -> list[An
         if not writes and expanded == components:
             drawn.append(message)
             continue
-        version = message.get("version") or "v1.0"
+        version = message.get("version") or A2UI_WIRE_VERSION
         surface_id = update.get("surfaceId")
         drawn.append({**message, "updateComponents": {**update, "components": expanded}})
         drawn.extend(

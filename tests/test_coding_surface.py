@@ -164,7 +164,7 @@ def _stored_before_the_card_was_a_file() -> A2UISurface:
     return A2UISurface(
         "cs1",
         catalog_id=CATALOG_ID,
-        version="v1.0",
+        version="1.0",
         component={**root, "_components": [root]},
         data=data,
         title="Coding session",

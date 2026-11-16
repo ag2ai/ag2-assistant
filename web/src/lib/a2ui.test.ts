@@ -7,8 +7,8 @@ import type { ThreadItem } from '../schemas/events.ts'
 
 const PROSE = "Here's the current tech picture on OzBargain."
 const BATCH =
-  '[{"version":"v1.0","createSurface":{"surfaceId":"oz-tech","catalogId":"https://ag2.ai/assistant/a2ui/catalog.json"}},' +
-  '{"version":"v1.0","updateComponents":{"surfaceId":"oz-tech","components":[{"id":"root","component":"NewsDigest","topic":"Tech","stories":[]}]}}]'
+  '[{"version":"1.0","createSurface":{"surfaceId":"oz-tech","catalogId":"https://ag2.ai/assistant/a2ui/catalog.json"}},' +
+  '{"version":"1.0","updateComponents":{"surfaceId":"oz-tech","components":[{"id":"root","component":"NewsDigest","topic":"Tech","stories":[]}]}}]'
 
 test('plain prose passes through untouched', () => {
   assert.deepEqual(splitA2UIText(PROSE), { text: PROSE, composing: false })
@@ -34,13 +34,13 @@ test('a payload mid-stream is hidden and flagged composing, at every prefix', ()
 })
 
 test('an unfinished <a2ui-json> block is hidden and flagged composing', () => {
-  const { text, composing } = splitA2UIText(`${PROSE}\n<a2ui-json>[{"version":"v1.0","crea`)
+  const { text, composing } = splitA2UIText(`${PROSE}\n<a2ui-json>[{"version":"1.0","crea`)
   assert.equal(text, PROSE)
   assert.equal(composing, true)
 })
 
 test('a payload streaming with no prose yet leaves nothing to render', () => {
-  assert.deepEqual(splitA2UIText('[{"version":"v1.0","createSurface":{"surf'), {
+  assert.deepEqual(splitA2UIText('[{"version":"1.0","createSurface":{"surf'), {
     text: '',
     composing: true,
   })
@@ -167,7 +167,7 @@ test('a control inside a repeated row writes back to that item and no other', ()
 test('a data-model update grows the bound array the layout already repeats over', () => {
   const items: ThreadItem[] = []
   applyA2UIMessage(items, {
-    version: 'v1.0',
+    version: '1.0',
     updateComponents: {
       surfaceId: 's1',
       components: [
@@ -180,7 +180,7 @@ test('a data-model update grows the bound array the layout already repeats over'
   assert.deepEqual(childSlots(surface.component.children, surface.data), [])
 
   applyA2UIMessage(items, {
-    version: 'v1.0',
+    version: '1.0',
     updateDataModel: { surfaceId: 's1', path: '/trip', value: { legs: [{ day: 'Mon' }, { day: 'Tue' }] } },
   })
   const updated = items[0] as Extract<ThreadItem, { kind: 'a2ui' }>
@@ -207,9 +207,9 @@ test('a write no row answers to is dropped rather than flattening the array', ()
 
 test('a nested data-model path writes nested, not under a slash-joined key', () => {
   const items: ThreadItem[] = []
-  applyA2UIMessage(items, { version: 'v1.0', updateComponents: { surfaceId: 's1', components: [{ id: 'root' }] } })
+  applyA2UIMessage(items, { version: '1.0', updateComponents: { surfaceId: 's1', components: [{ id: 'root' }] } })
   applyA2UIMessage(items, {
-    version: 'v1.0',
+    version: '1.0',
     updateDataModel: { surfaceId: 's1', path: '/trip/legs', value: [{ day: 'Mon' }] },
   })
   const surface = items[0] as Extract<ThreadItem, { kind: 'a2ui' }>
@@ -223,7 +223,7 @@ test('a card drawn as primitives is titled by the data model that arrives after 
   // renderer would have to know.
   const items: ThreadItem[] = []
   applyA2UIMessage(items, {
-    version: 'v1.0',
+    version: '1.0',
     updateComponents: {
       surfaceId: 's1',
       components: [
@@ -237,7 +237,7 @@ test('a card drawn as primitives is titled by the data model that arrives after 
   assert.equal(surface.title, 'Interactive view')
 
   applyA2UIMessage(items, {
-    version: 'v1.0',
+    version: '1.0',
     updateDataModel: { surfaceId: 's1', path: '/title', value: 'Ship it' },
   })
   const updated = items[0] as Extract<ThreadItem, { kind: 'a2ui' }>
@@ -250,7 +250,7 @@ test('a surface the renderer has never seen is titled and filled like any other'
   // its fields are its data model, and that model names it.
   const items: ThreadItem[] = []
   applyA2UIMessage(items, {
-    version: 'v1.0',
+    version: '1.0',
     updateComponents: { surfaceId: 's1', components: [{ id: 'root', component: 'Unheard', topic: 'Tea' }] },
   })
   const surface = items[0] as Extract<ThreadItem, { kind: 'a2ui' }>
@@ -259,7 +259,7 @@ test('a surface the renderer has never seen is titled and filled like any other'
   assert.deepEqual(surface.data, { topic: 'Tea' })
 
   applyA2UIMessage(items, {
-    version: 'v1.0',
+    version: '1.0',
     updateDataModel: { surfaceId: 's1', path: '/title', value: 'Tea, ranked' },
   })
   assert.equal((items[0] as Extract<ThreadItem, { kind: 'a2ui' }>).title, 'Tea, ranked')
