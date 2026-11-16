@@ -1,12 +1,8 @@
 """Auth methods an ACP listener advertises.
 
-Advertises ``terminal`` only, never ``agent``: the only OAuth client this install
-owns is ``codex_auth.py``'s, which ADR 0035 rules out as a listed agent's advertised
-sign-in (it impersonates OpenAI's own Codex CLI). ACP v1 dropped ``env_var`` from its
-stable auth methods, so the provider-key route is named in ``terminal``'s description
-instead. Setup completes out of band (a terminal command, or a key set in the
-environment before the listener starts), so ``authenticate`` always rejects — see
-``AssistantAuthMethods``.
+Advertises ``terminal`` only, never ``agent`` (ADR 0035). Setup completes out of
+band — the owner configures a profile through the gateway's browser onboarding —
+so ``authenticate`` always rejects — see ``AssistantAuthMethods``.
 
 Upstream deadlock workaround (ADR 0035): ``ag2.acp.agent`` seeds a connection's
 ``_authenticated`` flag from ``owner._auth is None`` and only a wire ``authenticate``
@@ -28,19 +24,17 @@ from assistant.agent import ACP_PROVIDERS
 from assistant.config import Config
 from assistant.secrets import KEY_ENV
 
-__all__ = ("AssistantAuthMethods", "choose_auth", "profile_has_credentials")
+__all__ = ("SETUP_HINT", "AssistantAuthMethods", "choose_auth", "profile_has_credentials")
 
 _TERMINAL_METHOD_ID = "terminal"
-_SETUP_HINT = "Run `ag2-assistant onboard` in a terminal, then restart the listener."
-_KEY_HINT = (
-    "Or set one model provider's API key (GEMINI_API_KEY, OPENAI_API_KEY or "
-    "ANTHROPIC_API_KEY) in the environment before starting the listener."
+SETUP_HINT = (
+    "Run `ag2-assistant gateway` in a terminal, finish setup at http://127.0.0.1:8800 "
+    "(profile, model provider and key), then restart this listener."
 )
 
 
 class AssistantAuthMethods:
-    """Declares ``terminal``. Setup completes out of band, so ``authenticate``
-    always rejects with a pointer at terminal setup."""
+    """Declares ``terminal``; ``authenticate`` always rejects, pointing at setup."""
 
     def methods(self) -> "list[AuthMethod]":
         return [
@@ -48,12 +42,14 @@ class AssistantAuthMethods:
                 type="terminal",
                 id=_TERMINAL_METHOD_ID,
                 name="Terminal setup",
-                description=f"{_SETUP_HINT} {_KEY_HINT}",
+                description=SETUP_HINT,
             ),
         ]
 
     async def authenticate(self, method_id: str, **kwargs: Any) -> None:
-        raise AuthenticationFailedError(f"{method_id!r} completes out of band — {_SETUP_HINT}")
+        if method_id != _TERMINAL_METHOD_ID:
+            raise AuthenticationFailedError(f"unknown auth method {method_id!r}")
+        raise AuthenticationFailedError(f"{method_id!r} completes out of band — {SETUP_HINT}")
 
 
 def _codex_subscription_signed_in(config: Config) -> bool:

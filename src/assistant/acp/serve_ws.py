@@ -35,7 +35,6 @@ from assistant.hitl import DesktopAsker
 from assistant.paths import Paths
 from assistant.version import __version__
 
-# Starlette's ASGI shapes (MutableMapping messages), so ours pass straight through.
 Scope = MutableMapping[str, Any]
 Receive = Callable[[], Awaitable[MutableMapping[str, Any]]]
 Send = Callable[[MutableMapping[str, Any]], Awaitable[None]]

@@ -32,6 +32,7 @@ from tests.support.fakes import (
     fake_agent_factory,
     fake_summary_factory,
     fake_title_factory,
+    text_block,
 )
 
 T0 = datetime(2026, 11, 7, 10, 0, tzinfo=timezone.utc)
@@ -586,7 +587,6 @@ async def test_the_middleware_holds_work_for_a_whole_agent_turn():
 
 
 async def test_an_acp_request_is_work_until_its_answer_is_delivered(paths):
-    import acp
     from ag2.acp.testing import RecordingClient
 
     delivering = asyncio.Event()
@@ -604,9 +604,7 @@ async def test_an_acp_request_is_work_until_its_answer_is_delivered(paths):
     scope = served.bind(_SlowClient())
     await scope.initialize(protocol_version=1)
     session = await scope.new_session(cwd=".", mcp_servers=[])
-    turn = asyncio.ensure_future(
-        scope.prompt(session.session_id, [acp.schema.TextContentBlock(text="hi")])
-    )
+    turn = asyncio.ensure_future(scope.prompt(session.session_id, [text_block("hi")]))
     await asyncio.wait_for(delivering.wait(), 5)
     assert _work(activity) == {"acp_prompt": 1}  # the agent is done; delivery is not
     gate.set()

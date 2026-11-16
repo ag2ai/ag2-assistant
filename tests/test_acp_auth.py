@@ -14,7 +14,13 @@ from ag2.acp import ACPAgent
 from ag2.acp.testing import connect
 from ag2.testing import TestConfig
 
-from assistant.acp.auth import AssistantAuthMethods, choose_auth, profile_has_credentials
+from assistant.acp.auth import (
+    SETUP_HINT,
+    AssistantAuthMethods,
+    choose_auth,
+    profile_has_credentials,
+)
+from tests.support.fakes import text_block
 
 
 def test_choose_auth_is_none_for_a_credentialed_profile(config):
@@ -87,17 +93,28 @@ async def test_credentialed_profile_serves_session_new_and_prompt_with_no_authen
 
     async with connect(acp_agent) as (client, recorder):
         session = await client.new_session(cwd=".")
-        response = await client.prompt(
-            session_id=session.session_id, prompt=[acp.schema.TextContentBlock(text="hi")]
-        )
+        response = await client.prompt(session_id=session.session_id, prompt=[text_block("hi")])
     assert response.stop_reason == "end_turn"
 
 
 async def test_authenticate_always_rejects_terminal():
     """Terminal setup completes out of band — ``authenticate`` never succeeds."""
     provider = AssistantAuthMethods()
-    with pytest.raises(Exception, match="terminal"):
+    with pytest.raises(Exception, match="out of band"):
         await provider.authenticate("terminal")
+
+
+@pytest.mark.parametrize("method_id", ["env_var", "agent", ""])
+async def test_authenticate_rejects_an_unknown_method_as_unknown(method_id):
+    with pytest.raises(Exception, match="unknown auth method"):
+        await AssistantAuthMethods().authenticate(method_id)
+
+
+def test_terminal_description_points_at_gateway_setup():
+    (method,) = AssistantAuthMethods().methods()
+    assert method.description == SETUP_HINT
+    assert "ag2-assistant gateway" in SETUP_HINT
+    assert "API_KEY" not in SETUP_HINT
 
 
 async def test_authenticate_over_the_wire_surfaces_as_a_request_error():

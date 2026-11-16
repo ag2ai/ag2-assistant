@@ -11,6 +11,7 @@ import types
 from contextlib import asynccontextmanager
 from pathlib import PurePosixPath
 
+from acp import schema as acp_schema
 from ag2 import Agent
 from ag2.events import ModelMessage, ModelResponse
 from ag2.knowledge import SqliteKnowledgeStore
@@ -19,6 +20,11 @@ from ag2.tools.sandbox.base import ExecResult
 from fast_depends import Provider
 
 from assistant.compaction import CHECKPOINT_SCHEMA
+
+
+def text_block(text: str) -> acp_schema.TextContentBlock:
+    """An ACP text content block for a prompt."""
+    return acp_schema.TextContentBlock(text=text)
 
 
 def checkpoint_json(goal="Continue the task", needed_skills=()):

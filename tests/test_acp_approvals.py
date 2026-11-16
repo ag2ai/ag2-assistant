@@ -10,7 +10,6 @@ with ``ag2.testing.TestConfig`` scripting the model turns — no real LLM.
 
 import asyncio
 
-import acp
 from ag2 import Agent, Context, tool
 from ag2.acp import ACPAgent
 from ag2.acp.testing import connect
@@ -21,6 +20,7 @@ from assistant.acp.approvals import install_owner_side_approvals
 from assistant.gateway.core import Gateway
 from assistant.hitl.base import Question
 from assistant.permissions import ALLOW_ONCE, DENY, PermissionManager
+from tests.support.fakes import text_block
 
 _VERSION = "0.0.0-test"
 
@@ -114,9 +114,7 @@ async def test_allow_runs_the_gated_tool_via_the_owner_asker(config):
     try:
         async with connect(acp_agent) as (client, recorder):
             session = await client.new_session(cwd=".")
-            response = await client.prompt(
-                session_id=session.session_id, prompt=[acp.schema.TextContentBlock(text="go")]
-            )
+            response = await client.prompt(session_id=session.session_id, prompt=[text_block("go")])
             assert response.stop_reason == "end_turn"
             _assert_no_approval_leaked(recorder, session.session_id)
     finally:
@@ -144,14 +142,12 @@ async def test_deny_fails_the_tool_call_and_session_stays_usable(config):
     try:
         async with connect(acp_agent) as (client, recorder):
             session = await client.new_session(cwd=".")
-            first = await client.prompt(
-                session_id=session.session_id, prompt=[acp.schema.TextContentBlock(text="go")]
-            )
+            first = await client.prompt(session_id=session.session_id, prompt=[text_block("go")])
             assert first.stop_reason == "end_turn"
             # Session usable: a second turn still asks — a stale denial carried
             # over from turn 1 would skip the ask (permissions.py's `_any_denied`).
             second = await client.prompt(
-                session_id=session.session_id, prompt=[acp.schema.TextContentBlock(text="again")]
+                session_id=session.session_id, prompt=[text_block("again")]
             )
             assert second.stop_reason == "end_turn"
             _assert_no_approval_leaked(recorder, session.session_id)
@@ -177,9 +173,7 @@ async def test_cancel_mid_approval_denies_with_no_side_effect_and_no_hang(config
         async with connect(acp_agent) as (client, recorder):
             session = await client.new_session(cwd=".")
             prompt_task = asyncio.ensure_future(
-                client.prompt(
-                    session_id=session.session_id, prompt=[acp.schema.TextContentBlock(text="go")]
-                )
+                client.prompt(session_id=session.session_id, prompt=[text_block("go")])
             )
             # Cancel once the turn is actually parked on the (hanging) approval.
             await _wait_until(lambda: fake_asker.questions)

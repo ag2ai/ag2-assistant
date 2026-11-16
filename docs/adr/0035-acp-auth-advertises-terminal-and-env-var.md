@@ -25,7 +25,13 @@ restarts). The restart wrinkle is exactly what the upstream probe removes.
 ## Amendment: `env_var` left the stable schema
 
 ACP v1 (`agent-client-protocol` 1.0) keeps only `terminal` and `agent` as stable auth methods;
-`EnvVarAuthMethod` is gone. The listener now advertises `terminal` alone, and its description
-names the provider-key route (set `GEMINI_API_KEY`, `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`
-before starting the listener) that `env_var` used to carry. `terminal` was already the method
-that satisfies the Registry's listing gate, so the gate is unaffected; `agent` stays unadvertised.
+`EnvVarAuthMethod` is gone. The listener now advertises `terminal` alone. `terminal` was already
+the method that satisfies the Registry's listing gate, so the gate is unaffected; `agent` stays
+unadvertised.
+
+The provider-key route is not carried over. Whether a key unlocks the listener depends on the
+bound Profile's provider (and an OpenAI subscription Profile reads no key at all), and a cold
+start has no Profile to read a key for, so no single env-var list is true. `terminal`'s
+description points at the one path that always completes setup: `ag2-assistant gateway` and its
+browser onboarding (profile, provider and key), then a listener restart. The method carries no
+`args` yet: there is no CLI setup command for a client to launch in a terminal.
