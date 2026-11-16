@@ -99,7 +99,8 @@ pip install "ag2-assistant[gemini]"      # Gemini (the default provider)
 pip install "ag2-assistant[openai]"      # OpenAI API key or Sign in with ChatGPT
 pip install "ag2-assistant[anthropic]"   # Anthropic
 pip install "ag2-assistant[ollama]"      # Ollama (local models)
-pip install "ag2-assistant[all]"         # every provider plus the Google integration
+pip install "ag2-assistant[docker]"      # the Docker code sandbox (--sandbox docker)
+pip install "ag2-assistant[all]"         # every provider, Google and the Docker sandbox
 ```
 
 Installed with the one-line script or `uv tool install`? Add the extra to that environment instead:

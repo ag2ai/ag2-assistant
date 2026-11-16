@@ -59,7 +59,7 @@ Start an interactive, multi-turn conversation in your terminal (the single-shot
 
 ```bash
 ag2-assistant chat                     # talk back and forth; type 'exit' or Ctrl-D to quit
-ag2-assistant chat --sandbox docker    # run shell/code in a container during the chat
+ag2-assistant chat --sandbox docker    # run shell/code in a container (needs the [docker] extra)
 ag2-assistant chat --no-memory         # don't learn from this chat
 ```
 
