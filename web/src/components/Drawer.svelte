@@ -221,6 +221,7 @@
     if (e === lastEpoch) return
     lastEpoch = e
     readVersions.clear()
+    taskActionError = ''
     $listsLoaded = false
     refresh()
   })
@@ -346,11 +347,13 @@
 
   // Enable/Disable = flip the task's paused flag (the same toggle as TaskPage).
   async function toggleTaskPause(t: Task) {
+    const epoch = get(profileEpoch)
     taskActionError = ''
     menuTask = ''
     const next = !t.paused
     $tasks = $tasks.map((x) => (x.id === t.id ? { ...x, paused: next } : x))
     try { await api.updateTask(t.id, { paused: next }) } catch (error) {
+      if (get(profileEpoch) !== epoch) return
       $tasks = $tasks.map((x) => (x.id === t.id ? { ...x, paused: !next } : x))
       taskActionError = error instanceof Error ? error.message : String(error)
     }
@@ -417,12 +420,6 @@
 </script>
 
 <div class="drawer">
-  {#if taskActionError}
-    <div class="task-action-error" role="alert">
-      <span>{taskActionError}</span>
-      <button class="open" onclick={() => taskActionError = ''}>Dismiss</button>
-    </div>
-  {/if}
   <RailResizer side="left" width={drawerWidth} clamp={clampDrawerWidth} />
   {#if active}
     <div class="profile-header">
@@ -643,6 +640,12 @@
       {/each}
     {:else}
       <button class="newrow" onclick={() => openTask('new')}><Icon name="plus" size={15} /> New task</button>
+      {#if taskActionError}
+        <div class="task-action-error" role="alert">
+          <span>{taskActionError}</span>
+          <button class="open" onclick={() => taskActionError = ''}>Dismiss</button>
+        </div>
+      {/if}
       {#if !$tasks.length}<div class="none">{$listsLoaded ? 'No tasks yet.' : 'Loading…'}</div>{/if}
       {#if starredTasks.length}
         <div class="datesep">Starred</div>
