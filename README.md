@@ -90,15 +90,15 @@ The primary interface is the Svelte web UI served at `/` (→ `/app`). It includ
 
 ### Models
 
-Set up as many named model configurations as you like (Gemini, OpenAI, Anthropic, Ollama, or any OpenAI-compatible endpoint), test them, and switch the active one at any time in **Settings → Models**. Two OpenAI paths are supported: a normal **API key**, or **Sign in with ChatGPT**, which runs on your ChatGPT/Codex subscription instead of paying per token (unofficial — see `ag2-assistant auth --help`).
+Set up as many named model configurations as you like (Gemini, OpenAI, Anthropic, local Ollama, Ollama Cloud, or any OpenAI-compatible endpoint), test them, and switch the active one at any time in **Settings → Models**. Ollama Cloud uses Ollama's OpenAI-compatible API and requires an Ollama Cloud API key saved as a Secret on its model configuration. Two OpenAI paths are supported: a normal **API key**, or **Sign in with ChatGPT**, which runs on your ChatGPT/Codex subscription instead of paying per token (unofficial — see `ag2-assistant auth --help`).
 
 **Every model provider library is an extra.** The one-line installer and the Docker image include Gemini; the Claude Code / Codex CLI logins need no library at all. A `pip install ag2-assistant` carries none, so add the provider you use — Settings → Models says which are missing on the row and on the template card, so you find out before configuring, not at **Test** time:
 
 ```bash
 pip install "ag2-assistant[gemini]"      # Gemini (the default provider)
-pip install "ag2-assistant[openai]"      # OpenAI API key or Sign in with ChatGPT
+pip install "ag2-assistant[openai]"      # OpenAI API, Sign in with ChatGPT, or Ollama Cloud
 pip install "ag2-assistant[anthropic]"   # Anthropic
-pip install "ag2-assistant[ollama]"      # Ollama (local models)
+pip install "ag2-assistant[ollama]"      # Ollama (local models; Ollama Cloud uses [openai])
 pip install "ag2-assistant[docker]"      # the Docker code sandbox (--sandbox docker)
 pip install "ag2-assistant[all]"         # every provider, Google and the Docker sandbox
 ```

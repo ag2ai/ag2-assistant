@@ -157,6 +157,32 @@ async def test_openai_takes_a_bearer_header():
     assert sent[0]["url"] == "https://api.openai.com/v1/models"
 
 
+async def test_ollama_cloud_reads_models_from_its_fixed_openai_endpoint():
+    handler, sent = recording_responder(OPENAI_LIST)
+    async with async_client(handler) as client:
+        models = await probe_provider_models(
+            CatalogTarget(
+                type="ollama_cloud",
+                api_key="ollama-cloud-key",
+                base_url="https://attacker.example/v1",
+            ),
+            client=client,
+        )
+    assert models == ["gpt-5.6-terra", "text-embedding-3-large"]
+    assert sent[0]["url"] == "https://ollama.com/v1/models"
+    assert sent[0]["headers"]["authorization"] == "Bearer ollama-cloud-key"
+
+
+async def test_ollama_cloud_catalog_requires_a_key_even_with_an_endpoint():
+    async with async_client(json_responder(OPENAI_LIST)) as client:
+        with pytest.raises(CatalogUnavailable) as caught:
+            await probe_provider_models(
+                CatalogTarget(type="ollama_cloud", base_url="https://ollama.com/v1"),
+                client=client,
+            )
+    assert caught.value.reason == "not_probeable"
+
+
 async def test_the_two_openai_surfaces_read_one_catalog():
     assert await _keyed(json_responder(OPENAI_LIST), "openai") == await _keyed(
         json_responder(OPENAI_LIST), "openai_responses"

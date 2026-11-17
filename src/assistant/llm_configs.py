@@ -25,6 +25,7 @@ openai_responses openai            ``{"api": "responses", base_url?}``
 anthropic        anthropic         ``{base_url?}``
 gemini           gemini            ``{}``
 ollama           ollama            ``{host?}``
+ollama_cloud     openai            ``{"api": "chat", "base_url": "https://ollama.com/v1"}``
 claude_code      claude_code       ``options passed to ACPConfig``
 codex            codex             ``options passed to ACPConfig``
 ===============  ================  =============================
@@ -46,7 +47,7 @@ from assistant.builtin_tools import clean_options, find_builtin
 from assistant.config import apply_provider_defaults, read_global_config, update_global_section
 from assistant.model_params import clean_params, usable_params, validate_anthropic_options
 from assistant.paths import Paths
-from assistant.secrets import SecretStore
+from assistant.secrets import OLLAMA_CLOUD_BASE, SecretStore
 
 # The supported configuration types. ``openai`` = an OpenAI-compatible endpoint
 # (llama.cpp, vLLM, LM Studio, cloud proxies), reached over the Chat Completions API;
@@ -64,13 +65,14 @@ TYPES = (
     "anthropic",
     "gemini",
     "ollama",
+    "ollama_cloud",
     "claude_code",
     "codex",
 )
 
-# type → the ``cfg.llm.provider`` it derives to (all three OpenAI surfaces are provider
-# "openai"; ``model_config`` picks the API from the injected ``api`` option, or the
-# subscription branch off ``cfg.llm.auth_mode``).
+# type → the ``cfg.llm.provider`` it derives to (OpenAI surfaces and Ollama Cloud use
+# provider "openai"; ``model_config`` picks the API from ``api`` or the subscription
+# branch off ``cfg.llm.auth_mode``).
 PROVIDER_OF = {
     "openai": "openai",
     "openai_responses": "openai",
@@ -78,6 +80,7 @@ PROVIDER_OF = {
     "anthropic": "anthropic",
     "gemini": "gemini",
     "ollama": "ollama",
+    "ollama_cloud": "openai",
     "claude_code": "claude_code",
     "codex": "codex",
 }
@@ -148,6 +151,7 @@ PROVIDER_EXTRA = {
     "gemini": ("google.genai", "gemini"),
     "anthropic": ("anthropic", "anthropic"),
     "ollama": ("ollama", "ollama"),
+    "ollama_cloud": ("openai", "openai"),
     "openai": ("openai", "openai"),
     "openai_responses": ("openai", "openai"),
     "openai_subscription": ("openai", "openai"),
@@ -261,7 +265,7 @@ def _clean_entry(raw: dict) -> dict:
     is_subscription = ctype == "openai_subscription"
     # The CLI-login types also have no endpoint/key fields (auth = the CLI's disk
     # login), but KEEP options: they override ACPConfig constructor fields.
-    strip_endpoint = is_subscription or ctype in CLI_LOGIN_TYPES
+    strip_endpoint = is_subscription or ctype in CLI_LOGIN_TYPES or ctype == "ollama_cloud"
     entry = {
         "id": str(raw.get("id") or "").strip(),
         "name": name,
@@ -269,7 +273,9 @@ def _clean_entry(raw: dict) -> dict:
         "model": model,
         "base_url": "" if strip_endpoint else str(raw.get("base_url") or "").strip(),
         "host": "" if strip_endpoint else str(raw.get("host") or "").strip(),
-        "secret_id": "" if strip_endpoint else str(raw.get("secret_id") or "").strip(),
+        "secret_id": ""
+        if is_subscription or ctype in CLI_LOGIN_TYPES
+        else str(raw.get("secret_id") or "").strip(),
         "options": {} if is_subscription else options,
         "builtin_tools": _clean_builtin_tools(raw, ctype),
         "params": clean_params(ctype, raw.get("params")),
@@ -426,14 +432,17 @@ class LlmConfigStore:
             opts["api"] = "chat"
         elif ctype == "openai_responses":
             opts["api"] = "responses"
-        if ctype in ("openai", "openai_responses", "anthropic") and entry.get("base_url"):
+        if ctype == "ollama_cloud":
+            opts["api"] = "chat"
+            opts["base_url"] = OLLAMA_CLOUD_BASE
+        elif ctype in ("openai", "openai_responses", "anthropic") and entry.get("base_url"):
             opts["base_url"] = entry["base_url"]
         elif ctype == "ollama" and entry.get("host"):
             opts["host"] = entry["host"]
         key = self._secrets.secret_value(entry.get("secret_id") or "")
         if key:
             opts["api_key"] = key
-        elif entry.get("base_url"):
+        elif entry.get("base_url") or ctype == "ollama_cloud":
             opts["api_key"] = "unused"  # never leak the shared key to a custom endpoint
         return opts
 
@@ -492,11 +501,10 @@ class LlmConfigStore:
     ) -> bool:
         """Whether this configuration can actually run right now — the signal behind the
         health dot. A missing optional provider library (``extras``, see
-        :func:`deps_status`) blocks it regardless of keys. Ollama is otherwise local
-        (always). A ``base_url`` (OpenAI/Anthropic-compatible server) needs no real
-        provider key. Otherwise a per-config key OR the provider's key in ``env`` must be
-        present. The CLI-login types instead need their ACP adapter on ``search_path``
-        (or a host ``bridge``) — see :func:`cli_login_present`."""
+        :func:`deps_status`) blocks it regardless of keys. Local Ollama is keyless;
+        Ollama Cloud requires its own referenced Secret. Other custom ``base_url``
+        endpoints need no provider key. The CLI-login types instead need their ACP
+        adapter on ``search_path`` (or a host ``bridge``) — see :func:`cli_login_present`."""
         ctype = entry.get("type")
         if not deps_status(str(ctype), extras=extras)["ok"]:
             return False
@@ -509,6 +517,8 @@ class LlmConfigStore:
             return cli_login_present(str(ctype), search_path=search_path, bridge=bridge)
         if ctype == "ollama":
             return True
+        if ctype == "ollama_cloud":
+            return bool(self._secrets.secret_value(entry.get("secret_id") or ""))
         if entry.get("base_url"):
             return True
         if self._secrets.secret_value(entry.get("secret_id") or ""):
@@ -549,6 +559,8 @@ class LlmConfigStore:
             return "cli_login" if present else "none"
         if self._secrets.secret_value(entry.get("secret_id") or ""):
             return "secret"
+        if entry.get("type") == "ollama_cloud":
+            return "none"
         if entry.get("type") == "ollama" or entry.get("base_url"):
             return "not_needed"
         provider = PROVIDER_OF.get(entry.get("type") or "", "")

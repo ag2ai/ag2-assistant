@@ -24,6 +24,17 @@
   import { setActiveProfileId } from '../lib/profile.ts'
   import { setAccent } from '../design/palette.ts'
   import { FOCUS, focusLabel } from '../lib/focuses.ts'
+  import { OLLAMA_TEMPLATES, type OllamaMode } from '../lib/modelTemplates.ts'
+  import {
+    newOllamaOnboardingDraft,
+    ollamaOnboardingConfig,
+    ollamaOnboardingReady,
+    type OllamaOnboardingDraft,
+  } from '../lib/onboardingModels.ts'
+  import { catalogNote, catalogSource } from '../lib/modelSuggest.ts'
+  import { createOrSnap } from '../lib/secrets.ts'
+  import { autoSecretName } from '../lib/secretsUtil.ts'
+  import { errText } from '../lib/errors.ts'
   import { TYPE_LABEL } from '../lib/providerLabels.ts'
   import { featuredModelsFor } from '../lib/knownModels.ts'
   import {
@@ -40,6 +51,7 @@
   import Icon from './Icon.svelte'
   import Appearance from './Appearance.svelte'
   import FolderPicker from './FolderPicker.svelte'
+  import ModelCombobox from './settings/ModelCombobox.svelte'
   import ProfileForm, { type ProfileDraft } from './ProfileForm.svelte'
   import ag2Logo from '../assets/ag2.svg'
   import ag2LogoWhite from '../assets/ag2-white.svg'
@@ -66,6 +78,13 @@
     models?: ModelChoice[]
     oauth?: boolean
     cli?: string
+    ollamaMode?: OllamaMode
+  }
+  type OllamaCatalogState = {
+    models: string[] | null
+    reason: string
+    error: string
+    loading: boolean
   }
 
   const STEPS = ['Welcome', 'About you', 'Connect', 'Profiles', 'Set up', 'Ready']
@@ -86,16 +105,20 @@
   const modelsFor = (provider: KeyProvider): ModelChoice[] =>
     featuredModelsFor(provider).map((m) => ({ label: `${VENDOR[provider]} · ${m.label}`, provider, model: m.id }))
   const MODELS: ModelChoice[] = [...modelsFor('gemini'), ...modelsFor('openai'), ...modelsFor('anthropic')]
-  // Connect step is organised as provider tabs. Each key-based tab owns one API-key
-  // field (keyed into `keys`) plus its provider's models; the OAuth tab hosts the
-  // ChatGPT subscription sign-in instead, and the two `cli` tabs the ACP CLI logins
-  // (no key at all — auth is that CLI's own on-disk login). The ACTIVE tab drives
-  // which config gets created and activated on finish (see `chosenConfig`); within a
-  // tab the user picks among its models.
+  // Connect step is organised as provider tabs. Key-based tabs own their API key;
+  // Ollama tabs share the model templates and have local, remote and Cloud fields.
+  // OAuth and CLI tabs use their own sign-in paths. The active tab drives the config
+  // created and activated on finish (see `chosenConfig`).
   const TABS: ConnectTab[] = [
     { id: 'gemini', label: 'Gemini', keyId: 'gemini', hint: 'recommended', models: modelsFor('gemini') },
     { id: 'openai', label: 'OpenAI', keyId: 'openai', hint: 'optional', models: modelsFor('openai') },
     { id: 'claude', label: 'Claude', keyId: 'anthropic', hint: 'optional', models: modelsFor('anthropic') },
+    ...Object.values(OLLAMA_TEMPLATES).map((template) => ({
+      id: `ollama_${template.ollamaMode}`,
+      label: template.name,
+      hint: template.ollamaMode === 'cloud' ? 'API key' : 'no API key',
+      ollamaMode: template.ollamaMode,
+    })),
     // Labelled by what the user recognises (their ChatGPT login), not the mechanism —
     // and short enough that six tabs still fit the column on one line.
     { id: 'oauth', label: 'ChatGPT', oauth: true, hint: 'no API key · unofficial' },
@@ -106,6 +129,19 @@
 
   let step = $state(0)
   let keys: Record<KeyProvider, string> = $state({ gemini: '', openai: '', anthropic: '' })
+  let ollamaDrafts: Record<OllamaMode, OllamaOnboardingDraft> = $state({
+    local: newOllamaOnboardingDraft('local'),
+    remote: newOllamaOnboardingDraft('remote'),
+    cloud: newOllamaOnboardingDraft('cloud'),
+  })
+  let ollamaCloudSecretId = $state('')
+  let ollamaCatalogs: Record<OllamaMode, OllamaCatalogState> = $state({
+    local: { models: null, reason: '', error: '', loading: false },
+    remote: { models: null, reason: '', error: '', loading: false },
+    cloud: { models: null, reason: '', error: '', loading: false },
+  })
+  let ollamaProbeSeq: Record<OllamaMode, number> = { local: 0, remote: 0, cloud: 0 }
+  let ollamaRevealVersion: Record<OllamaMode, number> = { local: 0, remote: 0, cloud: 0 }
   let activeTab = $state(TABS[0].id)
   let modelLabel = $state(MODELS[0].label)
   const currentTab = $derived(TABS.find((t) => t.id === activeTab) || TABS[0])
@@ -113,6 +149,7 @@
   // model; the OAuth tab's model is the subscription one, but only once signed in.
   function selectTab(id: string) {
     activeTab = id
+    finishError = ''
     const t = TABS.find((x) => x.id === id)
     if (t?.oauth) { if (codex?.signed_in) modelLabel = SUB_MODEL.label }
     else if (t?.cli) { /* CLI tabs carry their own model in `cliModel` */ }
@@ -123,6 +160,7 @@
   // (POST /api/identity at flow completion). All optional; name comes from Welcome.
   let identity = $state({ location: '', hours: '', style: '' })
   let busy = $state(false)
+  let finishError = $state('')
   // Empty until the Set up step loads them from any profile's settings.
   let fsRoots = $state<Partial<FsRoots>>({})
 
@@ -288,7 +326,74 @@
   // a Docker install may already carry keys in the environment). It only decides
   // whether Continue reads "Continue" or "Skip for now", and whether finish() has a
   // model to activate.
-  const canConnect = $derived(hasKey || !!codex?.signed_in || cliReady)
+  const canConnect = $derived(currentTab.ollamaMode
+    ? ollamaOnboardingReady(currentTab.ollamaMode, ollamaDrafts[currentTab.ollamaMode])
+    : hasKey || !!codex?.signed_in || cliReady)
+
+  function invalidateOllamaCatalog(mode: OllamaMode) {
+    ollamaProbeSeq[mode] += 1
+    ollamaCatalogs[mode] = { models: null, reason: '', error: '', loading: false }
+    if (mode === 'cloud') ollamaCloudSecretId = ''
+  }
+
+  async function fetchOllamaModels(mode: OllamaMode) {
+    const draft = ollamaDrafts[mode]
+    const type = mode === 'cloud' ? 'ollama_cloud' : 'ollama'
+    const hasInput = mode === 'cloud'
+      ? !!draft.apiKey.trim() || !!ollamaCloudSecretId
+      : !!draft.host.trim()
+    if (!hasInput) {
+      ollamaCatalogs[mode] = { models: null, reason: 'not_probeable', error: '', loading: false }
+      return
+    }
+    const seq = ++ollamaProbeSeq[mode]
+    ollamaCatalogs[mode] = { models: null, reason: '', error: '', loading: true }
+    if (mode === 'cloud' && !ollamaCloudSecretId) {
+      try {
+        const secret = await createOrSnap({
+          name: autoSecretName('Ollama Cloud', draft.apiKey),
+          value: draft.apiKey.trim(),
+        })
+        if (seq !== ollamaProbeSeq[mode]) return
+        ollamaCloudSecretId = secret.id
+      } catch (error) {
+        if (seq !== ollamaProbeSeq[mode]) return
+        ollamaCatalogs[mode] = {
+          models: null, reason: '', error: errText(error), loading: false,
+        }
+        return
+      }
+    }
+    const source = catalogSource(type, {
+      hasCredential: mode === 'cloud' && !!ollamaCloudSecretId,
+      hasPastedKey: mode === 'cloud' && !!draft.apiKey.trim() && !ollamaCloudSecretId,
+    })
+    if (source !== 'gateway') {
+      ollamaCatalogs[mode] = { models: null, reason: 'not_probeable', error: '', loading: false }
+      return
+    }
+
+    try {
+      const result = await api.llmCatalog({
+        type,
+        host: draft.host.trim(),
+        secret_id: mode === 'cloud' ? ollamaCloudSecretId : undefined,
+      }, true)
+      if (seq !== ollamaProbeSeq[mode]) return
+      const reason = result.reason || ''
+      const models = reason
+        ? null
+        : (result.models || []).map((model) => (typeof model === 'string' ? model : model.id))
+      ollamaCatalogs[mode] = { models, reason, error: '', loading: false }
+      if (!reason) ollamaRevealVersion[mode] += 1
+    } catch (error) {
+      if (seq !== ollamaProbeSeq[mode]) return
+      ollamaCatalogs[mode] = {
+        models: null, reason: 'unreachable', error: errText(error), loading: false,
+      }
+    }
+  }
+
   // Gate per step: only Profiles needs ≥1 created. Connect and Set up are both
   // skippable, so neither gates Continue.
   const canNext = $derived(step !== PROFILES_STEP || created.length > 0)
@@ -365,6 +470,13 @@
   // model pill is pre-selected on every key tab, so without this a skipped Connect
   // would still activate a keyless Gemini config.
   function chosenConfig() {
+    if (currentTab.ollamaMode) {
+      return ollamaOnboardingConfig(
+        currentTab.ollamaMode,
+        ollamaDrafts[currentTab.ollamaMode],
+        currentTab.ollamaMode === 'cloud' ? ollamaCloudSecretId : '',
+      )
+    }
     if (currentTab.cli) {
       if (!cliReady) return null
       const type = CLI_TYPE[currentTab.cli]
@@ -393,6 +505,7 @@
   // folders + focuses were already saved on the Set up pages.
   async function finish() {
     busy = true
+    finishError = ''
     try {
       for (const [prov, val] of Object.entries(keys)) {
         if (val.trim()) { try { await api.setKey(prov, val.trim()) } catch {} }
@@ -401,7 +514,23 @@
       // key writes above.
       const cfg = chosenConfig()
       if (cfg) {
-        try { await api.saveLlmConfig({ ...cfg, activate: true }) } catch {}
+        try {
+          if (currentTab.ollamaMode === 'cloud') {
+            const draft = ollamaDrafts.cloud
+            const secretId = cfg.secret_id || (await createOrSnap({
+              name: autoSecretName(cfg.name, draft.apiKey),
+              value: draft.apiKey.trim(),
+            })).id
+            await api.saveLlmConfig({ ...cfg, secret_id: secretId, activate: true })
+          } else {
+            await api.saveLlmConfig({ ...cfg, activate: true })
+          }
+        } catch {
+          if (currentTab.ollamaMode) {
+            finishError = 'Could not save the Ollama setup. Check the host, model name, or Cloud API key and try again.'
+            return
+          }
+        }
       }
       // Seed the universal "who the user is" doc from the About-you answers (name from
       // Welcome). Posted once, at completion, so Back-navigation revisions are captured.
@@ -411,12 +540,12 @@
       if (Object.values(idFields).some((v) => v)) { try { await api.setIdentity(idFields) } catch {} }
       try { await api.setOnboarded() } catch {} // install-level flag (§4.2/§5.5)
     } finally {
-      $profile = { name: name.trim() }
-      $onboardingOpen = false
       busy = false
-      // Fresh install: hand the first profile back to App to boot into it.
-      if (fresh && onComplete) onComplete(created[0]?.id || null)
     }
+    $profile = { name: name.trim() }
+    $onboardingOpen = false
+    // Fresh install: hand the first profile back to App to boot into it.
+    if (fresh && onComplete) onComplete(created[0]?.id || null)
   }
 </script>
 
@@ -506,10 +635,9 @@
               <h2>Connect a model</h2>
               <span class="onb-optional">optional</span>
             </div>
-            <p class="lead">Add a provider key — or skip keys entirely and run on a subscription you already have: your ChatGPT login, or the Claude Code / Codex CLI. Whatever you choose is stored locally and shared across all your profiles. You can skip this step and connect later in Settings → Models.</p>
+            <p class="lead">Choose a provider key, Ollama running locally or at a remote host, Ollama Cloud, or a subscription login. Settings are stored locally and shared across your profiles. You can skip this step and connect later in Settings → Models.</p>
 
-            <!-- Provider tabs: one panel per provider. The active tab drives which model
-                 gets activated on finish; the OAuth tab hosts the ChatGPT sign-in flow. -->
+            <!-- The active tab drives the config activated on finish. -->
             <div class="onb-tabs" role="tablist">
               {#each TABS as t}
                 <button
@@ -620,6 +748,80 @@
                     </div>
                   {/if}
                 {/if}
+                {:else if currentTab.ollamaMode}
+                  {@const mode = currentTab.ollamaMode}
+                  {@const draft = ollamaDrafts[mode]}
+                  {#if mode === 'cloud'}
+                    <div class="onb-field">
+                      <div class="onb-flabel">
+                        <span>Ollama Cloud API key</span>
+                        <span class="hint">{ollamaCloudSecretId ? 'saved locally as a Secret' : 'required'}</span>
+                      </div>
+                      <div class="onb-input">
+                        <Icon name="settings" size={15} />
+                        <input
+                          type="password" autocomplete="off" placeholder="paste key…"
+                          bind:value={draft.apiKey} oninput={() => invalidateOllamaCatalog(mode)}
+                        />
+                      </div>
+                      <p class="hint">{ollamaCloudSecretId
+                        ? 'This key is saved locally as a Secret. You can manage it in Settings → Secrets.'
+                        : 'Fetch models saves this key locally as a Secret so the app can read Ollama Cloud’s model list.'}</p>
+                    </div>
+                  {:else}
+                    <div class="onb-field">
+                      <div class="onb-flabel">
+                        <span>{mode === 'local' ? 'Local Ollama host URL' : 'Remote Ollama host URL'}</span>
+                        <span class="hint">no API key</span>
+                      </div>
+                      <div class="onb-input">
+                        <Icon name="globe" size={15} />
+                        <input
+                          placeholder={mode === 'local' ? 'http://localhost:11434' : 'https://ollama.example.com:11434'}
+                          spellcheck="false"
+                          bind:value={draft.host}
+                          oninput={() => invalidateOllamaCatalog(mode)}
+                        />
+                      </div>
+                      <p class="hint">{mode === 'local'
+                        ? 'Use the Ollama server on this machine, or change the URL if needed.'
+                        : 'Enter a URL reachable by this app server. If the app runs in a container, localhost points to the container.'}</p>
+                    </div>
+                  {/if}
+                  <div class="onb-field">
+                    <div class="onb-flabel"><span>Assistant model</span><span class="hint">enter the model name</span></div>
+                    <div class="onb-modelrow">
+                      <ModelCombobox
+                        id={`onb-ollama-model-${mode}`}
+                        bind:value={draft.model}
+                        type={mode === 'cloud' ? 'ollama_cloud' : 'ollama'}
+                        placeholder="e.g. llama3.2"
+                        catalog={ollamaCatalogs[mode].models}
+                        loading={ollamaCatalogs[mode].loading}
+                        reveal={ollamaRevealVersion[mode]}
+                      />
+                      <button
+                        type="button" class="onb-btn primary onb-fetch"
+                        disabled={ollamaCatalogs[mode].loading || (
+                          mode === 'cloud'
+                            ? !draft.apiKey.trim() && !ollamaCloudSecretId
+                            : !draft.host.trim()
+                        )}
+                        onclick={() => fetchOllamaModels(mode)}
+                      >{ollamaCatalogs[mode].loading
+                        ? (mode === 'cloud' && !ollamaCloudSecretId ? 'Saving key…' : 'Fetching…')
+                        : (mode === 'cloud' && !ollamaCloudSecretId ? 'Save key & fetch models' : 'Fetch models')}</button>
+                    </div>
+                    {#if ollamaCatalogs[mode].error}
+                      <p class="hint warn" role="status">{ollamaCatalogs[mode].error}</p>
+                    {:else if ollamaCatalogs[mode].reason}
+                      <p class="hint warn" role="status">{catalogNote(ollamaCatalogs[mode].reason, mode === 'cloud' ? 'ollama_cloud' : 'ollama')}</p>
+                    {:else if ollamaCatalogs[mode].models}
+                      <p class="hint" role="status">{ollamaCatalogs[mode].models.length
+                        ? `${ollamaCatalogs[mode].models.length} models found. Choose one from the open list.`
+                        : 'No models found — type a model name manually.'}</p>
+                    {/if}
+                  </div>
               {:else if currentTab.keyId}
                 {@const keyId = currentTab.keyId}
                 <div class="onb-field">
@@ -727,6 +929,7 @@
             <div class="onb-tip">
               <Icon name="zap" size={14} /><span>Every action runs on the AG2 Stream — toggle <b>AG2 view</b> anytime to watch it live.</span>
             </div>
+            {#if finishError}<p class="hint warn" role="alert">{finishError}</p>{/if}
           {/if}
         </div>
       {/key}
@@ -828,6 +1031,14 @@
     flex: 1; min-width: 0; border: none; background: none; outline: none;
     color: var(--text); font: inherit; font-size: var(--text-sm); padding: 11px 0;
   }
+  .onb-modelrow { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+  .onb-modelrow :global(.llmcombo) { flex: 1; min-width: 0; }
+  .onb-modelrow :global(.llmcombo > input) {
+    width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: var(--radius-sm);
+    padding: 11px 9px; background: var(--surface-sunk); color: var(--text);
+    font: inherit; font-size: var(--text-sm);
+  }
+  .onb-fetch { flex: none; white-space: nowrap; }
 
   .onb-pills { display: flex; flex-wrap: wrap; gap: 8px; }
   .onb-pill {
@@ -840,16 +1051,14 @@
   .onb-pill:hover { border-color: var(--accent); }
   .onb-pill.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 
-  /* Connect provider tabs. Six of them share a 52ch column, so the row must never
-     wrap: each tab is sized by its own label (flex-basis auto) and grows into the
-     leftover space, with min-width 0 + ellipsis as the safety net on a narrow
-     window — a wrapped segmented control reads as two broken bars. */
+  /* A compact grid keeps all provider choices legible as the setup paths grow. */
   .onb-tabs {
-    display: flex; gap: 2px; padding: 3px; border-radius: var(--radius-sm);
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 2px; padding: 3px; border-radius: var(--radius-sm);
     background: var(--surface-sunk); border: 1px solid var(--line);
   }
   .onb-tab {
-    flex: 1 1 auto; min-width: 0; cursor: pointer; padding: 8px 8px;
+    width: 100%; min-width: 0; cursor: pointer; padding: 8px 8px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     border: none; border-radius: calc(var(--radius-sm) - 2px); background: none;
     color: var(--text-muted); font: inherit; font-size: var(--text-xs);

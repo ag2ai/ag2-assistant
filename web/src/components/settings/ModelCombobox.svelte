@@ -16,19 +16,28 @@
     catalog?: readonly string[] | null
     loading?: boolean
     onFirstFocus?: (() => void) | null
+    reveal?: number
   }
   let {
     value = $bindable(''), type, id = 'lf-model', placeholder = '',
-    catalog = null, loading = false, onFirstFocus = null,
+    catalog = null, loading = false, onFirstFocus = null, reveal = 0,
   }: Props = $props()
 
   let open = $state(false)
   let index = $state(0)
   let rows = $state<HTMLElement[]>([])
   let focused = false
+  let lastReveal = $state(0)
 
   const results = $derived(suggestModels({ type, query: value, catalog }))
   const optionId = (i: number) => `${id}-opt-${i}`
+
+  $effect(() => {
+    if (reveal !== lastReveal) {
+      lastReveal = reveal
+      open = true
+    }
+  })
 
   // The active row resets whenever the results move under it.
   $effect(() => {

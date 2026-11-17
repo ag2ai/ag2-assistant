@@ -232,6 +232,11 @@ def build_router(
             if ctype == "openai_subscription":
                 creds = await asyncio.to_thread(d.codex.ensure_fresh)
                 target = provider_catalog.CatalogTarget(type=ctype, creds=creds)
+            elif ctype == "ollama_cloud":
+                target = provider_catalog.CatalogTarget(
+                    type=ctype,
+                    api_key=d.secret_store.secret_value(params.get("secret_id", "")),
+                )
             else:
                 env = secret_env()
                 base_url = params.get("base_url", "")
@@ -310,7 +315,7 @@ def build_router(
                 opts.pop("api_key", None)
                 if draft_key:
                     opts["api_key"] = draft_key
-                elif entry.get("base_url"):
+                elif entry.get("base_url") or entry.get("type") == "ollama_cloud":
                     opts["api_key"] = "unused"  # mirror entry_options' placeholder
             probe_cfg = llm_probe(probe)
             agent = ag2.Agent("ping", config=probe_cfg)

@@ -59,6 +59,7 @@ register(
 register("anthropic", _output_limit("max_tokens"))
 
 register("ollama", _temperature(2), _output_limit("max_tokens"))
+register("ollama_cloud", _temperature(2), _output_limit("max_tokens"))
 
 # The types that offer no parameters.
 for _ctype in ("openai_subscription", "claude_code", "codex"):

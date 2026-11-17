@@ -159,6 +159,40 @@ def test_entry_options_chat_and_ollama_and_gemini(store):
     assert store.entry_options(gem) == {}
 
 
+def test_ollama_cloud_uses_its_fixed_openai_endpoint_and_per_config_secret(store, secret_store):
+    secret = secret_store.create_secret("Ollama Cloud", "ollama-cloud-key")
+    entry = store.save_config(
+        {
+            "name": "Cloud",
+            "type": "ollama_cloud",
+            "model": "qwen3-coder:480b",
+            "base_url": "https://attacker.example/v1",
+            "host": "http://localhost:11434",
+            "secret_id": secret["id"],
+        }
+    )
+
+    assert entry["base_url"] == entry["host"] == ""
+    assert entry["secret_id"] == secret["id"]
+    assert store.entry_options(entry) == {
+        "api": "chat",
+        "base_url": "https://ollama.com/v1",
+        "api_key": "ollama-cloud-key",
+    }
+
+
+def test_ollama_cloud_is_not_usable_without_its_own_secret(store, secret_store):
+    entry = store.save_config({"name": "Cloud", "type": "ollama_cloud", "model": "cloud-model"})
+    assert store.usable(entry, {"OPENAI_API_KEY": "openai-key"}) is False
+    assert store.key_source(entry, {"OPENAI_API_KEY": "openai-key"}) == "none"
+
+    secret = secret_store.create_secret("Ollama Cloud", "ollama-cloud-key")
+    store.set_secret_id(entry["id"], secret["id"])
+    entry = store.get_config(entry["id"])
+    assert store.usable(entry, {}) is True
+    assert store.key_source(entry, {}) == "secret"
+
+
 # ---- apply_active: derivation, env precedence, empty-store no-op ---------------
 
 

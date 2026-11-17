@@ -107,6 +107,7 @@
   function keyChip(c: LlmConfig) {
     if (c.key_source === 'subscription')
       return c.signed_in ? 'ChatGPT subscription · signed in' : 'ChatGPT subscription · not signed in'
+    if (c.type === 'ollama_cloud' && c.key_source === 'none') return 'Ollama Cloud API key required'
     if (c.key_source === 'cli_login') return c.type === 'codex' ? 'Codex CLI login' : 'Claude Code CLI login'
     if (c.type === 'claude_code') return 'Claude Code adapter not found — install claude-agent-acp'
     if (c.type === 'codex') return 'Codex adapter not found — install @agentclientprotocol/codex-acp'

@@ -83,9 +83,9 @@ export const llmApi = {
 
   // A provider's model catalog for the Model field's combobox, in the same
   // {models, current, reason} envelope codingModels() returns. The configuration
-  // is named by non-secret fields only — this route accepts no key material,
-  // because a pasted key goes to the provider that owns it and never to us
-  // (ADR 0024); that probe is transport/modelCatalog.ts.
+  // is named by non-secret fields only — the key is named by reference (`secret_id`)
+  // and never by value. Unsaved Ollama Cloud keys are explicitly saved as Secrets
+  // before catalog reads because ollama.com rejects browser CORS preflight.
   llmCatalog: (target: CatalogTarget, refresh = false) => {
     const q = new URLSearchParams({ type: target.type })
     if (target.base_url) q.set('base_url', target.base_url)

@@ -16,6 +16,12 @@ gateway and not from the browser. A key that has only been *pasted* is probed by
 our logs, or our process memory until the user commits to creating a Secret from it.
 No token crosses a boundary it did not have to cross to answer the question asked.
 
+Ollama Cloud is the exception to browser-direct probing: its model-list endpoint rejects
+the browser's CORS preflight. Its Model field therefore offers an explicit **Save key &
+fetch models** action. That action commits the pasted value to the Secret store first;
+the catalog route then receives only the `secret_id`, never the key. Merely focusing or
+typing in the Model field still sends nothing.
+
 **The distinction is consent, not secrecy.** Test *does* post a pasted key to the
 gateway, ten lines away in the same file, and that stays right: pressing Test is an
 explicit act of trying a credential. Autocompletion fires on focus — a background
@@ -47,5 +53,6 @@ indistinguishable from a dead host in a browser, that failure reads as `unreacha
 rather than `no_list_endpoint`, which is less precise than the gateway path can be
 about the same endpoint. The gateway probe route is therefore *not* the general answer
 it looks like: it resolves a saved `secret_id` or the existing ChatGPT OAuth session,
-and accepts no key material. OAuth model suggestions come from the account catalog
-through the gateway; its access token stays on the server.
+and accepts no key material. Ollama Cloud uses this route only after the user explicitly
+chooses to save its key as a Secret. OAuth model suggestions come from the account
+catalog through the gateway; its access token stays on the server.

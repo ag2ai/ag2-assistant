@@ -46,5 +46,6 @@ def test_generation_parameters_are_offered_where_the_provider_takes_them():
     assert {"temperature", "max_output_tokens"} <= offered["gemini"]
     assert offered["anthropic"] == {"max_tokens"}
     assert offered["ollama"] == {"temperature", "max_tokens"}
+    assert offered["ollama_cloud"] == {"temperature", "max_tokens"}
     for ctype in ("openai_subscription", "claude_code", "codex"):
         assert offered[ctype] == set(), ctype
