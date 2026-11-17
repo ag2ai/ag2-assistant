@@ -171,16 +171,24 @@ def build_agent_tools(
     if want("code"):
         use_docker = False
         if sandbox == "docker":
-            # Where docker lives is a host fact carried by the config, never read here.
-            use_docker = docker_sandbox.docker_available(
-                config.search_path if config is not None else ()
-            )
-            if not use_docker:
+            if environment_factory is None and not docker_sandbox.docker_sdk_installed():
                 warnings.warn(
-                    "Docker sandbox requested but Docker is unavailable; "
-                    "falling back to the local sandbox with approval prompts.",
+                    "Docker sandbox requested but the docker package is not installed "
+                    '(pip install "ag2-assistant[docker]"); falling back to the local '
+                    "sandbox with approval prompts.",
                     stacklevel=2,
                 )
+            else:
+                # Where docker lives is a host fact carried by the config, never read here.
+                use_docker = docker_sandbox.docker_available(
+                    config.search_path if config is not None else ()
+                )
+                if not use_docker:
+                    warnings.warn(
+                        "Docker sandbox requested but Docker is unavailable; "
+                        "falling back to the local sandbox with approval prompts.",
+                        stacklevel=2,
+                    )
         if use_docker:
             # Docker is available → give the agent BOTH a sandboxed runner (isolated,
             # silent) and a host runner (approval-gated), and let it choose per call.

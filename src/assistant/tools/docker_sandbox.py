@@ -14,6 +14,7 @@ long-lived container would accumulate and carry state between runs.
 """
 
 import asyncio
+import importlib.util
 import os
 import shutil
 import subprocess
@@ -41,6 +42,11 @@ def _capture(cmd: list[str], timeout: float, max_output: int) -> ExecResult:
         output = output[:max_output]
         output += f"\n[truncated: showing first {max_output} of {total} chars]"
     return ExecResult(output=output, exit_code=result.returncode or 0)
+
+
+def docker_sdk_installed() -> bool:
+    """True if the ``docker`` Python package that ``DockerEnvironment`` imports is installed."""
+    return importlib.util.find_spec("docker") is not None
 
 
 def docker_available(search_path: Sequence[Path]) -> bool:
@@ -173,4 +179,5 @@ __all__ = [
     "DockerMountSandbox",
     "build_docker_skill_runtime",
     "docker_available",
+    "docker_sdk_installed",
 ]

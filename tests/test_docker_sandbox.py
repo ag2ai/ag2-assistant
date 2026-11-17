@@ -84,6 +84,20 @@ def test_build_tools_falls_back_when_docker_is_not_on_the_search_path():
     assert len(_middleware(local[0])) == 1
 
 
+def test_build_tools_falls_back_when_the_docker_package_is_missing(paths, tmp_path, monkeypatch):
+    """Docker answers, but without the docker package the default backend cannot be
+    built: the local, approval-gated runners take over instead of an ImportError."""
+    monkeypatch.setattr(tools_mod.docker_sandbox, "docker_sdk_installed", lambda: False)
+    with pytest.warns(UserWarning, match=r"ag2-assistant\[docker\]"):
+        tools = tools_mod.build_agent_tools(
+            "gemini",
+            sandbox="docker",
+            capabilities=["code"],
+            config=_docker_config(paths, tmp_path),
+        )
+    assert {t.name for t in tools} == {"run_shell_command", "run_code"}
+
+
 def test_build_tools_offers_sandboxed_and_local_when_docker(paths, tmp_path):
     """With Docker available the agent gets BOTH a sandboxed runner (no approval)
     and a host runner (approval-gated) for code AND shell, and chooses per call."""
