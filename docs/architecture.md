@@ -249,7 +249,10 @@ existing timed task. They start no scheduler, accept no scheduled run dispatch, 
 publish no scheduled sleep holds, including unknown holds for failed profile boots.
 Manual tasks and Run now remain available and keep their normal work holds.
 
-Existing timed records remain readable and unchanged, but inert. The host owns their
+Existing timed records remain unchanged in storage, but inert. Read responses mark their
+schedule as disabled and omit the next-run timestamp; health reports the scheduler as
+`disabled by host`. The web scheduling controls remain visible, and rejected Enable
+actions display the error instead of silently reverting. The host owns their
 migration or disposition before rollout; enabling the option again makes those schedules
 eligible to run. This option neither registers an external scheduler nor falls back to
 one. `start(scheduler=False)` retains its separate worker-only meaning: skip polling

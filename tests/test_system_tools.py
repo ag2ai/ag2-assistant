@@ -262,6 +262,9 @@ async def test_disabled_native_scheduling_returns_correctable_tool_errors(paths,
     service = TaskService(config=Config.for_paths(paths), store=store, local_timed_tasks=False)
     tools = _tools(service, profile_settings(paths.root), peers=PeerStore(paths))
     context = _Ctx("default")
+    detail = await tools["get_task"](task_id=old.id)
+    assert "local timed tasks disabled" in detail
+    assert "next run" not in detail
     reply = await tools["create_task"](
         name="No", prompt="p", schedule_kind="cron", cron="@daily", context=context
     )
@@ -270,3 +273,12 @@ async def test_disabled_native_scheduling_returns_correctable_tool_errors(paths,
     assert (await store.get_task(old.id)).paused
     assert len(await store.list_tasks()) == 1
     assert "Created task" in await tools["create_task"](name="Manual", prompt="p", context=context)
+
+
+def test_enabled_task_schemas_keep_native_scheduling_guidance(tmp_path):
+    service = _svc(tmp_path)
+    for tool in build_system_tools(service, profile_settings(service._config.data_dir)):
+        if tool.name in {"create_task", "update_task"}:
+            fields = tool.schema.function.parameters["properties"]
+            assert "once" in fields["schedule_kind"]["description"]
+            assert "5-field cron" in fields["cron"]["description"]

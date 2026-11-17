@@ -178,7 +178,12 @@ def _run_view(r: Run) -> dict:
     }
 
 
-def _task_row(t: Task, last_run: Run | None, unread: int, needs_input: bool) -> dict:
+def _task_row(
+    t: Task, last_run: Run | None, unread: int, needs_input: bool, *, local_timed_tasks: bool = True
+) -> dict:
+    desc = schedule_text(t.schedule)
+    if not local_timed_tasks and t.schedule.get("kind") != ScheduleKind.MANUAL:
+        desc += " (local timed tasks disabled)"
     return {
         "id": t.id,
         "name": t.name,
@@ -186,11 +191,11 @@ def _task_row(t: Task, last_run: Run | None, unread: int, needs_input: bool) -> 
         "model": t.model,
         "description": t.description,
         "schedule": t.schedule,
-        "schedule_desc": schedule_text(t.schedule),
+        "schedule_desc": desc,
         "paused": t.paused,
         "starred": t.starred,
         "recall_depth": t.recall_depth,
-        "next_run_at": t.next_run_at,
+        "next_run_at": t.next_run_at if local_timed_tasks else None,
         "created_at": t.created_at,
         "updated_at": t.updated_at,
         "last_run": _run_view(last_run) if last_run else None,
@@ -506,7 +511,7 @@ class TaskService:
             recall_depth=recall_depth,
         )
         await self.refresh_scheduled()
-        return _task_row(task, None, 0, False)
+        return _task_row(task, None, 0, False, local_timed_tasks=self.local_timed_tasks)
 
     async def update_task(self, task_id: str, **patch) -> dict | None:
         if "schedule" in patch:
@@ -517,7 +522,9 @@ class TaskService:
                 return None
             schedule = patch.get("schedule", current.schedule)
             if schedule["kind"] != ScheduleKind.MANUAL and (
-                "schedule" in patch or patch.get("paused") is False or patch.get("next_run_at")
+                "schedule" in patch
+                or (current.paused and patch.get("paused") is False)
+                or patch.get("next_run_at")
             ):
                 raise ValueError("Local timed tasks are disabled")
         if "model" in patch:
@@ -570,7 +577,16 @@ class TaskService:
                 unread[r.task_id] = unread.get(r.task_id, 0) + 1
             if r.status == RunStatus.NEEDS_INPUT:
                 needs.add(r.task_id)
-        out = [_task_row(t, latest.get(t.id), unread.get(t.id, 0), t.id in needs) for t in tasks]
+        out = [
+            _task_row(
+                t,
+                latest.get(t.id),
+                unread.get(t.id, 0),
+                t.id in needs,
+                local_timed_tasks=self.local_timed_tasks,
+            )
+            for t in tasks
+        ]
         out.sort(key=lambda v: 0 if v["needs_input"] else 1)  # stable; list is newest-first
         return out
 
@@ -581,7 +597,9 @@ class TaskService:
         runs = await self._require_store().list_runs(task_id)
         unread = sum(1 for r in runs if r.status in RunStatus.TERMINAL and r.seen_at is None)
         needs = any(r.status == RunStatus.NEEDS_INPUT for r in runs)
-        row = _task_row(t, runs[0] if runs else None, unread, needs)
+        row = _task_row(
+            t, runs[0] if runs else None, unread, needs, local_timed_tasks=self.local_timed_tasks
+        )
         row["runs"] = [_run_view(r) for r in runs]
         return row
 

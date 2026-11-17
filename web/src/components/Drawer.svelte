@@ -48,6 +48,7 @@
   // In-place switch (no reload → no blink). switchProfile no-ops on the active one.
   const switchTo = (pid: string) => { pickerOpen = false; switchProfile(pid) }
 
+  let taskActionError = $state('')
   let pickerOpen = $state(false)
   let profileTrigger = $state<HTMLButtonElement | null>(null)
   function focusProfileMenu(node: HTMLDivElement) {
@@ -345,11 +346,13 @@
 
   // Enable/Disable = flip the task's paused flag (the same toggle as TaskPage).
   async function toggleTaskPause(t: Task) {
+    taskActionError = ''
     menuTask = ''
     const next = !t.paused
     $tasks = $tasks.map((x) => (x.id === t.id ? { ...x, paused: next } : x))
-    try { await api.updateTask(t.id, { paused: next }) } catch {
+    try { await api.updateTask(t.id, { paused: next }) } catch (error) {
       $tasks = $tasks.map((x) => (x.id === t.id ? { ...x, paused: !next } : x))
+      taskActionError = error instanceof Error ? error.message : String(error)
     }
   }
 
@@ -414,6 +417,12 @@
 </script>
 
 <div class="drawer">
+  {#if taskActionError}
+    <div class="task-action-error" role="alert">
+      <span>{taskActionError}</span>
+      <button class="open" onclick={() => taskActionError = ''}>Dismiss</button>
+    </div>
+  {/if}
   <RailResizer side="left" width={drawerWidth} clamp={clampDrawerWidth} />
   {#if active}
     <div class="profile-header">
@@ -655,6 +664,9 @@
 </div>
 
 <style>
+  .task-action-error { display: flex; align-items: center; gap: 8px; padding: 12px; color: var(--danger); font-size: var(--text-sm); }
+  .task-action-error span { min-width: 0; overflow-wrap: anywhere; }
+  .task-action-error .open { flex: none; padding: 4px 8px; border: 1px solid var(--line); border-radius: var(--radius-pill); background: var(--surface); color: var(--text); font: inherit; cursor: pointer; }
   .profile-header { position: relative; padding: 10px 12px; min-width: 0; }
   .profile-trigger {
     display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px;

@@ -731,7 +731,8 @@ def universal_turn_prompt(
                 "change the objective), reschedule, run now, cancel, or archive."
                 if local_timed_tasks
                 else "- Create, inspect, edit, and run background TASKS on demand. "
-                "Local timed tasks are disabled."
+                "Local timed tasks are disabled. Do not promise timed runs through these "
+                "task tools or silently replace a requested reminder with an on-demand task."
             ),
         ),
         chat_turn_timeout_guidance(config),

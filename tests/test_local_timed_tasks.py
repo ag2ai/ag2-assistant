@@ -62,6 +62,11 @@ async def test_disabled_timed_tasks_preserve_legacy_and_manual_runs(paths, tmp_p
         assert await store.list_runs() == []
         assert (await store.get_task(legacy.id)).to_dict() == legacy.to_dict()
         assert (await store.get_task(paused.id)).paused
+        for row in [await service.get_task(legacy.id), *(await service.list_tasks())]:
+            assert row["next_run_at"] is None
+            if row["schedule"]["kind"] != "manual":
+                assert "local timed tasks disabled" in row["schedule_desc"]
+        assert (await service.update_task(legacy.id, paused=False))["paused"] is False
         await service.update_task(legacy.id, description="Still readable", paused=True)
         await service.update_task(legacy.id, schedule={"kind": "manual"}, paused=False)
         run = await service.start_run(manual["id"])
@@ -110,6 +115,9 @@ async def test_disabled_policy_reaches_every_profile_including_create_restore_an
 def test_disabled_rest_create_update_and_manual_run(paths):
     app, pid = make_profile_app(paths, local_timed_tasks=False)
     with TestClient(app) as client:
+        checks = client.get(api(pid, "/health")).json()["checks"]
+        scheduler = next(c for c in checks if c["id"] == "scheduler")
+        assert scheduler["detail"] == "disabled by host"
         body = {"name": "Timed", "prompt": "p", "schedule": {"kind": "cron", "cron": "@daily"}}
         response = client.post(api(pid, "/tasks"), json=body)
         assert response.status_code == 422
@@ -142,6 +150,14 @@ async def test_disabled_gateway_turn_uses_manual_task_guidance(paths):
         prompt = "\n".join(models.requests[-1][1])
         assert "Local timed tasks are disabled" in prompt
         assert "standard 5-field cron" not in prompt
-        assert "run something on a schedule" not in prompt
+        assert "run something on a schedule" in prompt  # self-knowledge question trigger
+        assert "Do not promise timed runs through these task tools" in prompt
+        schemas = {s.function.name: s.function.parameters for s in models.requests[-1][2]}
+        for name in ("create_task", "update_task"):
+            fields = schemas[name]["properties"]
+            assert "manual" in fields["schedule_kind"]["description"]
+            assert "disabled" in fields["schedule_kind"]["description"]
+            assert "Leave empty" in fields["at"]["description"]
+            assert "5-field cron" not in fields["cron"]["description"]
     finally:
         await manager.close()
