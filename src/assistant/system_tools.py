@@ -116,6 +116,7 @@ def build_system_tools(
 ) -> list:
     """Task, chat and inquiry tools, plus voice controls when the profile can use voice."""
     note = _followup_note(platform)
+    local_timed_tasks = tasks is None or tasks.local_timed_tasks
 
     # ---- tasks: a task is name + prompt + optional model + schedule ----
     @tool
@@ -159,17 +160,33 @@ def build_system_tools(
         ] = "",
         schedule_kind: Annotated[
             str,
-            Field(description="manual (on demand) | once (single future run) | cron (recurring)."),
+            Field(
+                description=(
+                    "manual (on demand) | once (single future run) | cron (recurring)."
+                    if local_timed_tasks
+                    else "Only manual (on demand); local timed tasks are disabled."
+                )
+            ),
         ] = "manual",
         at: Annotated[
             str,
-            Field(description="ISO 8601 datetime for schedule_kind='once' (from your env clock)."),
+            Field(
+                description=(
+                    "ISO 8601 datetime for schedule_kind='once' (from your env clock)."
+                    if local_timed_tasks
+                    else "Leave empty; local timed tasks are disabled."
+                )
+            ),
         ] = "",
         cron: Annotated[
             str,
             Field(
-                description="5-field cron for schedule_kind='cron', e.g. '0 9 * * *' = daily "
-                "09:00, '0 9 * * 1-5' = weekdays 09:00; or @hourly/@daily/@weekly/@monthly."
+                description=(
+                    "5-field cron for schedule_kind='cron', e.g. '0 9 * * *' = daily "
+                    "09:00, '0 9 * * 1-5' = weekdays 09:00; or @hourly/@daily/@weekly/@monthly."
+                    if local_timed_tasks
+                    else "Leave empty; local timed tasks are disabled."
+                )
             ),
         ] = "",
         description: Annotated[
@@ -213,12 +230,44 @@ def build_system_tools(
             str, Field(description="New LLM config id; 'default' = profile default; empty = keep.")
         ] = "",
         schedule_kind: Annotated[
-            str, Field(description="manual | once | cron to change the schedule; empty = keep.")
+            str,
+            Field(
+                description=(
+                    "manual | once | cron to change the schedule; empty = keep."
+                    if local_timed_tasks
+                    else "manual to remove a schedule; empty = keep. Timed tasks are disabled."
+                )
+            ),
         ] = "",
-        at: Annotated[str, Field(description="ISO datetime for once.")] = "",
-        cron: Annotated[str, Field(description="5-field cron for cron.")] = "",
+        at: Annotated[
+            str,
+            Field(
+                description=(
+                    "ISO datetime for once."
+                    if local_timed_tasks
+                    else "Leave empty; local timed tasks are disabled."
+                )
+            ),
+        ] = "",
+        cron: Annotated[
+            str,
+            Field(
+                description=(
+                    "5-field cron for cron."
+                    if local_timed_tasks
+                    else "Leave empty; local timed tasks are disabled."
+                )
+            ),
+        ] = "",
         paused: Annotated[
-            str, Field(description="'true' to pause, 'false' to resume; empty = keep.")
+            str,
+            Field(
+                description=(
+                    "'true' to pause, 'false' to resume; empty = keep."
+                    if local_timed_tasks
+                    else "'true' to pause; empty = keep. Timed tasks cannot resume."
+                )
+            ),
         ] = "",
         description: Annotated[str, Field(description="New description; empty = keep.")] = "",
         recall_depth: Annotated[

@@ -9,36 +9,7 @@ from assistant.gateway.schemas.task import InquiryListResponse
 from assistant.gateway.tasks_service import TaskService
 from assistant.hitl import InquiryStore
 from assistant.tasks.store import TaskStore
-from tests.support.fakes import fake_summary_factory
-
-
-class FakeGateway:
-    def __init__(self, reply="run reply", hang=False, folders=None, permissions=None):
-        self.sent, self.cancelled, self.deleted = [], [], []
-        self._reply, self._hang = reply, hang
-        self._gate = asyncio.Event()
-        self.folders = folders  # None unless a workdir-grant test wires one in
-        self.permissions = permissions  # None unless a task-scoped-rules test wires one in
-
-    async def send_message(
-        self, text, chat_id="default", asker=None, surface="", llm_config_id=None, **kw
-    ):
-        self.sent.append(
-            {"text": text, "chat_id": chat_id, "surface": surface, "model": llm_config_id}
-        )
-        if self._hang:
-            await self._gate.wait()
-            return ""  # a user-stopped turn returns "" (TurnCancelled path)
-        return self._reply
-
-    async def cancel_turn(self, chat_id, reason="Stopped"):
-        self.cancelled.append(chat_id)
-        self._gate.set()
-        return True
-
-    async def delete_chat(self, chat_id):
-        self.deleted.append(chat_id)
-        return True
+from tests.support.fakes import FakeGateway, fake_summary_factory
 
 
 async def _svc(paths, tmp_path, gw, **summary):
