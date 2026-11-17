@@ -1020,6 +1020,7 @@ class Gateway:
                     for tool in tools
                 ),
                 open_questions=not effective.tools.disable_native,
+                local_timed_tasks=self._tasks is None or self._tasks.local_timed_tasks,
             ),
         ]
         if BEHAVIOR_GUIDANCE in agent.system_prompt:
@@ -2134,6 +2135,7 @@ def build_gateway(
     plugins: Iterable[Plugin] = (),
     activity: Activity | None = None,
     voice_factory: Callable | None = None,
+    local_timed_tasks: bool = True,
 ) -> "tuple[Gateway, TaskService]":
     """Build a Gateway and TaskService sharing a Profile configuration resolver."""
     config = config or load_config()
@@ -2143,6 +2145,7 @@ def build_gateway(
         config_factory=config_factory,
         summary_factory=summary_factory,
         activity=activity,
+        local_timed_tasks=local_timed_tasks,
     )
     gateway = Gateway(
         config=config,

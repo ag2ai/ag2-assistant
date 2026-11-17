@@ -137,11 +137,13 @@ class ProfileRuntime:
         plugins: Iterable[Plugin] = (),
         activity: Activity | None = None,
         voice_factory: Callable | None = None,
+        local_timed_tasks: bool = True,
     ) -> None:
         self.meta = meta
         self.paths = paths
         self._activity = activity
         self._voice_factory = voice_factory
+        self._local_timed_tasks = local_timed_tasks
         self._registry = ProfileRegistry(paths)
         self._env = env
         self._memory = memory
@@ -274,6 +276,7 @@ class ProfileRuntime:
             plugins=self._plugins,
             activity=self._activity,
             voice_factory=self._voice_factory,
+            local_timed_tasks=self._local_timed_tasks,
         )
         await self.gateway.start()
         self.gateway.set_mirror(self._mirror)  # completed turns -> the Attached Peer
@@ -328,6 +331,7 @@ class ProfileManager:
         plugins: Iterable[Plugin] = (),
         activity: Activity | None = None,
         voice_factory: Callable | None = None,
+        local_timed_tasks: bool = True,
     ) -> None:
         # Install-level layout + config; the pair always agrees. Given neither, both come
         # from the entry-point boundary so ``serve`` needs no wiring; given ``paths``, the
@@ -335,6 +339,7 @@ class ProfileManager:
         if config is None:
             config = resolve_config(env or {}, paths) if paths is not None else load_config()
         self.config = config
+        self._local_timed_tasks = local_timed_tasks
         self.paths = paths if paths is not None else config.paths
         # The environment a runtime's config is re-resolved against on reload. The entry
         # point passes os.environ; anything else stays with the config.yaml layer only.
@@ -447,7 +452,8 @@ class ProfileManager:
         for meta in profiles:
             # Until its task service reads the schedule, a profile may hold scheduled
             # work; one that fails to boot keeps that unknown hold.
-            self.activity.set_scheduled_unknown(meta.id)
+            if self._local_timed_tasks:
+                self.activity.set_scheduled_unknown(meta.id)
         for meta in profiles:
             try:
                 await self._boot(meta)
@@ -464,7 +470,8 @@ class ProfileManager:
     async def _boot(self, meta: ProfileMeta) -> ProfileRuntime:
         # Booting is work, and the schedule is unknown until the task service reads it:
         # restore and create take this path too, not only start().
-        self.activity.set_scheduled_unknown(meta.id)
+        if self._local_timed_tasks:
+            self.activity.set_scheduled_unknown(meta.id)
         with self.activity.track("boot"):
             return await self._boot_held(meta)
 
@@ -489,6 +496,7 @@ class ProfileManager:
             plugins=self._plugins,
             activity=self.activity,
             voice_factory=self._voice_factory,
+            local_timed_tasks=self._local_timed_tasks,
         )
         await runtime.start()
         self.boot_errors.pop(meta.id, None)

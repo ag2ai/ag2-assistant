@@ -1,6 +1,6 @@
 ---
 name: self-knowledge
-description: Use when the user asks what you can do, whether you can do a specific thing (make images, run something on a schedule, read a folder, reach their email), how to make you do it, where in the app to change a setting, or why you can't access something. Covers your own capabilities, the Settings pages, and how folders, personas, and memory are scoped.
+description: Use when the user asks what you can do, whether you can do a specific thing (make images, run a task, read a folder, reach their email), how to make you do it, where in the app to change a setting, or why you can't access something. Covers your own capabilities, the Settings pages, and how folders, personas, and memory are scoped.
 version: "1.0"
 license: Apache-2.0
 ---
@@ -32,8 +32,8 @@ For anything live, call the tool. Never answer a state question from this file:
   commands, work with local files, generate images, call MCP servers, and use
   the user's Google (Gmail, Calendar, Drive) when it's connected.
 - **Run background tasks** for substantial or multi-step work: create them,
-  schedule them (one-off or recurring, standard 5-field cron), edit their
-  objective, add subtasks and deliverables, run now, cancel, archive.
+  edit their objective, add subtasks and deliverables, run now, cancel, archive.
+  Use the available task tools and capability guidance to check supported operations.
 - **Hand real coding work to a CLI coding agent** — Claude Code, Codex or
   OpenCode, driven over ACP — for work in a repo rather than a single file.
   Which ones are actually reachable is live state: check `list_coding_agents`

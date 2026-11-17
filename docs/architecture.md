@@ -241,6 +241,20 @@ subtask tree, deliverable, or intake step — a run is one agent turn.
   `delete_task()` stops and deletes every run and its chat stream —
   irreversible.
 
+A host that owns timed scheduling can pass `ProfileManager(local_timed_tasks=False)`.
+The default is `True`; the same option is available on `build_gateway` and `TaskService`.
+It applies to every profile, including profiles created or restored later. Disabled
+services reject timed task creation, schedule edits to `once`/`cron`, and resuming an
+existing timed task. They start no scheduler, accept no scheduled run dispatch, and
+publish no scheduled sleep holds, including unknown holds for failed profile boots.
+Manual tasks and Run now remain available and keep their normal work holds.
+
+Existing timed records remain readable and unchanged, but inert. The host owns their
+migration or disposition before rollout; enabling the option again makes those schedules
+eligible to run. This option neither registers an external scheduler nor falls back to
+one. `start(scheduler=False)` retains its separate worker-only meaning: skip polling
+while continuing to accept timed tasks and report scheduled holds.
+
 A host can take over delivery with `ProfileManager(task_outcome=...)`, an async
 `(profile_id, task, text, *, failed, run_id) -> bool`. It's tried first: True means delivered,
 False falls through to the default path above. If it raises, nothing else delivers the outcome,

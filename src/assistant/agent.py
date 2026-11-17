@@ -461,10 +461,7 @@ CAPABILITY_GUIDANCE = (
     "like the same entity. You can:\n"
     "- Chat and use your tools (web search/fetch, code, local files, and the user's "
     "Google when connected) to answer or act directly for small things.\n"
-    "- Run background TASKS for substantial or multi-step work: create them, schedule "
-    "them (one-off or recurring — standard 5-field cron, e.g. '0 9 * * 1-5'), inspect and "
-    "edit them (add subtasks or deliverables, change the objective), reschedule, run "
-    "now, cancel, or archive.\n"
+    "{task_guidance}\n"
     "- Look things up with your system tools instead of needing them in context: list/"
     "get tasks, list/read past conversations{open_questions}.\n"
     "- Answer with a rich information experience where possible: a rich view when a "
@@ -708,7 +705,12 @@ def turn_prompt(
 
 
 def universal_turn_prompt(
-    config: Config, surface: str = "", *, google: bool | None = None, open_questions: bool = True
+    config: Config,
+    surface: str = "",
+    *,
+    google: bool | None = None,
+    open_questions: bool = True,
+    local_timed_tasks: bool = True,
 ) -> list[str]:
     """Per-turn prompt for the universal agent: behaviour + capability map + (Google
     when signed in) + the SURFACE it's being addressed on + stable env. It follows the
@@ -721,7 +723,16 @@ def universal_turn_prompt(
     parts = [
         BEHAVIOR_GUIDANCE,
         CAPABILITY_GUIDANCE.format(
-            open_questions=", and list/answer open questions" if open_questions else ""
+            open_questions=", and list/answer open questions" if open_questions else "",
+            task_guidance=(
+                "- Run background TASKS for substantial or multi-step work: create them, "
+                "schedule them (one-off or recurring — standard 5-field cron, e.g. "
+                "'0 9 * * 1-5'), inspect and edit them (add subtasks or deliverables, "
+                "change the objective), reschedule, run now, cancel, or archive."
+                if local_timed_tasks
+                else "- Create, inspect, edit, and run background TASKS on demand. "
+                "Local timed tasks are disabled."
+            ),
         ),
         chat_turn_timeout_guidance(config),
         MEMORY_GUIDANCE,
