@@ -71,7 +71,12 @@ async def test_serve_stdio_wires_cold_start_agent_when_no_profile_exists(paths, 
 
     acp_agent = captured["agent"]
     async with connect(acp_agent, initialize=False) as (client, _recorder):
-        init = await client.initialize(protocol_version=acp.PROTOCOL_VERSION)
+        init = await client.initialize(
+            protocol_version=acp.PROTOCOL_VERSION,
+            client_capabilities=acp.schema.ClientCapabilities(
+                auth=acp.schema.AuthCapabilities(terminal=True)
+            ),
+        )
         ids = {m.id for m in init.auth_methods or []}
         assert ids == {"terminal"}  # the registry gate reads exactly this line
         with pytest.raises(acp.RequestError):
@@ -124,10 +129,22 @@ async def test_real_acp_command_emits_nothing_but_jsonrpc_on_stdout(tmp_path):
                 return msg
 
     try:
+        # ACP v1: no declared terminal-auth support ⇒ no terminal method.
         init = await request(0, "initialize", {"protocolVersion": 1})
         assert "agentCapabilities" in init["result"]
-        methods = init["result"].get("authMethods", [])
-        assert [m["id"] for m in methods] == ["terminal"]
+        assert init["result"].get("authMethods", []) == []
+
+        for rid, capabilities in (
+            (10, {"auth": {"terminal": True}}),
+            # The ACP Registry validator's request, verbatim.
+            (11, {"terminal": True, "_meta": {"terminal_output": True, "terminal-auth": True}}),
+        ):
+            init = await request(
+                rid, "initialize", {"protocolVersion": 1, "clientCapabilities": capabilities}
+            )
+            (method,) = init["result"]["authMethods"]
+            assert method["id"] == "terminal" and method["type"] == "terminal"
+            assert "ag2-assistant gateway" in method["description"]
 
         # cold start is gated (ADR-0035): session/new fails as a clean error frame
         new = await request(1, "session/new", {"cwd": ".", "mcpServers": []})

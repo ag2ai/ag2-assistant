@@ -18,7 +18,7 @@ from ag2.acp.guard import serve as guard_serve
 from ag2.acp.sessions import SessionConfig
 
 from assistant.acp.approvals import install_owner_side_approvals
-from assistant.acp.auth import choose_auth
+from assistant.acp.auth import AssistantACPAgent, choose_auth
 from assistant.acp.chats import ChatBackedStorage, ChatTrackingACPAgent
 from assistant.acp.sdk_watch import watch_send_loop
 from assistant.gateway.core import Gateway
@@ -124,7 +124,7 @@ async def serve_stdio(
     except (UnknownProfile, ArchivedProfile) as exc:
         agent = cold_start_agent(str(exc))
         # Unconfigured ⇒ advertise terminal and gate sessions (ADR-0035).
-        acp_agent = ACPAgent(
+        acp_agent = AssistantACPAgent(
             agent, name="AG2 Assistant", version=__version__, auth=choose_auth(None, env or {})
         )
     else:

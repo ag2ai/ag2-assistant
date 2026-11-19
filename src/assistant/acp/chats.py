@@ -33,13 +33,14 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 from uuid import UUID
 
-from ag2.acp.agent import ACPAgent, _ConnectionScope
+from ag2.acp.agent import _ConnectionScope
 from ag2.acp.sessions import UnknownSessionError
 from ag2.context import ConversationContext
 from ag2.events import BaseEvent, ModelRequest, ModelResponse, TextInput, UnknownEvent
 from ag2.events._serialization import import_event_class, qualified_name
 from ag2.knowledge import SqliteKnowledgeStore
 
+from assistant.acp.auth import AssistantACPAgent, NegotiatedAuthScope
 from assistant.acp.outbound import Outbound, destination_of, wants_delivery
 from assistant.activity import Activity
 from assistant.paths import Paths
@@ -490,7 +491,7 @@ class _CorrelatingSessionStore:
         return getattr(self._inner, name)
 
 
-class ChatTrackingACPAgent(ACPAgent):
+class ChatTrackingACPAgent(AssistantACPAgent):
     """``ACPAgent`` whose sessions persist as Chats via a ``ChatBackedStorage``.
 
     Overrides ``bind`` to swap each connection's fresh ``SessionStore`` for one
@@ -535,7 +536,7 @@ class ChatTrackingACPAgent(ACPAgent):
         return scope
 
 
-class _LinkedScope(_ConnectionScope):
+class _LinkedScope(NegotiatedAuthScope):
     """Attach declared ACP receivers during initialization and detach them on close."""
 
     __slots__ = ()

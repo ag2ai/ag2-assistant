@@ -35,3 +35,10 @@ start has no Profile to read a key for, so no single env-var list is true. `term
 description points at the one path that always completes setup: `ag2-assistant gateway` and its
 browser onboarding (profile, provider and key), then a listener restart. The method carries no
 `args` yet: there is no CLI setup command for a client to launch in a terminal.
+
+ACP v1 also lets an agent offer a `terminal` method only to a client that declares
+`clientCapabilities.auth.terminal`; an omitted capability means unsupported. Every listener
+therefore negotiates per connection (`AssistantACPAgent`): a client without that capability gets
+no auth methods, and its sessions still answer `auth_required`. The Registry's validator does not
+send `auth.terminal`; it signals terminal auth with `clientCapabilities._meta["terminal-auth"]`,
+which counts as the capability so the listing check keeps passing.
