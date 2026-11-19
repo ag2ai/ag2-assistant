@@ -39,6 +39,7 @@ from ag2.events import (
     ModelMessageChunk,
     ModelRequest,
     ModelResponse,
+    Usage,
     UsageEvent,
 )
 from ag2.events.conditions import TypeCondition
@@ -1353,11 +1354,9 @@ class Gateway:
         finally:
             if (usage := getattr(response, "usage", None)) is not None:
                 with contextlib.suppress(Exception):
-                    self._usage.record(
+                    self._usage.record_usage(
                         getattr(response, "model", None) or cheap_model(config) or config.llm.model,
-                        usage.prompt_tokens or 0,
-                        usage.completion_tokens or 0,
-                        usage.total_tokens or None,
+                        usage,
                     )
         if event is not None:
             await self.emit_event(chat_id, event)
@@ -1380,11 +1379,8 @@ class Gateway:
             stream.unsubscribe(sub_id)
         if not collected:
             return
-        prompt = sum(u.prompt_tokens or 0 for u in collected)
-        completion = sum(u.completion_tokens or 0 for u in collected)
-        total = sum(u.total_tokens or 0 for u in collected)
         with contextlib.suppress(Exception):
-            self._usage.record(model, prompt, completion, total or None)
+            self._usage.record_usage(model, sum(collected, Usage()))
 
     def _watch_a2ui(self, stream):
         collected: list = []
@@ -1727,13 +1723,7 @@ class Gateway:
                     await store.write(path, event_ref(unread[-1]))
             finally:
                 for response in update.responses:
-                    usage = response.usage
-                    self._usage.record(
-                        response.model or model.model,
-                        usage.prompt_tokens or 0,
-                        usage.completion_tokens or 0,
-                        usage.total_tokens or None,
-                    )
+                    self._usage.record_usage(response.model or model.model, response.usage)
 
     async def _title_chat(self, chat_id, user_text, reply_text) -> None:
         """Generate and persist a one-shot chat title (best-effort, never overwrite)."""
