@@ -16,6 +16,7 @@ from typing import Any
 
 import uvicorn
 from acp.http.asgi import create_asgi_app
+from acp.http.protocol import ACP_ENDPOINT_PATH
 from ag2 import Agent
 from ag2.acp.agent import ACPAgent
 from ag2.acp.sessions import SessionConfig
@@ -39,6 +40,10 @@ Scope = MutableMapping[str, Any]
 Receive = Callable[[], Awaitable[MutableMapping[str, Any]]]
 Send = Callable[[MutableMapping[str, Any]], Awaitable[None]]
 AsgiApp = Callable[[Scope, Receive, Send], Awaitable[None]]
+
+# The SDK app routes only ``/acp``; SDK 0.12 also served the root, which the CLI
+# prints and existing clients dial. Both upgrade paths stay open.
+_ROOT_PATHS = frozenset({"", "/"})
 
 # Loopback names ``--host`` may legitimately be; anything else needs a token.
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
@@ -84,6 +89,8 @@ def build_ws_app(acp_agent: ACPAgent, token: str) -> AsgiApp:
     - An ``http`` scope gets 404 before the SDK ever sees it (the SDK app also
       speaks Streamable HTTP, which this listener deliberately does not serve —
       ADR 0032: WebSocket only), token or no token.
+    - A WebSocket upgrade to the root is served as one to ``/acp``: the SDK app
+      routes only ``/acp``, and the CLI prints (and clients dial) the root URL.
     - The WS token is checked against ``scope["headers"]`` (set on the handshake
       request); a bad token gets ``websocket.close`` instead of ``websocket.accept``,
       failing the upgrade itself (uvicorn answers it with HTTP 403).
@@ -103,6 +110,8 @@ def build_ws_app(acp_agent: ACPAgent, token: str) -> AsgiApp:
                 if message["type"] == "websocket.connect":
                     await send({"type": "websocket.close", "code": 4401})
                 return
+            if scope.get("path") in _ROOT_PATHS:
+                scope = {**scope, "path": ACP_ENDPOINT_PATH}
             scopes: list[Any] = []
 
             def tracked_bind(client: Any) -> Any:

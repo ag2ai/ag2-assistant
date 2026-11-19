@@ -48,10 +48,12 @@ async def _running_server(paths, *, profile=None, host="127.0.0.1", token="", ag
             await task
 
 
-async def test_ag2_remote_config_drives_the_served_agent_over_websocket(paths, monkeypatch):
+@pytest.mark.parametrize("path", ["", "/", "/acp"], ids=["bare", "root", "acp"])
+async def test_ag2_remote_config_drives_the_served_agent_over_websocket(paths, monkeypatch, path):
     """End-to-end: ag2's own ``ACPRemoteConfig`` (the client this door is proven
     against) dials in over a real WebSocket with the shared token and gets the
-    scripted reply back from a served, TestConfig-backed Agent."""
+    scripted reply back from a served, TestConfig-backed Agent — at the root URL
+    the CLI prints as well as at the SDK's own ``/acp``."""
     ProfileRegistry(paths).create_profile("ws-test", "#336699")
     # fixture profile has no real key; it stands in for a credentialed install
     monkeypatch.setattr("assistant.acp.auth.profile_has_credentials", lambda config, env: True)
@@ -62,7 +64,7 @@ async def test_ag2_remote_config_drives_the_served_agent_over_websocket(paths, m
 
     async with _running_server(paths, token=token, agent_factory=scripted) as port:
         remote = ACPRemoteConfig(
-            url=f"ws://127.0.0.1:{port}/acp",
+            url=f"ws://127.0.0.1:{port}{path}",
             headers={"Authorization": f"Bearer {token}"},
             expose_tools=False,
             permission_policy="deny",
