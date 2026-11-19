@@ -82,6 +82,7 @@ from assistant.events import (
     A2UISurfaceDataUpdated,
     CardSourceUpdated,
     ChatSeen,
+    InterimMessage,
     TurnCancelled,
     TurnCompleted,
     TurnFailed,
@@ -800,14 +801,31 @@ class Gateway:
 
             stream.subscribe(observe)
 
+            # The message a ModelMessage just closed. It is interim once anything
+            # but its ModelResponse follows; the response itself carries only the last.
+            closed: list[ModelMessage] = []
+
+            async def keep_interim() -> None:
+                if closed:
+                    event = InterimMessage(closed.pop().content)
+                    await stream.history.append(event, ConversationContext(stream=stream))
+
             async def collect_chunks(event):
                 if isinstance(event, ModelMessageChunk):
+                    await keep_interim()
                     self._streaming.setdefault(chat_id, []).append(event)
+                    return
+                # The chunks so far belong to a message that has now ended.
+                self._streaming.pop(chat_id, None)
+                if isinstance(event, ModelMessage):
+                    await keep_interim()
+                    closed.append(event)
                 else:
-                    self._streaming.pop(chat_id, None)
+                    closed.clear()
 
             stream.subscribe(
-                collect_chunks, condition=TypeCondition(ModelMessageChunk) | ModelResponse
+                collect_chunks,
+                condition=TypeCondition(ModelMessageChunk) | ModelMessage | ModelResponse,
             )
 
             async def tell_observers(event):
