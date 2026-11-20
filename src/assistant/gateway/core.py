@@ -41,6 +41,7 @@ from ag2.events import (
     ModelMessageChunk,
     ModelRequest,
     ModelResponse,
+    Usage,
     UsageEvent,
 )
 from ag2.events.conditions import TypeCondition
@@ -84,6 +85,7 @@ from assistant.events import (
     A2UISurfaceDataUpdated,
     CardSourceUpdated,
     ChatSeen,
+    InterimMessage,
     TurnCancelled,
     TurnCompleted,
     TurnFailed,
@@ -852,14 +854,31 @@ class Gateway:
 
             stream.subscribe(observe)
 
+            # The message a ModelMessage just closed. It is interim once anything
+            # but its ModelResponse follows; the response itself carries only the last.
+            closed: list[ModelMessage] = []
+
+            async def keep_interim() -> None:
+                if closed:
+                    event = InterimMessage(closed.pop().content)
+                    await stream.history.append(event, ConversationContext(stream=stream))
+
             async def collect_chunks(event):
                 if isinstance(event, ModelMessageChunk):
+                    await keep_interim()
                     self._streaming.setdefault(chat_id, []).append(event)
+                    return
+                # The chunks so far belong to a message that has now ended.
+                self._streaming.pop(chat_id, None)
+                if isinstance(event, ModelMessage):
+                    await keep_interim()
+                    closed.append(event)
                 else:
-                    self._streaming.pop(chat_id, None)
+                    closed.clear()
 
             stream.subscribe(
-                collect_chunks, condition=TypeCondition(ModelMessageChunk) | ModelResponse
+                collect_chunks,
+                condition=TypeCondition(ModelMessageChunk) | ModelMessage | ModelResponse,
             )
 
             async def tell_observers(event):
@@ -1415,11 +1434,9 @@ class Gateway:
         finally:
             if (usage := getattr(response, "usage", None)) is not None:
                 with contextlib.suppress(Exception):
-                    self._usage.record(
+                    self._usage.record_usage(
                         getattr(response, "model", None) or cheap_model(config) or config.llm.model,
-                        usage.prompt_tokens or 0,
-                        usage.completion_tokens or 0,
-                        usage.total_tokens or None,
+                        usage,
                     )
         if event is not None:
             await self.emit_event(chat_id, event)
@@ -1442,11 +1459,8 @@ class Gateway:
             stream.unsubscribe(sub_id)
         if not collected:
             return
-        prompt = sum(u.prompt_tokens or 0 for u in collected)
-        completion = sum(u.completion_tokens or 0 for u in collected)
-        total = sum(u.total_tokens or 0 for u in collected)
         with contextlib.suppress(Exception):
-            self._usage.record(model, prompt, completion, total or None)
+            self._usage.record_usage(model, sum(collected, Usage()))
 
     def _watch_a2ui(self, stream):
         collected: list = []
@@ -1789,13 +1803,7 @@ class Gateway:
                     await store.write(path, event_ref(unread[-1]))
             finally:
                 for response in update.responses:
-                    usage = response.usage
-                    self._usage.record(
-                        response.model or model.model,
-                        usage.prompt_tokens or 0,
-                        usage.completion_tokens or 0,
-                        usage.total_tokens or None,
-                    )
+                    self._usage.record_usage(response.model or model.model, response.usage)
 
     async def _title_chat(self, chat_id, user_text, reply_text) -> None:
         """Generate and persist a one-shot chat title (best-effort, never overwrite)."""

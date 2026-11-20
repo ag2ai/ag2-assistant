@@ -24,6 +24,20 @@ class AssistantEvent(BaseEvent):
     """Marker base for AG2 Assistant app-level events (no fields of its own)."""
 
 
+class InterimMessage(AssistantEvent):
+    """A model message that ended before its response did — a durable copy of AG2's
+    transient ``ModelMessage``.
+
+    A response can say several messages (an ACP agent's turn, say) but its
+    ``ModelResponse`` carries only the last, so without this replay would lose the
+    rest. Display only: it never drives history management.
+    """
+
+    __conversational__ = False
+
+    content: str = Field(kw_only=False)
+
+
 class TaskCreated(AssistantEvent):
     """A background task was spawned (e.g. from a chat) — renders as a task card."""
 

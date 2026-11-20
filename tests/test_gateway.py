@@ -32,7 +32,7 @@ from assistant.agent import model_config
 from assistant.codex_auth import CodexAuth
 from assistant.config import Config, load_config, write_yaml
 from assistant.connections import ConnectionStore
-from assistant.events import Attachment, TurnCancelled, TurnFailed
+from assistant.events import Attachment, InterimMessage, TurnCancelled, TurnFailed
 from assistant.gateway.app import _allowed_origins, _origin_ok, create_app
 from assistant.gateway.core import EMPTY_TURN_REPLY, EmptyTurn, Gateway
 from assistant.gateway.uploads import decode_attachments
@@ -1729,3 +1729,25 @@ def test_an_anthropic_config_saved_without_the_field_keeps_the_native_fetcher(pr
         json={"name": "A", "type": "anthropic", "model": "claude-x", "builtin_tools": {}},
     ).json()
     assert off["config"]["builtin_tools"] == {}
+
+
+async def test_an_earlier_message_of_a_response_is_kept_for_replay(paths):
+    """A response that says two messages carries only the last in its ModelResponse;
+    the first is kept as an InterimMessage, and the in-flight chunks reset per message."""
+    gw = _gateway(paths, persist=False)
+    await gw.start()
+    try:
+        stream = await gw.stream_for("s1")
+        context = ConversationContext(stream=stream)
+        await context.send(ModelMessageChunk("Looking now."))
+        await context.send(ModelMessage("Looking now."))
+        await context.send(ModelMessageChunk("Do"))
+        assert [c.content for c in gw.streaming_chunks("s1")] == ["Do"]
+        await context.send(ModelMessage("Done."))
+        await context.send(ModelResponse(ModelMessage("Done.")))
+        events = await gw.replay_events("s1")
+    finally:
+        await gw.close()
+    interim = [e.content for e in events if isinstance(e, InterimMessage)]
+    assert interim == ["Looking now."]
+    assert [type(e) for e in events][-2:] == [InterimMessage, ModelResponse]

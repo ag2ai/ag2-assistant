@@ -25,7 +25,7 @@ wheels = [
 
 [[package]]
 name = "ag2"
-version = "1.3.1"
+version = "1.3.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -34,12 +34,16 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/63/ad/7b54d626faa2361ba9360f94a87fa4f474a3ba7341dff8fa8cd7a7fb5f1f/ag2-1.3.1.tar.gz", hash = "sha256:c517c3c44e6bfa7ca1a8ca2ed6a36732142bdfc308adf41ed95bdf4738175749", size = 1047205, upload-time = "2026-11-10T21:03:55.519Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c7/74/ec72fa70a037dbb2e96661a56d64d6bf09183674425dbffbbbd800be1e55/ag2-1.3.2.tar.gz", hash = "sha256:59c6981dc9bee007596164e0e49ba5f6d130997e04f150a0f48fc98f749be6c8", size = 1055213, upload-time = "2026-11-15T16:38:43.782Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a0/e4/b9a9d1d21d0b0b578187fe735302b9de0d68ab66ecac6d41ca7f24a6b505/ag2-1.3.1-py3-none-any.whl", hash = "sha256:f689bc1278bf12ca72fd00f404997e9cbfdb4a3ba27e19cf7d43bf8b227524b4", size = 1332409, upload-time = "2026-11-10T21:03:53.754Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/9f/4c71930f7b92150cc10f4d3b17034e0c7d2f02646bdc67db817091887818/ag2-1.3.2-py3-none-any.whl", hash = "sha256:5f7d3255981c7eb2cdeebe18f27197b6a3d20ebdaf8de3a6e9ab1df1c0a6d168", size = 1340967, upload-time = "2026-11-15T16:38:41.893Z" },
 ]
 
 [package.optional-dependencies]
+a2ui = [
+    { name = "jsonschema" },
+    { name = "starlette" },
+]
 acp = [
     { name = "agent-client-protocol" },
     { name = "jsonschema" },
@@ -61,6 +65,11 @@ gemini = [
     { name = "google-auth" },
     { name = "google-genai" },
 ]
+mcp = [
+    { name = "jsonschema" },
+    { name = "mcp" },
+    { name = "mcp-types" },
+]
 ollama = [
     { name = "ollama" },
 ]
@@ -73,7 +82,7 @@ name = "ag2-assistant"
 version = "0.7.1"
 source = { editable = "." }
 dependencies = [
-    { name = "ag2", extra = ["acp", "ag-ui", "ddgs"] },
+    { name = "ag2", extra = ["a2ui", "acp", "ag-ui", "ddgs", "mcp"] },
     { name = "beautifulsoup4" },
     { name = "cron-descriptor" },
     { name = "cronsim" },
@@ -81,7 +90,6 @@ dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "jsonschema" },
-    { name = "mcp" },
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "python-telegram-bot" },
@@ -138,12 +146,12 @@ openai = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ag2", extras = ["anthropic"], marker = "extra == 'anthropic'", specifier = ">=1.3.1" },
-    { name = "ag2", extras = ["ddgs", "acp", "ag-ui"], specifier = ">=1.3.1" },
-    { name = "ag2", extras = ["gemini"], marker = "extra == 'gemini'", specifier = ">=1.3.1" },
-    { name = "ag2", extras = ["gemini", "openai"], marker = "extra == 'dev'", specifier = ">=1.3.1" },
-    { name = "ag2", extras = ["ollama"], marker = "extra == 'ollama'", specifier = ">=1.3.1" },
-    { name = "ag2", extras = ["openai"], marker = "extra == 'openai'", specifier = ">=1.3.1" },
+    { name = "ag2", extras = ["anthropic"], marker = "extra == 'anthropic'", specifier = ">=1.3.2" },
+    { name = "ag2", extras = ["ddgs", "acp", "ag-ui", "a2ui", "mcp"], specifier = ">=1.3.2" },
+    { name = "ag2", extras = ["gemini"], marker = "extra == 'gemini'", specifier = ">=1.3.2" },
+    { name = "ag2", extras = ["gemini", "openai"], marker = "extra == 'dev'", specifier = ">=1.3.2" },
+    { name = "ag2", extras = ["ollama"], marker = "extra == 'ollama'", specifier = ">=1.3.2" },
+    { name = "ag2", extras = ["openai"], marker = "extra == 'openai'", specifier = ">=1.3.2" },
     { name = "ag2-assistant", extras = ["gemini", "openai", "anthropic", "ollama", "google", "docker"], marker = "extra == 'all'" },
     { name = "beautifulsoup4", specifier = ">=4.12.0" },
     { name = "cron-descriptor", specifier = ">=1.4" },
@@ -156,7 +164,6 @@ requires-dist = [
     { name = "google-auth-oauthlib", marker = "extra == 'google'", specifier = ">=1.0" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "jsonschema", specifier = ">=4.26.0" },
-    { name = "mcp", specifier = ">=2.2.0,<3" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=2.3,<2.4" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.0.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
@@ -181,14 +188,15 @@ provides-extras = ["dev", "gemini", "anthropic", "ollama", "openai", "google", "
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.12.1"
+version = "1.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
+    { name = "pydantic-core" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9d/95/2c28ca34e545ce0282e88272aa3a8abdf8f3f926a0492f567ea11acd071b/agent_client_protocol-0.12.1.tar.gz", hash = "sha256:9963ccb590ed96d7dc542c9c023e90676fc76b1c6562e21a9ee112f4fbcb0095", size = 130605, upload-time = "2026-08-16T14:08:22.545Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/14/e2/085f4857cb864c3a423d76e205f75e1da1643862fd452e5cec47c3078d79/agent_client_protocol-1.0.0.tar.gz", hash = "sha256:24914d9996aaeeb08931191382d0ca1028b83743e2797cc05ded39b3bb754425", size = 187237, upload-time = "2026-11-09T00:34:01.706Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/21/61/0a2186c8ca53cf464767d4c4fb7fd9e23f48ce4547c2fa0d1c83a4d52410/agent_client_protocol-0.12.1-py3-none-any.whl", hash = "sha256:aaf3cc301ed87d9e2c4ccb91adfe1cd58784355f6ce7e513f50e7ca2391862ef", size = 85929, upload-time = "2026-08-16T14:08:21.307Z" },
+    { url = "https://files.pythonhosted.org/packages/30/a1/7e29d00f01fede44ffdc84099552720727f8bfda942fea79a4f7d5ef1294/agent_client_protocol-1.0.0-py3-none-any.whl", hash = "sha256:179c14266997841438ee15245a2668d31b2c695c13bff87d01c36e016185ddd0", size = 128090, upload-time = "2026-11-09T00:34:00.324Z" },
 ]
 
 [[package]]

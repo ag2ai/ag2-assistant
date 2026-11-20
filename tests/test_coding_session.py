@@ -246,8 +246,16 @@ async def test_default_runner_survives_held_stream_turn_lock():
     config = fake_acp_config(
         ACPTurn(
             updates=[
-                acp.update_plan([acp.plan_entry("write hello", status="in_progress")]),
-                acp.update_agent_message_text("hi from coder"),
+                acp.schema.AgentPlanUpdate(
+                    entries=[
+                        acp.schema.PlanEntry(
+                            content="write hello", priority="medium", status="in_progress"
+                        )
+                    ]
+                ),
+                acp.schema.AgentMessageChunk(
+                    content=acp.schema.TextContentBlock(text="hi from coder")
+                ),
             ]
         )
     )

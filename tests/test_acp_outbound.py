@@ -5,7 +5,6 @@ import json
 from types import SimpleNamespace
 from uuid import UUID
 
-import acp
 import pytest
 from acp import connect_to_agent
 from acp.ws.client import create_websocket_stream
@@ -24,7 +23,7 @@ from assistant.peers import PeerStore
 from assistant.profiles import ProfileRegistry
 from assistant.system_tools import _origin
 from tests.support.apps import free_port, make_acp_agent, make_manager, wait_listening
-from tests.support.fakes import ScriptedModels, fake_summary_factory, pong_agent_factory
+from tests.support.fakes import ScriptedModels, fake_summary_factory, pong_agent_factory, text_block
 
 ROOM = "!room:ag2.space"
 
@@ -81,7 +80,7 @@ async def test_session_new_metadata_becomes_the_peers_destination_and_the_tasks_
     served, _storage, _config = make_acp_agent(paths, pid)
     async with connect(served) as (client, _recorder):
         session = await client.new_session(cwd=".", **{DESTINATION_META_KEY: {"chat_id": ROOM}})
-        await client.prompt(session_id=session.session_id, prompt=[acp.text_block("hi")])
+        await client.prompt(session_id=session.session_id, prompt=[text_block("hi")])
     peers = PeerStore(paths)
     peer = peers.get_peer("acp:test", session.session_id)
     assert peer is not None and peer.destination == ROOM
@@ -102,7 +101,7 @@ async def test_a_session_without_a_destination_keeps_the_session_id_as_origin(pa
     served, _storage, _config = make_acp_agent(paths, pid)
     async with connect(served) as (client, _recorder):
         session = await client.new_session(cwd=".")
-        await client.prompt(session_id=session.session_id, prompt=[acp.text_block("hi")])
+        await client.prompt(session_id=session.session_id, prompt=[text_block("hi")])
     peers = PeerStore(paths)
     peer = peers.get_peer("acp:test", session.session_id)
     assert peer is not None and peer.destination is None

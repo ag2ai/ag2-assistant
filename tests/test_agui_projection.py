@@ -20,7 +20,7 @@ from ag2.events import (
 from ag_ui.core import Event, EventType
 
 from assistant.attachments import build_input
-from assistant.events import A2UISurface, TaskCreated
+from assistant.events import A2UISurface, InterimMessage, TaskCreated
 from assistant.gateway.agui import A2UI_ACTIVITY_TYPE, Projector, project
 
 
@@ -120,6 +120,81 @@ def test_ids_are_the_same_every_time_and_differ_between_messages():
     ids = list(_fold(project(log))["messages"])
     assert ids == list(_fold(project(log))["messages"])
     assert len(set(ids)) == len(ids)
+
+
+def _texts(thread: dict) -> list[str]:
+    return [m["text"] for m in thread["messages"].values()]
+
+
+def _live(events: list[BaseEvent]) -> dict:
+    projector = Projector()
+    return _fold([out for event in events for out in projector.feed(event)])
+
+
+def test_each_message_of_a_response_is_its_own_message_live_and_replayed():
+    """An ACP agent's turn says two messages: each ModelMessage ends one, and the
+    ModelResponse repeats only the last. The gateway keeps the earlier one as an
+    InterimMessage, so replay draws the same two messages under the same ids."""
+    user = _user("go")
+    live = [
+        user,
+        ModelMessageChunk("Looking "),
+        ModelMessageChunk("now."),
+        ModelMessage("Looking now."),
+        ModelMessageChunk("Done."),
+        ModelMessage("Done."),
+        ModelResponse(ModelMessage("Done.")),
+    ]
+    stored = [user, InterimMessage("Looking now."), ModelResponse(ModelMessage("Done."))]
+
+    assert _live(live) == _fold(project(stored))
+    assert _texts(_fold(project(stored))) == ["go", "Looking now.", "Done."]
+
+
+def test_a_reconnect_mid_turn_resumes_the_message_being_written():
+    """A client joining mid-turn gets the log (with the earlier message) and the
+    chunks of the current one, and ends up with the live thread's ids."""
+    user = _user("go")
+    rest = [ModelMessage("Done."), ModelResponse(ModelMessage("Done."))]
+    joined = [user, InterimMessage("Looking now."), ModelMessageChunk("Do"), *rest]
+    live = [
+        user,
+        ModelMessageChunk("Looking now."),
+        ModelMessage("Looking now."),
+        ModelMessageChunk("Do"),
+        *rest,
+    ]
+
+    assert _live(joined) == _live(live)
+
+
+def test_a_single_streamed_message_ends_once_with_or_without_its_model_message():
+    """Most providers send ModelMessage with the whole text just before the response."""
+    user = _user("hi")
+    with_message = [
+        user,
+        ModelMessageChunk("Hello."),
+        ModelMessage("Hello."),
+        ModelResponse(ModelMessage("Hello.")),
+    ]
+    without = [m for m in with_message if not isinstance(m, ModelMessage)]
+
+    assert _live(with_message) == _live(without) == _fold(project(_persisted(with_message)))
+
+
+def test_messages_that_were_never_streamed_are_each_drawn_whole():
+    live = [
+        _user("go"),
+        ModelMessage("One."),
+        ModelMessage("Two."),
+        ModelResponse(ModelMessage("Two.")),
+    ]
+
+    assert _texts(_live(live)) == ["go", "One.", "Two."]
+
+
+def test_an_interim_message_is_not_sent_as_a_custom_event():
+    assert _fold(project([_user("go"), InterimMessage("x")]))["rest"] == []
 
 
 def test_a_page_starting_at_a_turn_keeps_that_turns_ids():
