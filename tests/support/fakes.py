@@ -20,6 +20,28 @@ from ag2.tools.sandbox.base import ExecResult
 from fast_depends import Provider
 
 from assistant.compaction import CHECKPOINT_SCHEMA
+from assistant.gateway.history import ChatEventLog
+
+
+class TransientChatEventLog(ChatEventLog):
+    """Fail one load or replay, then use the real stored chat history."""
+
+    def __init__(self, store, stage):
+        super().__init__(store)
+        self.stage = stage
+
+    def _fail_once(self, stage):
+        if self.stage == stage:
+            self.stage = None
+            raise OSError("synthetic transient history read failure")
+
+    async def load_current(self, stream_id):
+        self._fail_once("load")
+        return await super().load_current(stream_id)
+
+    async def replay(self, stream_id, current, archive=None):
+        self._fail_once("replay")
+        return await super().replay(stream_id, current, archive)
 
 
 def text_block(text: str) -> acp_schema.TextContentBlock:

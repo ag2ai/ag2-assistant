@@ -893,15 +893,15 @@ class Gateway:
         if self._writer is not None and chat_id not in self._active:
             digest = None
             try:
-                digest = _log_digest(await self._read_log(chat_id))
+                digest = await self._log_fingerprint(chat_id)
                 if fresh or chat_id not in self._synced or self._synced[chat_id] != digest:
                     events = await self._writer.load_current(chat_id)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
                     await stream.history.replace(events)
                     self._chat_activity[chat_id] = await self._replay_activity(chat_id, events)
+                self._synced[chat_id] = digest
             except Exception as exc:
                 log_suppressed("chat stream hydrate", exc, chat_id=chat_id)
                 # A corrupt log keeps whatever the stream already holds.
-            self._synced[chat_id] = digest
         return stream
 
     async def _replay_activity(self, chat_id: str, events: list) -> ChatActivity:
@@ -930,7 +930,7 @@ class Gateway:
                 return self._chat_activity[chat_id]
             cached = self._chat_activity.get(chat_id)
             try:
-                digest = _log_digest(await self._read_log(chat_id))
+                digest = await self._log_fingerprint(chat_id)
                 if cached is not None and self._synced.get(chat_id) == digest:
                     return cached
                 events = await self._writer.load_current(chat_id)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
@@ -963,7 +963,12 @@ class Gateway:
         assert self._writer is not None
         async with self._log_locks.setdefault(chat_id, asyncio.Lock()):
             await self._writer.persist(chat_id, list(await stream.history.get_events()))  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
-            self._synced[chat_id] = _log_digest(await self._read_log(chat_id))
+            self._synced[chat_id] = await self._log_fingerprint(chat_id)
+
+    async def _log_fingerprint(self, chat_id: str) -> str | None:
+        """Hash the stored log without encoding its full text on the event loop."""
+        raw = await self._read_log(chat_id)
+        return await asyncio.to_thread(_log_digest, raw) if raw is not None else None
 
     async def _draft_history(self, context: ConversationContext) -> list:
         return await self.replay_events(str(context.stream.id))
@@ -997,7 +1002,7 @@ class Gateway:
                         await stream.history.replace([*current, event])
                     log_suppressed("draft event delivery", exc, chat_id=chat_id)
                 try:
-                    self._synced[chat_id] = _log_digest(await self._read_log(chat_id))
+                    self._synced[chat_id] = await self._log_fingerprint(chat_id)
                 except Exception as exc:
                     self._synced.pop(chat_id, None)
                     log_suppressed("draft log synchronization", exc, chat_id=chat_id)
