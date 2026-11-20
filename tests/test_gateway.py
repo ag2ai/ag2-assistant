@@ -1403,9 +1403,9 @@ class LlmProbe:
 def test_llm_config_test_endpoint_pong_and_failures(profile_app_factory):
     """The /test endpoint runs a real PONG round-trip (LLM client canned via
     ag2.testing.TestClient, real Agent): a reply → {ok, reply, latency_ms}; any
-    exception or a timeout → 502 {ok:false, error}."""
+    exception → 502 {ok:false, error}."""
     probe = LlmProbe()
-    client, _pid = profile_app_factory(llm_probe=probe, llm_probe_timeout_s=0.2)
+    client, _pid = profile_app_factory(llm_probe=probe, llm_probe_timeout_s=10)
     entry = client.post(
         "/api/llm-configs", json={"name": "G", "type": "gemini", "model": "gemini-x"}
     ).json()["config"]
@@ -1425,7 +1425,18 @@ def test_llm_config_test_endpoint_pong_and_failures(profile_app_factory):
     assert r.status_code == 502
     assert "nope-boom" in r.json()["error"]
 
-    # a wedged call trips the (tiny, injected) timeout → 502
+    # unknown id → 404
+    assert client.post("/api/llm-configs/c_ghost/test").status_code == 404
+
+
+def test_llm_config_test_endpoint_times_out_a_wedged_call(profile_app_factory):
+    """A wedged probe call trips the (tiny, injected) timeout → 502 {ok:false}."""
+    probe = LlmProbe()
+    client, _pid = profile_app_factory(llm_probe=probe, llm_probe_timeout_s=0.2)
+    entry = client.post(
+        "/api/llm-configs", json={"name": "G", "type": "gemini", "model": "gemini-x"}
+    ).json()["config"]
+
     class _Hang(ag2.testing.TestClient):
         async def __call__(self, messages, context, **k):
             await asyncio.sleep(5)
@@ -1433,10 +1444,7 @@ def test_llm_config_test_endpoint_pong_and_failures(profile_app_factory):
 
     probe.client = _Hang()
     r = client.post(f"/api/llm-configs/{entry['id']}/test")
-    assert r.status_code == 502
-
-    # unknown id → 404
-    assert client.post("/api/llm-configs/c_ghost/test").status_code == 404
+    assert r.status_code == 502 and r.json()["ok"] is False
 
 
 def test_llm_config_draft_test_endpoint(profile_app_factory, paths):

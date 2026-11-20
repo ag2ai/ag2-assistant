@@ -580,3 +580,32 @@ def widget_tap(data: str, message: FakeTelegramMessage, user_id: int = 7):
         "data": data,
     }
     return types.SimpleNamespace(api_kwargs={"widget_query": query})
+
+
+class FakeGateway:
+    def __init__(self, reply="run reply", hang=False, folders=None, permissions=None):
+        self.sent, self.cancelled, self.deleted = [], [], []
+        self._reply, self._hang = reply, hang
+        self._gate = asyncio.Event()
+        self.folders = folders  # None unless a workdir-grant test wires one in
+        self.permissions = permissions  # None unless a task-scoped-rules test wires one in
+
+    async def send_message(
+        self, text, chat_id="default", asker=None, surface="", llm_config_id=None, **kw
+    ):
+        self.sent.append(
+            {"text": text, "chat_id": chat_id, "surface": surface, "model": llm_config_id}
+        )
+        if self._hang:
+            await self._gate.wait()
+            return ""  # a user-stopped turn returns "" (TurnCancelled path)
+        return self._reply
+
+    async def cancel_turn(self, chat_id, reason="Stopped"):
+        self.cancelled.append(chat_id)
+        self._gate.set()
+        return True
+
+    async def delete_chat(self, chat_id):
+        self.deleted.append(chat_id)
+        return True

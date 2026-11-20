@@ -178,7 +178,12 @@ def _run_view(r: Run) -> dict:
     }
 
 
-def _task_row(t: Task, last_run: Run | None, unread: int, needs_input: bool) -> dict:
+def _task_row(
+    t: Task, last_run: Run | None, unread: int, needs_input: bool, *, local_timed_tasks: bool = True
+) -> dict:
+    desc = schedule_text(t.schedule)
+    if not local_timed_tasks and t.schedule.get("kind") != ScheduleKind.MANUAL:
+        desc += " (local timed tasks disabled)"
     return {
         "id": t.id,
         "name": t.name,
@@ -186,11 +191,11 @@ def _task_row(t: Task, last_run: Run | None, unread: int, needs_input: bool) -> 
         "model": t.model,
         "description": t.description,
         "schedule": t.schedule,
-        "schedule_desc": schedule_text(t.schedule),
+        "schedule_desc": desc,
         "paused": t.paused,
         "starred": t.starred,
         "recall_depth": t.recall_depth,
-        "next_run_at": t.next_run_at,
+        "next_run_at": t.next_run_at if local_timed_tasks else None,
         "created_at": t.created_at,
         "updated_at": t.updated_at,
         "last_run": _run_view(last_run) if last_run else None,
@@ -213,7 +218,9 @@ class TaskService:
         summary_factory: Callable[[Config], Agent] | None = None,
         activity: Activity | None = None,
         refresh_retry_s: float = 1.0,
+        local_timed_tasks: bool = True,
     ) -> None:
+        self.local_timed_tasks = local_timed_tasks
         self._config = config or load_config()
         self._activity = activity or Activity()
         # A failed schedule read retries on its own, doubling from here up to 30 s.
@@ -303,7 +310,7 @@ class TaskService:
         await self._migrate_workdirs()
         await self._migrate_origin_connections()
         await self._migrate_recall()
-        if scheduler and self._scheduler is None:
+        if self.local_timed_tasks and scheduler and self._scheduler is None:
             from assistant.scheduler_lock import SchedulerLock
             from assistant.tasks import Scheduler
 
@@ -323,6 +330,9 @@ class TaskService:
         turn that could still save a task has been cancelled."""
         async with self._refresh_lock:
             key = self._config.data_dir.name
+            if not self.local_timed_tasks:
+                self._activity.set_scheduled(key, 0, None)
+                return
             if self._closed and not final:
                 return
             try:
@@ -477,6 +487,9 @@ class TaskService:
         cheap-model auto-naming (and, unless given, auto-description) from the
         prompt. A task's working folders are managed separately as task-scope
         Folder Grants (Folders UI), not stored on the task."""
+        schedule = normalize_schedule(schedule)
+        if not self.local_timed_tasks and schedule["kind"] != ScheduleKind.MANUAL:
+            raise ValueError("Local timed tasks are disabled")
         self._validate_model(model)
         _validate_recall(recall_depth)
         name = (name or "").strip()
@@ -491,18 +504,29 @@ class TaskService:
             name=name,
             prompt=prompt,
             model=model or None,
-            schedule=normalize_schedule(schedule),
+            schedule=schedule,
             origin_channel=origin_channel,
             origin_chat=origin_chat,
             description=description,
             recall_depth=recall_depth,
         )
         await self.refresh_scheduled()
-        return _task_row(task, None, 0, False)
+        return _task_row(task, None, 0, False, local_timed_tasks=self.local_timed_tasks)
 
     async def update_task(self, task_id: str, **patch) -> dict | None:
         if "schedule" in patch:
             patch["schedule"] = normalize_schedule(patch["schedule"])
+        if not self.local_timed_tasks:
+            current = await self._require_store().get_task(task_id)
+            if current is None:
+                return None
+            schedule = patch.get("schedule", current.schedule)
+            if schedule["kind"] != ScheduleKind.MANUAL and (
+                "schedule" in patch
+                or (current.paused and patch.get("paused") is False)
+                or patch.get("next_run_at")
+            ):
+                raise ValueError("Local timed tasks are disabled")
         if "model" in patch:
             self._validate_model(patch["model"])
         if "recall_depth" in patch:
@@ -553,7 +577,16 @@ class TaskService:
                 unread[r.task_id] = unread.get(r.task_id, 0) + 1
             if r.status == RunStatus.NEEDS_INPUT:
                 needs.add(r.task_id)
-        out = [_task_row(t, latest.get(t.id), unread.get(t.id, 0), t.id in needs) for t in tasks]
+        out = [
+            _task_row(
+                t,
+                latest.get(t.id),
+                unread.get(t.id, 0),
+                t.id in needs,
+                local_timed_tasks=self.local_timed_tasks,
+            )
+            for t in tasks
+        ]
         out.sort(key=lambda v: 0 if v["needs_input"] else 1)  # stable; list is newest-first
         return out
 
@@ -564,7 +597,9 @@ class TaskService:
         runs = await self._require_store().list_runs(task_id)
         unread = sum(1 for r in runs if r.status in RunStatus.TERMINAL and r.seen_at is None)
         needs = any(r.status == RunStatus.NEEDS_INPUT for r in runs)
-        row = _task_row(t, runs[0] if runs else None, unread, needs)
+        row = _task_row(
+            t, runs[0] if runs else None, unread, needs, local_timed_tasks=self.local_timed_tasks
+        )
         row["runs"] = [_run_view(r) for r in runs]
         return row
 
@@ -608,6 +643,8 @@ class TaskService:
         """Scheduler callback: start a run and re-arm (cron) / disarm (once). The slot
         is work from this moment, so the host never sees a gap between the scheduled
         hold going and the run's hold opening."""
+        if not self.local_timed_tasks:
+            return
         release = self._activity.acquire("run")
         try:
             await self._fire_held(task_id, release)
@@ -647,6 +684,10 @@ class TaskService:
     ) -> Run | None:
         """Create a run and its job. The job holds ``work`` from now until it is done,
         however it ends; ``hold`` hands over a hold the caller already opened."""
+        if not self.local_timed_tasks and trigger in {"once", "schedule"}:
+            if hold is not None:
+                hold()
+            raise ValueError("Local timed tasks are disabled")
         release = hold or self._activity.acquire("run")
         try:
             t = await self._require_store().get_task(task_id)

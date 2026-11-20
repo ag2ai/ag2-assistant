@@ -16,10 +16,12 @@ stream, never crossing histories.
 import asyncio
 import contextlib
 import copy
+import hashlib
 import json
 import logging
 import re
-from collections import deque
+import weakref
+from collections import OrderedDict, deque
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
@@ -216,6 +218,23 @@ def is_internal_stream(chat_id: str) -> bool:
     return chat_id.startswith("task-run:") or chat_id.startswith("task:")
 
 
+def _log_digest(raw: str | None) -> str | None:
+    """The sha256 of a chat's raw log text, or None when it has no log."""
+    return None if raw is None else hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _drop_chat_state(
+    chat_id: str,
+    streams: weakref.WeakValueDictionary,
+    activity: dict[str, ChatActivity],
+    synced: dict[str, str | None],
+) -> None:
+    """Forget a freed stream's activity and digest unless a newer stream replaced it."""
+    if chat_id not in streams:
+        activity.pop(chat_id, None)
+        synced.pop(chat_id, None)
+
+
 @dataclass
 class _ActiveTurn:
     """A Chat-lock holder through preparation, execution and persistence."""
@@ -310,14 +329,22 @@ class Gateway:
         # async (chat_id, user_text, reply, origin=…) -> None, called once a turn
         # completes: the router pushes it to the Peer Attached to that chat.
         self._mirror: Callable | None = None
-        # chat_id -> live Stream; plus the log text each one was last read from or written as
-        self._streams: dict[str, MemoryStream] = {}
+        # chat_id -> Stream while anything holds it; _warm keeps the most recent chats alive
+        self._streams: weakref.WeakValueDictionary[str, MemoryStream] = (
+            weakref.WeakValueDictionary()
+        )
+        self._warm: OrderedDict[str, MemoryStream] = OrderedDict()
         self._chat_activity: dict[str, ChatActivity] = {}
         self._stream_observers = stream_observers
-        self._stream_locks: dict[str, asyncio.Lock] = {}
+        # chat_id -> sha256 of the log text the stream or activity was last read from or written as
         self._synced: dict[str, str | None] = {}
-        self._locks: dict[str, asyncio.Lock] = {}
-        self._log_locks: dict[str, asyncio.Lock] = {}
+        self._stream_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
+            weakref.WeakValueDictionary()
+        )
+        self._locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
+        self._log_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
+            weakref.WeakValueDictionary()
+        )
         self.card_drafts = CardDrafts(self._config_factory, self._draft_history, self._commit_draft)
         self.card_instances = CardInstances(
             self._config_factory, self._draft_history, self._commit_draft
@@ -779,14 +806,30 @@ class Gateway:
     async def _get_stream(self, chat_id: str):
         """Hydrate one stream and its activity projection without concurrent replacements."""
         async with self._stream_locks.setdefault(chat_id, asyncio.Lock()):
-            return await self._hydrate_stream(chat_id)
+            stream = await self._hydrate_stream(chat_id)
+        self._keep_warm(chat_id, stream)
+        return stream
+
+    def _keep_warm(self, chat_id: str, stream: MemoryStream) -> None:
+        """Hold the chat's stream among the `chat_cache_size` most recently used ones;
+        task-run streams are never held, and without a log every stream is."""
+        if self._writer is None:
+            self._warm[chat_id] = stream
+            return
+        if is_internal_stream(chat_id):
+            return
+        self._warm[chat_id] = stream
+        self._warm.move_to_end(chat_id)
+        while len(self._warm) > self._config.gateway.chat_cache_size:
+            self._warm.popitem(last=False)
 
     async def _hydrate_stream(self, chat_id: str):
-        """Return the chat's live Stream, re-read from disk whenever no turn is running
-        here and its log differs from what this process last read or wrote."""
+        """Return the chat's live Stream, re-read from disk when it is new, or when no turn
+        is running here and its log differs from what this process last read or wrote."""
         # AG2 declares ``StreamId = uuid.UUID`` and only interpolates it into a log path;
         # our ids are strings that name those files, so the ignores below have no fix here.
         stream = self._streams.get(chat_id)
+        fresh = stream is None
         if stream is None:
             stream = MemoryStream(id=chat_id)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
             # Retain compaction lifecycle events for reconnects and persisted replay.
@@ -796,6 +839,15 @@ class Gateway:
             )
             self._streams[chat_id] = stream
             self._chat_activity[chat_id] = ChatActivity()
+            if is_internal_stream(chat_id):
+                weakref.finalize(
+                    stream,
+                    _drop_chat_state,
+                    chat_id,
+                    self._streams,
+                    self._chat_activity,
+                    self._synced,
+                )
 
             async def observe(event):
                 self._chat_activity[chat_id].observe(event)
@@ -839,30 +891,57 @@ class Gateway:
             if self._stream_observers:
                 stream.subscribe(tell_observers)
         if self._writer is not None and chat_id not in self._active:
-            raw = None
+            digest = None
             try:
-                raw = await self._read_log(chat_id)
-                if chat_id not in self._synced or self._synced[chat_id] != raw:
+                digest = _log_digest(await self._read_log(chat_id))
+                if fresh or chat_id not in self._synced or self._synced[chat_id] != digest:
                     events = await self._writer.load_current(chat_id)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
                     await stream.history.replace(events)
-                    activity = ChatActivity()
-                    for event in await self._writer.replay(
-                        chat_id,  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
-                        events,
-                        self._chat_archive(),
-                    ):
-                        activity.observe(event)
-                    self._chat_activity[chat_id] = activity
+                    self._chat_activity[chat_id] = await self._replay_activity(chat_id, events)
             except Exception as exc:
                 log_suppressed("chat stream hydrate", exc, chat_id=chat_id)
                 # A corrupt log keeps whatever the stream already holds.
-            self._synced[chat_id] = raw
+            self._synced[chat_id] = digest
         return stream
+
+    async def _replay_activity(self, chat_id: str, events: list) -> ChatActivity:
+        """Rebuild a chat's activity projection from its persisted events."""
+        assert self._writer is not None
+        activity = ChatActivity()
+        for event in await self._writer.replay(
+            chat_id,  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+            events,
+            self._chat_archive(),
+        ):
+            activity.observe(event)
+        return activity
 
     async def chat_status(self, chat_id: str) -> dict:
         """The stream's current activity and unread outcome for a sidebar row."""
-        await self.stream_for(chat_id)
-        return self._chat_activity[chat_id].snapshot(running=self.is_running(chat_id))
+        activity = await self._current_activity(chat_id)
+        return activity.snapshot(running=self.is_running(chat_id))
+
+    async def _current_activity(self, chat_id: str) -> ChatActivity:
+        """The chat's activity, re-synced from its log without loading a stream that
+        is not already live; task-run activity read this way is not kept."""
+        async with self._stream_locks.setdefault(chat_id, asyncio.Lock()):
+            if self._writer is None or chat_id in self._streams:
+                await self._hydrate_stream(chat_id)
+                return self._chat_activity[chat_id]
+            cached = self._chat_activity.get(chat_id)
+            try:
+                digest = _log_digest(await self._read_log(chat_id))
+                if cached is not None and self._synced.get(chat_id) == digest:
+                    return cached
+                events = await self._writer.load_current(chat_id)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+                activity = await self._replay_activity(chat_id, events)
+            except Exception as exc:
+                log_suppressed("chat activity hydrate", exc, chat_id=chat_id)
+                return cached or ChatActivity()
+            if not is_internal_stream(chat_id):
+                self._chat_activity[chat_id] = activity
+                self._synced[chat_id] = digest
+            return activity
 
     async def mark_chat_seen(self, chat_id: str, turn_id: str) -> dict | None:
         """Acknowledge only the requested Turn's completed or failed outcome."""
@@ -884,7 +963,7 @@ class Gateway:
         assert self._writer is not None
         async with self._log_locks.setdefault(chat_id, asyncio.Lock()):
             await self._writer.persist(chat_id, list(await stream.history.get_events()))  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
-            self._synced[chat_id] = await self._read_log(chat_id)
+            self._synced[chat_id] = _log_digest(await self._read_log(chat_id))
 
     async def _draft_history(self, context: ConversationContext) -> list:
         return await self.replay_events(str(context.stream.id))
@@ -904,7 +983,7 @@ class Gateway:
         if writer is None:
             raise OSError("Drafts require durable Chat persistence")
         chat_id = str(context.stream.id)
-        stream = self._streams[chat_id]
+        stream = context.stream
 
         async def commit():
             async with self._log_locks.setdefault(chat_id, asyncio.Lock()):
@@ -918,7 +997,7 @@ class Gateway:
                         await stream.history.replace([*current, event])
                     log_suppressed("draft event delivery", exc, chat_id=chat_id)
                 try:
-                    self._synced[chat_id] = await self._read_log(chat_id)
+                    self._synced[chat_id] = _log_digest(await self._read_log(chat_id))
                 except Exception as exc:
                     self._synced.pop(chat_id, None)
                     log_suppressed("draft log synchronization", exc, chat_id=chat_id)
@@ -1039,6 +1118,7 @@ class Gateway:
                     for tool in tools
                 ),
                 open_questions=not effective.tools.disable_native,
+                local_timed_tasks=self._tasks is None or self._tasks.local_timed_tasks,
             ),
         ]
         if BEHAVIOR_GUIDANCE in agent.system_prompt:
@@ -1959,6 +2039,7 @@ class Gateway:
                     await self._writer.delete(chat_id, self._chat_archive()) or removed  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
                 )
             self._streams.pop(chat_id, None)
+            self._warm.pop(chat_id, None)
             self._chat_activity.pop(chat_id, None)
             self._synced.pop(chat_id, None)
             self._stream_locks.pop(chat_id, None)
@@ -2118,6 +2199,7 @@ class Gateway:
                 await self._acp_generation.aclose()
                 self._acp_generation = None
         self._streams.clear()
+        self._warm.clear()
         self._chat_activity.clear()
         self._stream_locks.clear()
         self._locks.clear()
@@ -2142,6 +2224,7 @@ def build_gateway(
     plugins: Iterable[Plugin] = (),
     activity: Activity | None = None,
     voice_factory: Callable | None = None,
+    local_timed_tasks: bool = True,
 ) -> "tuple[Gateway, TaskService]":
     """Build a Gateway and TaskService sharing a Profile configuration resolver."""
     config = config or load_config()
@@ -2151,6 +2234,7 @@ def build_gateway(
         config_factory=config_factory,
         summary_factory=summary_factory,
         activity=activity,
+        local_timed_tasks=local_timed_tasks,
     )
     gateway = Gateway(
         config=config,

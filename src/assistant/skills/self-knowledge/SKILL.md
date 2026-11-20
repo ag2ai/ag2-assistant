@@ -32,8 +32,9 @@ For anything live, call the tool. Never answer a state question from this file:
   commands, work with local files, generate images, call MCP servers, and use
   the user's Google (Gmail, Calendar, Drive) when it's connected.
 - **Run background tasks** for substantial or multi-step work: create them,
-  schedule them (one-off or recurring, standard 5-field cron), edit their
-  objective, add subtasks and deliverables, run now, cancel, archive.
+  edit their objective, add subtasks and deliverables, run now, cancel, archive.
+  Scheduling (one-off or cron) is available unless the capability guidance says
+  local timed tasks are disabled. When disabled, these task tools run only on demand.
 - **Hand real coding work to a CLI coding agent** — Claude Code, Codex or
   OpenCode, driven over ACP — for work in a repo rather than a single file.
   Which ones are actually reachable is live state: check `list_coding_agents`

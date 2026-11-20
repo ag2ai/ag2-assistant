@@ -286,7 +286,13 @@ def build_profile_router(
                 "id": "scheduler",
                 "label": "Task scheduler",
                 "state": "ok",
-                "detail": "running" if sched_running else "running in another process",
+                "detail": (
+                    "disabled by host"
+                    if runtime.tasks is not None and not runtime.tasks.local_timed_tasks
+                    else "running"
+                    if sched_running
+                    else "running in another process"
+                ),
             }
         )
 

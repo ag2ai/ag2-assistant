@@ -59,7 +59,7 @@ Start an interactive, multi-turn conversation in your terminal (the single-shot
 
 ```bash
 ag2-assistant chat                     # talk back and forth; type 'exit' or Ctrl-D to quit
-ag2-assistant chat --sandbox docker    # run shell/code in a container during the chat
+ag2-assistant chat --sandbox docker    # run shell/code in a container (needs the [docker] extra)
 ag2-assistant chat --no-memory         # don't learn from this chat
 ```
 
@@ -431,6 +431,7 @@ Every key above also has an env override (these win over `config.yaml`):
 | `AG2ASSISTANT_REPLY_TIMEOUT` | `gateway.reply_timeout_s` |
 | `AG2ASSISTANT_CHAT_TITLES` | `gateway.chat_titles` (`0` turns off the LLM call that names a chat) |
 | `AG2ASSISTANT_TURN_SUMMARIES` | `gateway.turn_summaries` (default `false`; see [Turn summaries](#turn-summaries)) |
+| `AG2ASSISTANT_CHAT_CACHE_SIZE` | `gateway.chat_cache_size` (default `16`): idle chats kept in memory; others reload from disk when opened, and task runs are always freed when they finish |
 | `AG2ASSISTANT_ACTIVITY_FILE` | a path the [activity](#activity) snapshot is mirrored to (unset: no file) |
 | `AG2ASSISTANT_SANDBOX` | `tools.sandbox` (`local` / `docker`) |
 | `AG2ASSISTANT_DISABLE_NATIVE_TOOLS` | `tools.disable_native` (default `false`; `true` removes the tools that only work in the native app from chat, task and ACP turns: `ask_user`, `answer_question`, `list_open_questions`, `describe_settings`, `describe_integrations`, `list_coding_agents`, `install_skill`, `remove_skill`, `search_skills`, `list_folders`) |
