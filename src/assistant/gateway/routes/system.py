@@ -11,6 +11,7 @@ web/src/schemas/system.ts (their zod twins) — same file name in all three tree
 """
 
 import asyncio
+import html
 import secrets as _secrets
 from collections.abc import Callable
 from pathlib import Path
@@ -53,6 +54,7 @@ from assistant.gateway.schemas import (
 )
 from assistant.memory import read_profile, read_universal, write_profile, write_universal
 from assistant.onboarding import identity_document
+from assistant.web_security import STATIC_PAGE_CSP
 from assistant.workspace import invalid_dir_name, list_dirs, make_dir
 
 
@@ -388,27 +390,29 @@ def build_router(d: GatewayDeps, *, code_reader: Callable[[str], str]) -> APIRou
 
     @r.get("/api/google/callback", response_class=HTMLResponse)
     async def google_callback(request: Request, state: str = "", code: str = "", error: str = ""):
-        def _page(title, msg):
-            return (
+        def _page(title: str, msg: str) -> HTMLResponse:
+            title, msg = html.escape(title), html.escape(msg)
+            return HTMLResponse(
                 f"<!doctype html><meta charset=utf-8><title>{title}</title>"
                 "<body style='font-family:system-ui;max-width:520px;margin:14vh auto;"
                 "text-align:center;color:#171717'>"
                 f"<h1 style='color:#f95339'>{title}</h1><p>{msg}</p>"
-                "<p style='color:#737373'>You can close this tab.</p></body>"
+                "<p style='color:#737373'>You can close this tab.</p></body>",
+                headers={"Content-Security-Policy": STATIC_PAGE_CSP},
             )
 
         if error:
-            return HTMLResponse(_page("Cancelled", f"Google returned: {error}"))
+            return _page("Cancelled", f"Google returned: {error}")
         flow = request.app.state.google_flows.pop(state, None)
         if flow is None or not code:
-            return HTMLResponse(_page("Expired", "This sign-in link is no longer valid."))
+            return _page("Expired", "This sign-in link is no longer valid.")
         try:
             email = await asyncio.to_thread(d.google.complete_login, flow, code)
         except Exception as exc:
-            return HTMLResponse(_page("Sign-in failed", str(exc)))
+            return _page("Sign-in failed", str(exc))
         # Refresh consumers of the install-wide Google connection.
         await refresh_all(d.manager)
-        return HTMLResponse(_page("Connected ✓", f"AG2 Assistant is now connected to {email}."))
+        return _page("Connected ✓", f"AG2 Assistant is now connected to {email}.")
 
     @r.post("/api/google/logout", response_model=Ok)
     async def google_logout():

@@ -1,13 +1,16 @@
 """Tests for the HITL core and desktop asker (real local server, no browser)."""
 
 import asyncio
+import json
+import re
+from urllib.parse import quote
 
 import httpx
 import pytest
 from ag2.events import HumanInputRequest
 
 from assistant.hitl import DesktopAsker, HitlServer, Question, build_hitl_hook
-from assistant.hitl.desktop import _render_body
+from assistant.hitl.desktop import _js_str, _render_body
 
 
 async def test_build_hitl_hook_adapts_asker():
@@ -52,13 +55,13 @@ def test_render_body_options_and_freetext():
     assert "freetext" in free  # free-text input present
 
 
-def test_render_body_onclick_is_escaped():
-    """Regression: option buttons must not put raw double-quotes in onclick="…"
-    (that collision broke the page JS so clicks never resolved)."""
+def test_render_body_options_carry_no_inline_handlers():
+    """Options ride in an escaped data-answer attribute; no inline JS for CSP to block."""
 
-    html_out = _render_body(Question("Pick", options=["Allow once"], kind="permission"))
-    assert 'onclick="answer("' not in html_out  # raw quote collision = broken
-    assert "&quot;" in html_out  # escaped JS-string quotes
+    html_out = _render_body(Question("Pick", options=['Say "hi" <b>'], kind="permission"))
+    assert "onclick" not in html_out and "onkeydown" not in html_out
+    assert 'data-answer="Say &quot;hi&quot; &lt;b&gt;"' in html_out
+    assert "onkeydown" not in _render_body(Question("What city?"))
 
 
 @pytest.mark.asyncio
@@ -99,6 +102,72 @@ async def test_unknown_request_returns_handled_page_and_404_on_answer():
             assert r.status_code == 404
     finally:
         await server.stop()
+
+
+XSS_ID = 'x";fetch("/api/tasks",{method:"POST"});x="</script><script>alert(1)</script>'
+PATH_XSS_ID = 'x";alert(1);x="'
+
+
+@pytest.mark.asyncio
+async def test_unknown_request_page_does_not_reflect_the_id():
+    server = HitlServer(port=8793)
+    await server.ensure_running()
+    try:
+        async with httpx.AsyncClient(base_url="http://127.0.0.1:8793") as c:
+            page = await c.get(f"/hitl/{quote(PATH_XSS_ID, safe='')}")
+            assert "Already handled" in page.text
+            assert 'const ID = "";' in page.text
+            assert "alert(1)" not in page.text
+    finally:
+        await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_page_csp_allows_only_its_own_nonce():
+    server = HitlServer(port=8794)
+    await server.ensure_running()
+    try:
+        req_id, _ = server.register(Question("Q", options=["A"]))
+        async with httpx.AsyncClient(base_url="http://127.0.0.1:8794") as c:
+            for path in (f"/hitl/{req_id}", "/hitl/unknown"):
+                page = await c.get(path)
+                csp = page.headers["content-security-policy"]
+                nonce = re.search(r"script-src 'nonce-([^']+)'", csp).group(1)
+                assert "unsafe-inline" not in csp and "default-src 'none'" in csp
+                assert f'<script nonce="{nonce}">' in page.text
+                assert page.text.count("<script") == 1
+            again = (await c.get("/hitl/unknown")).headers["content-security-policy"]
+            assert again != csp  # a fresh nonce per response
+    finally:
+        await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_server_rejects_cross_origin_answer():
+    server = HitlServer(port=8795)
+    await server.ensure_running()
+    try:
+        req_id, fut = server.register(Question("Q", options=["Allow", "Deny"]))
+        async with httpx.AsyncClient(base_url="http://127.0.0.1:8795") as c:
+            url = f"/hitl/{req_id}/answer"
+            evil = await c.post(
+                url, json={"answer": "Allow"}, headers={"origin": "http://evil.example"}
+            )
+            assert evil.status_code == 403
+            assert not fut.done()
+            same = await c.post(
+                url, json={"answer": "Deny"}, headers={"origin": "http://127.0.0.1:8795"}
+            )
+            assert same.json()["ok"] is True
+        assert await asyncio.wait_for(fut, timeout=2) == "Deny"
+    finally:
+        await server.stop()
+
+
+def test_js_str_cannot_close_the_script_element():
+    lit = _js_str(XSS_ID)
+    assert "</script>" not in lit and "<" not in lit
+    assert json.loads(lit) == XSS_ID
 
 
 @pytest.mark.asyncio

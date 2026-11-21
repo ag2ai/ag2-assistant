@@ -68,10 +68,8 @@ import asyncio
 import contextlib
 import uuid
 from collections.abc import Callable, Mapping
-from collections.abc import Set as AbstractSet
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import urlsplit
 
 import httpx
 from ag2.events import (
@@ -155,6 +153,7 @@ from assistant.pairing import PairingStore
 from assistant.peers import PeerStore
 from assistant.profiles import ProfileRegistry
 from assistant.secrets import SecretStore
+from assistant.web_security import guarded, origin_ok, spa_csp
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -182,26 +181,6 @@ def _allowed_origins(env: Mapping[str, str]) -> set[str]:
     AG2ASSISTANT_ALLOWED_ORIGINS — an escape hatch for proxied/remote demos."""
     raw = env.get("AG2ASSISTANT_ALLOWED_ORIGINS", "")
     return {o.strip().rstrip("/") for o in raw.split(",") if o.strip()}
-
-
-def _origin_ok(
-    origin: str | None, host: str | None, allowed: AbstractSet[str] = frozenset()
-) -> bool:
-    """Whether a request may proceed, guarding against cross-origin browser
-    access to a locally-bound gateway.
-
-    Browsers always send `Origin` on cross-origin fetch/WebSocket, so:
-      - no Origin (curl, server-to-server, top-level navigations) → allowed;
-      - Origin whose host:port matches the Host header (same-origin) → allowed;
-      - Origin in the configured allowlist → allowed;
-      - anything else (a page on another site reaching the gateway) → rejected.
-    """
-    if not origin:
-        return True
-    origin = origin.rstrip("/")
-    if origin in allowed:
-        return True
-    return bool(host) and urlsplit(origin).netloc == host
 
 
 # Surface context the client can request by token (kept server-side, not in the UI).
@@ -350,10 +329,9 @@ def create_app(
 
     @app.middleware("http")
     async def _origin_guard(request: Request, call_next):
-        """Reject cross-origin browser requests to the API. Same-origin and
-        non-browser (no Origin) requests pass; WebSocket routes guard separately
-        (Starlette doesn't run HTTP middleware for them)."""
-        if request.url.path.startswith("/api/") and not _origin_ok(
+        """Reject cross-origin browser calls to /api/ and every state-changing request.
+        WebSocket routes guard separately (Starlette runs no HTTP middleware for them)."""
+        if guarded(request.method, request.url.path) and not origin_ok(
             request.headers.get("origin"), request.headers.get("host"), allowed_origins
         ):
             return JSONResponse({"error": "cross-origin request rejected"}, status_code=403)
@@ -512,7 +490,7 @@ def create_app(
     @app.websocket("/api/p/{pid}/card-sources/stream")
     async def file_sources_ws(websocket: WebSocket, pid: str) -> None:
         """Forward typed file source events to views in the current Profile."""
-        if not _origin_ok(
+        if not origin_ok(
             websocket.headers.get("origin"), websocket.headers.get("host"), allowed_origins
         ):
             await websocket.close(code=1008)
@@ -548,7 +526,7 @@ def create_app(
         """Full-duplex voice. The browser streams 16 kHz mono PCM mic frames as
         binary; we feed them to a Gemini Live session and stream back 24 kHz PCM
         speech (binary) plus user/agent transcripts (JSON) for on-screen bubbles."""
-        if not _origin_ok(
+        if not origin_ok(
             websocket.headers.get("origin"), websocket.headers.get("host"), allowed_origins
         ):
             await websocket.close(code=1008)  # policy violation
@@ -768,7 +746,9 @@ def create_app(
         f = (_APP_DIR / path).resolve()
         if path and f.is_file() and str(f).startswith(str(_APP_DIR.resolve())):
             return FileResponse(f)
-        return FileResponse(index)
+        return FileResponse(
+            index, headers={"Content-Security-Policy": spa_csp(index.read_text(encoding="utf-8"))}
+        )
 
     @app.api_route("/api/{full_path:path}", methods=["POST", "PUT", "PATCH", "DELETE"])
     async def api_not_found(full_path: str):
