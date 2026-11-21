@@ -8,6 +8,7 @@ around a ``ProfileManager`` with one profile and routes live under
 
 import asyncio
 import base64
+import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor
 
@@ -33,7 +34,7 @@ from assistant.codex_auth import CodexAuth
 from assistant.config import Config, load_config, write_yaml
 from assistant.connections import ConnectionStore
 from assistant.events import Attachment, InterimMessage, TurnCancelled, TurnFailed
-from assistant.gateway.app import _allowed_origins, _origin_ok, create_app
+from assistant.gateway.app import _allowed_origins, create_app
 from assistant.gateway.core import EMPTY_TURN_REPLY, EmptyTurn, Gateway
 from assistant.gateway.uploads import decode_attachments
 from assistant.hitl import GatewayAsker, HitlServer
@@ -44,6 +45,7 @@ from assistant.onboarding import STEPS, needs_onboarding
 from assistant.permissions import DENY
 from assistant.profiles import ProfileRegistry
 from assistant.secrets import SecretStore
+from assistant.web_security import origin_ok, spa_csp
 from tests.support.apps import api, make_manager, make_profile_app, write_codex_session
 from tests.support.chat import run, run_input, wait_for
 from tests.support.fakes import (
@@ -1052,11 +1054,11 @@ async def test_conversation_resumes_across_restart(tmp_path):
 def test_origin_ok_unit():
     """The same-origin rule: no-Origin and same host:port pass; others don't."""
 
-    assert _origin_ok(None, "127.0.0.1:8800")  # non-browser caller
-    assert _origin_ok("http://127.0.0.1:8800", "127.0.0.1:8800")  # same-origin
-    assert _origin_ok("http://127.0.0.1:8800/", "127.0.0.1:8800")  # trailing slash
-    assert not _origin_ok("http://evil.example", "127.0.0.1:8800")  # other site
-    assert not _origin_ok("http://127.0.0.1:9999", "127.0.0.1:8800")  # other port
+    assert origin_ok(None, "127.0.0.1:8800")  # non-browser caller
+    assert origin_ok("http://127.0.0.1:8800", "127.0.0.1:8800")  # same-origin
+    assert origin_ok("http://127.0.0.1:8800/", "127.0.0.1:8800")  # trailing slash
+    assert not origin_ok("http://evil.example", "127.0.0.1:8800")  # other site
+    assert not origin_ok("http://127.0.0.1:9999", "127.0.0.1:8800")  # other port
 
 
 def test_origin_allowlist_env():
@@ -1064,8 +1066,8 @@ def test_origin_allowlist_env():
 
     allowed = _allowed_origins({"AG2ASSISTANT_ALLOWED_ORIGINS": "https://demo.example, http://foo"})
     assert allowed == {"https://demo.example", "http://foo"}
-    assert _origin_ok("https://demo.example", "127.0.0.1:8800", allowed)
-    assert not _origin_ok("https://other.example", "127.0.0.1:8800", allowed)
+    assert origin_ok("https://demo.example", "127.0.0.1:8800", allowed)
+    assert not origin_ok("https://other.example", "127.0.0.1:8800", allowed)
 
 
 def test_cross_origin_requests_rejected(paths):
@@ -1097,6 +1099,35 @@ def test_cross_origin_requests_rejected(paths):
             ).status_code
             == 403
         )
+
+
+def test_cross_origin_writes_outside_api_rejected(paths):
+    """The guard covers every state-changing request, not just /api/ (e.g. HITL answers)."""
+
+    app, _pid = make_profile_app(paths)
+    with TestClient(app) as client:
+        body = {"answer": "Allow"}
+        evil = client.post("/hitl/abc/answer", json=body, headers={"origin": "http://evil.example"})
+        assert evil.status_code == 403
+        same = client.post("/hitl/abc/answer", json=body, headers={"origin": "http://testserver"})
+        assert same.status_code == 404  # reached the route: no such pending question
+        assert client.get("/hitl/abc", headers={"origin": "http://evil.example"}).status_code == 200
+
+
+def test_spa_index_carries_csp_pinning_its_importmap(paths):
+    app, _pid = make_profile_app(paths)
+    with TestClient(app) as client:
+        r = client.get("/app")
+    csp = r.headers["content-security-policy"]
+    assert "'unsafe-inline'" not in csp and "object-src 'none'" in csp
+    assert csp == spa_csp(r.text)
+    assert "'sha256-" in csp  # the inline importmap is allowed by hash, nothing else
+
+
+def test_spa_csp_hashes_each_inline_script():
+    html = '<script type="importmap">{"imports": {}}</script><script src="/a.js"></script>'
+    digest = base64.b64encode(hashlib.sha256(b'{"imports": {}}').digest()).decode()
+    assert spa_csp(html).startswith(f"script-src 'self' 'sha256-{digest}' https://cdn.jsdelivr.net")
 
 
 # --- POST /api/identity: seed the universal doc from web onboarding ---------- #
