@@ -173,14 +173,14 @@ def model_config(config: Config, model: str | None = None):
             return OpenAIResponsesConfig(**kwargs)
         return OpenAICompletionsConfig(**kwargs)
     if provider == "ollama":
-        # Ollama config for the local host; mypy flags AG2's unimplemented Files API protocol.
+        # Ollama config for the local host.
         ollama_kwargs: dict[str, Any] = {
             "model": model,
             "host": config.secret_env.get(OLLAMA_BASE_ENV, DEFAULT_OLLAMA_BASE),
             "streaming": config.llm.streaming,
             **opts,
         }
-        return OllamaConfig(**ollama_kwargs)  # type: ignore[abstract]
+        return OllamaConfig(**ollama_kwargs)
     # Generous output budget so long research notes / briefings aren't truncated
     # mid-sentence. Gemini counts thinking tokens against max_output_tokens, so
     # this must cover reasoning plus the full report text.
