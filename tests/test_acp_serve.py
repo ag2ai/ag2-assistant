@@ -18,6 +18,7 @@ from ag2.testing import TestConfig
 
 from assistant.acp import serve as serve_module
 from assistant.acp.serve import cold_start_agent
+from tests.support.fakes import text_block
 
 
 async def test_prompt_streams_updates_and_final_text():
@@ -28,7 +29,7 @@ async def test_prompt_streams_updates_and_final_text():
         session = await client.new_session(cwd=".")
         response = await client.prompt(
             session_id=session.session_id,
-            prompt=[acp.text_block("what is the answer")],
+            prompt=[text_block("what is the answer")],
         )
 
     assert response.stop_reason == "end_turn"
@@ -50,7 +51,7 @@ async def test_cold_start_agent_completes_handshake_and_fails_the_turn_clearly()
 
         session = await client.new_session(cwd=".")
         with pytest.raises(acp.RequestError) as exc_info:
-            await client.prompt(session_id=session.session_id, prompt=[acp.text_block("hi")])
+            await client.prompt(session_id=session.session_id, prompt=[text_block("hi")])
 
     assert "profiles create" in exc_info.value.data["reason"]
 
@@ -70,9 +71,14 @@ async def test_serve_stdio_wires_cold_start_agent_when_no_profile_exists(paths, 
 
     acp_agent = captured["agent"]
     async with connect(acp_agent, initialize=False) as (client, _recorder):
-        init = await client.initialize(protocol_version=acp.PROTOCOL_VERSION)
+        init = await client.initialize(
+            protocol_version=acp.PROTOCOL_VERSION,
+            client_capabilities=acp.schema.ClientCapabilities(
+                auth=acp.schema.AuthCapabilities(terminal=True)
+            ),
+        )
         ids = {m.id for m in init.auth_methods or []}
-        assert {"terminal", "env_var"} <= ids  # the registry gate reads exactly this line
+        assert ids == {"terminal"}  # the registry gate reads exactly this line
         with pytest.raises(acp.RequestError):
             await client.new_session(cwd=".")  # unconfigured ⇒ auth_required (ADR-0035)
 
@@ -123,10 +129,22 @@ async def test_real_acp_command_emits_nothing_but_jsonrpc_on_stdout(tmp_path):
                 return msg
 
     try:
+        # ACP v1: no declared terminal-auth support ⇒ no terminal method.
         init = await request(0, "initialize", {"protocolVersion": 1})
         assert "agentCapabilities" in init["result"]
-        methods = json.dumps(init["result"].get("authMethods", []))
-        assert "terminal" in methods and "env_var" in methods
+        assert init["result"].get("authMethods", []) == []
+
+        for rid, capabilities in (
+            (10, {"auth": {"terminal": True}}),
+            # The ACP Registry validator's request, verbatim.
+            (11, {"terminal": True, "_meta": {"terminal_output": True, "terminal-auth": True}}),
+        ):
+            init = await request(
+                rid, "initialize", {"protocolVersion": 1, "clientCapabilities": capabilities}
+            )
+            (method,) = init["result"]["authMethods"]
+            assert method["id"] == "terminal" and method["type"] == "terminal"
+            assert "ag2-assistant gateway" in method["description"]
 
         # cold start is gated (ADR-0035): session/new fails as a clean error frame
         new = await request(1, "session/new", {"cwd": ".", "mcpServers": []})

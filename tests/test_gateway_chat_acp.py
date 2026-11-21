@@ -9,7 +9,6 @@ does, then reads it back through the ACTUAL gateway HTTP routes (a running
 endpoint work over the real API surface, not a second, parallel record.
 """
 
-import acp
 import pytest
 from ag2 import Agent
 from ag2.acp import SessionConfig
@@ -21,6 +20,7 @@ from assistant.acp.chats import ChatBackedStorage, ChatTrackingACPAgent
 from assistant.connections import ConnectionStore
 from assistant.gateway.profile_manager import resolve_active_profile
 from tests.support.apps import api, make_profile_app
+from tests.support.fakes import text_block
 
 
 def _served(paths, pid: str, *, connection_id: str = "acp:test"):
@@ -56,7 +56,7 @@ async def test_list_and_transcript_carry_origin_for_a_live_acp_chat(app_over, pa
 
     async with connect(served) as (acp_client, _recorder):
         session = await acp_client.new_session(cwd=".")
-        await acp_client.prompt(session_id=session.session_id, prompt=[acp.text_block("hi")])
+        await acp_client.prompt(session_id=session.session_id, prompt=[text_block("hi")])
 
         rows = client.get(api(pid, "/chats")).json()["chats"]
         assert len(rows) == 1
@@ -77,7 +77,7 @@ async def test_list_and_transcript_carry_origin_for_a_live_acp_chat(app_over, pa
 
         # The session is gone: the client can no longer prompt it.
         with pytest.raises(Exception):  # noqa: B017 - the SDK's own protocol error
-            await acp_client.prompt(session_id=session.session_id, prompt=[acp.text_block("again")])
+            await acp_client.prompt(session_id=session.session_id, prompt=[text_block("again")])
 
     # The Chat survives the close — only the live badge drops.
     rows = client.get(api(pid, "/chats")).json()["chats"]
@@ -101,7 +101,7 @@ async def test_close_is_409_once_the_session_has_already_ended(app_over, paths):
 
     async with connect(served) as (acp_client, _recorder):
         session = await acp_client.new_session(cwd=".")
-        await acp_client.prompt(session_id=session.session_id, prompt=[acp.text_block("hi")])
+        await acp_client.prompt(session_id=session.session_id, prompt=[text_block("hi")])
         chat_id = client.get(api(pid, "/chats")).json()["chats"][0]["chat_id"]
 
         first = client.post(api(pid, f"/chats/{chat_id}/acp/close"))
@@ -116,7 +116,7 @@ async def test_origin_name_falls_back_to_the_raw_connection_id_when_unregistered
 
     async with connect(served) as (acp_client, _recorder):
         session = await acp_client.new_session(cwd=".")
-        await acp_client.prompt(session_id=session.session_id, prompt=[acp.text_block("hi")])
+        await acp_client.prompt(session_id=session.session_id, prompt=[text_block("hi")])
 
     row = client.get(api(pid, "/chats")).json()["chats"][0]
     assert row["origin_platform"] == "acp"

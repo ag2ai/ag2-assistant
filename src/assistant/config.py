@@ -156,6 +156,9 @@ class GatewayConfig(BaseModel):
     turn_summaries: bool = False
     # Wall-clock limit for one turn summary call.
     turn_summary_timeout_s: float = Field(default=30, gt=0)
+    # Chats whose event streams stay in memory while idle; task runs never take a slot
+    # (env: AG2ASSISTANT_CHAT_CACHE_SIZE).
+    chat_cache_size: int = Field(default=16, ge=0)
 
 
 class ToolsConfig(BaseModel):
@@ -370,6 +373,11 @@ def apply_env_overrides(cfg: Config, env: Mapping[str, str]) -> None:
         cfg.gateway.chat_titles = v.strip().lower() not in {"0", "false", "no", "off"}
     if v := get("AG2ASSISTANT_TURN_SUMMARIES"):
         cfg.gateway.turn_summaries = v.strip().lower() not in {"0", "false", "no", "off"}
+    if v := get("AG2ASSISTANT_CHAT_CACHE_SIZE"):
+        try:
+            cfg.gateway.chat_cache_size = max(0, int(v))
+        except ValueError:
+            pass
     if v := get("AG2ASSISTANT_AGGREGATE_MODEL"):
         cfg.llm.aggregate_model = v
     if v := get("AG2ASSISTANT_LLM_TIMEOUT"):

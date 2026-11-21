@@ -10,6 +10,7 @@ from ag2.events import (
     CompactionFailed,
     CompactionStarted,
     DataInput,
+    ModelMessage,
     ModelMessageChunk,
     ModelRequest,
     ModelResponse,
@@ -42,7 +43,7 @@ from ag_ui.core import (
 )
 
 from assistant.attachments import INLINED_FILE_PREFIX
-from assistant.events import A2UISurface, AssistantEvent
+from assistant.events import A2UISurface, AssistantEvent, InterimMessage
 from assistant.gateway.history import event_cursor
 
 A2UI_ACTIVITY_TYPE = "a2ui-surface"
@@ -88,6 +89,10 @@ class Projector:
         self._anchor = ""
         self._streaming: str | None = None
         self._content: list[str] = []
+        # Messages ended since the anchor, and the last one's text: a response can say
+        # several, each its own AG-UI message, while ModelResponse repeats only the last.
+        self._ended = 0
+        self._last: str | None = None
         self._calls: set[str] = set()
         self._results: set[str] = set()
 
@@ -95,6 +100,8 @@ class Projector:
         out = self._project(event)
         if isinstance(event, _ANCHORS):
             self._anchor = event_cursor(event)
+            self._ended = 0
+            self._last = None
         return out
 
     def _project(self, event: BaseEvent) -> list[Event]:
@@ -102,6 +109,8 @@ class Projector:
             return self._user_message(event)
         if isinstance(event, ModelMessageChunk):
             return self._chunk(event)
+        if isinstance(event, (ModelMessage, InterimMessage)):
+            return self._message(event)
         if isinstance(event, ModelResponse):
             return self._response(event)
         if isinstance(event, ToolCallsEvent):
@@ -163,7 +172,8 @@ class Projector:
         return [TextMessageEndEvent(message_id=message_id)]
 
     def _model_message_id(self) -> str:
-        return f"msg-{self._anchor[:16]}"
+        base = f"msg-{self._anchor[:16]}"
+        return f"{base}-{self._ended}" if self._ended else base
 
     def _user_message(self, event: ModelRequest) -> list[Event]:
         text = "\n".join(
@@ -200,9 +210,40 @@ class Projector:
         )
         return out
 
+    def _message(self, event: ModelMessage | InterimMessage) -> list[Event]:
+        """End one message of the response: the one streaming now, or (replayed, or
+        from a provider that does not stream) the whole message at once."""
+        stamp = {"created_at": event.created_at}
+        if self._streaming is not None:
+            out: list[Event] = [
+                TextMessageEndEvent(
+                    message_id=self._streaming, timestamp=_ms(event), raw_event=stamp
+                )
+            ]
+        elif event.content:
+            message_id = self._model_message_id()
+            out = [
+                TextMessageStartEvent(
+                    message_id=message_id, role="assistant", timestamp=_ms(event)
+                ),
+                TextMessageContentEvent(
+                    message_id=message_id, delta=event.content, timestamp=_ms(event)
+                ),
+                TextMessageEndEvent(message_id=message_id, timestamp=_ms(event), raw_event=stamp),
+            ]
+        else:
+            return []
+        self._streaming = None
+        self._content.clear()
+        self._ended += 1
+        self._last = event.content
+        return out
+
     def _response(self, event: ModelResponse) -> list[Event]:
-        message_id = self._streaming or self._model_message_id()
         content = event.content
+        if self._streaming is None and self._last is not None and content == self._last:
+            return []  # its message already ended on its own ModelMessage
+        message_id = self._streaming or self._model_message_id()
         out: list[Event] = []
         stamp = {"created_at": event.created_at}
         if self._streaming is not None and (not content or content == "".join(self._content)):

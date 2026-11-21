@@ -15,6 +15,7 @@ from ag2.acp.agent import ACPAgent
 from ag2.acp.auth import AuthProvider
 from ag2.acp.sessions import SessionConfig
 
+from assistant.acp.auth import AssistantACPAgent
 from assistant.acp.chats import ChatBackedStorage, ChatTrackingACPAgent
 from assistant.acp.outbound import Outbound
 from assistant.acp.serve_ws import serve_acp_agent
@@ -55,7 +56,7 @@ async def serve_listener(
             activity=activity,
         )
     else:
-        acp_agent = ACPAgent(agent, name=name, version=__version__, auth=auth)
+        acp_agent = AssistantACPAgent(agent, name=name, version=__version__, auth=auth)
     await serve_acp_agent(acp_agent, host=host, port=port, token=token)
 
 

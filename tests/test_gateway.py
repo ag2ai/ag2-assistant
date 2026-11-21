@@ -32,7 +32,7 @@ from assistant.agent import model_config
 from assistant.codex_auth import CodexAuth
 from assistant.config import Config, load_config, write_yaml
 from assistant.connections import ConnectionStore
-from assistant.events import Attachment, TurnCancelled, TurnFailed
+from assistant.events import Attachment, InterimMessage, TurnCancelled, TurnFailed
 from assistant.gateway.app import _allowed_origins, _origin_ok, create_app
 from assistant.gateway.core import EMPTY_TURN_REPLY, EmptyTurn, Gateway
 from assistant.gateway.uploads import decode_attachments
@@ -1403,9 +1403,9 @@ class LlmProbe:
 def test_llm_config_test_endpoint_pong_and_failures(profile_app_factory):
     """The /test endpoint runs a real PONG round-trip (LLM client canned via
     ag2.testing.TestClient, real Agent): a reply → {ok, reply, latency_ms}; any
-    exception or a timeout → 502 {ok:false, error}."""
+    exception → 502 {ok:false, error}."""
     probe = LlmProbe()
-    client, _pid = profile_app_factory(llm_probe=probe, llm_probe_timeout_s=0.2)
+    client, _pid = profile_app_factory(llm_probe=probe, llm_probe_timeout_s=10)
     entry = client.post(
         "/api/llm-configs", json={"name": "G", "type": "gemini", "model": "gemini-x"}
     ).json()["config"]
@@ -1425,7 +1425,18 @@ def test_llm_config_test_endpoint_pong_and_failures(profile_app_factory):
     assert r.status_code == 502
     assert "nope-boom" in r.json()["error"]
 
-    # a wedged call trips the (tiny, injected) timeout → 502
+    # unknown id → 404
+    assert client.post("/api/llm-configs/c_ghost/test").status_code == 404
+
+
+def test_llm_config_test_endpoint_times_out_a_wedged_call(profile_app_factory):
+    """A wedged probe call trips the (tiny, injected) timeout → 502 {ok:false}."""
+    probe = LlmProbe()
+    client, _pid = profile_app_factory(llm_probe=probe, llm_probe_timeout_s=0.2)
+    entry = client.post(
+        "/api/llm-configs", json={"name": "G", "type": "gemini", "model": "gemini-x"}
+    ).json()["config"]
+
     class _Hang(ag2.testing.TestClient):
         async def __call__(self, messages, context, **k):
             await asyncio.sleep(5)
@@ -1433,10 +1444,7 @@ def test_llm_config_test_endpoint_pong_and_failures(profile_app_factory):
 
     probe.client = _Hang()
     r = client.post(f"/api/llm-configs/{entry['id']}/test")
-    assert r.status_code == 502
-
-    # unknown id → 404
-    assert client.post("/api/llm-configs/c_ghost/test").status_code == 404
+    assert r.status_code == 502 and r.json()["ok"] is False
 
 
 def test_llm_config_draft_test_endpoint(profile_app_factory, paths):
@@ -1721,3 +1729,25 @@ def test_an_anthropic_config_saved_without_the_field_keeps_the_native_fetcher(pr
         json={"name": "A", "type": "anthropic", "model": "claude-x", "builtin_tools": {}},
     ).json()
     assert off["config"]["builtin_tools"] == {}
+
+
+async def test_an_earlier_message_of_a_response_is_kept_for_replay(paths):
+    """A response that says two messages carries only the last in its ModelResponse;
+    the first is kept as an InterimMessage, and the in-flight chunks reset per message."""
+    gw = _gateway(paths, persist=False)
+    await gw.start()
+    try:
+        stream = await gw.stream_for("s1")
+        context = ConversationContext(stream=stream)
+        await context.send(ModelMessageChunk("Looking now."))
+        await context.send(ModelMessage("Looking now."))
+        await context.send(ModelMessageChunk("Do"))
+        assert [c.content for c in gw.streaming_chunks("s1")] == ["Do"]
+        await context.send(ModelMessage("Done."))
+        await context.send(ModelResponse(ModelMessage("Done.")))
+        events = await gw.replay_events("s1")
+    finally:
+        await gw.close()
+    interim = [e.content for e in events if isinstance(e, InterimMessage)]
+    assert interim == ["Looking now."]
+    assert [type(e) for e in events][-2:] == [InterimMessage, ModelResponse]

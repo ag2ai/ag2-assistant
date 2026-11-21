@@ -1,14 +1,16 @@
 """Auth methods an ACP listener advertises.
 
-Advertises ``terminal`` + ``env_var`` only, never ``agent``: the only OAuth client
-this install owns is ``codex_auth.py``'s, which ADR 0035 rules out as a listed
-agent's advertised sign-in (it impersonates OpenAI's own Codex CLI). Both methods
-complete out of band (a terminal command, or an env var set before the listener
-starts), so ``authenticate`` always rejects — see ``AssistantAuthMethods``.
+Advertises ``terminal`` only, never ``agent`` (ADR 0035). Setup completes out of
+band — the owner configures a profile through the gateway's browser onboarding —
+so ``authenticate`` always rejects — see ``AssistantAuthMethods``.
+
+ACP v1 lets an agent advertise a ``terminal`` method only to a client that declares
+``clientCapabilities.auth.terminal``. ``AssistantACPAgent`` drops the method for
+any other client (see ``client_supports_terminal_auth``).
 
 Upstream deadlock workaround (ADR 0035): ``ag2.acp.agent`` seeds a connection's
 ``_authenticated`` flag from ``owner._auth is None`` and only a wire ``authenticate``
-call ever flips it — which terminal/env_var auth never makes. So passing a
+call ever flips it — which terminal auth never makes. So passing a
 provider gates every session forever. ``choose_auth`` sidesteps this by choosing
 the auth object at construction time from on-disk credential state: credentialed
 ⇒ ``None`` (ungated, methods unadvertised); otherwise ⇒ the provider (advertised,
@@ -19,23 +21,36 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
+import acp
 from acp import schema
+from ag2.acp.agent import ACPAgent, _ConnectionScope
 from ag2.acp.auth import AuthenticationFailedError, AuthMethod, AuthProvider
 
 from assistant.agent import ACP_PROVIDERS
 from assistant.config import Config
 from assistant.secrets import KEY_ENV
 
-__all__ = ("AssistantAuthMethods", "choose_auth", "profile_has_credentials")
+__all__ = (
+    "AssistantACPAgent",
+    "AssistantAuthMethods",
+    "NegotiatedAuthScope",
+    "choose_auth",
+    "client_supports_terminal_auth",
+    "profile_has_credentials",
+)
 
 _TERMINAL_METHOD_ID = "terminal"
-_ENV_VAR_METHOD_ID = "env_var"
-_SETUP_HINT = "Run `ag2-assistant onboard` in a terminal, then restart the listener."
+# The ACP Registry's validator predates ``auth.terminal`` and signals terminal-auth
+# support with this ``clientCapabilities._meta`` key instead.
+_REGISTRY_TERMINAL_AUTH_META = "terminal-auth"
+_SETUP_HINT = (
+    "Run `ag2-assistant gateway` in a terminal, finish setup at http://127.0.0.1:8800 "
+    "(profile, model provider and key), then restart this listener."
+)
 
 
 class AssistantAuthMethods:
-    """Declares ``terminal`` + ``env_var``. Both complete out of band, so
-    ``authenticate`` always rejects with a pointer at terminal setup."""
+    """Declares ``terminal``; ``authenticate`` always rejects, pointing at setup."""
 
     def methods(self) -> "list[AuthMethod]":
         return [
@@ -45,27 +60,58 @@ class AssistantAuthMethods:
                 name="Terminal setup",
                 description=_SETUP_HINT,
             ),
-            schema.EnvVarAuthMethod(
-                type="env_var",
-                id=_ENV_VAR_METHOD_ID,
-                name="Provider API key",
-                description=(
-                    "Set one model provider's API key as an environment variable "
-                    "before starting this listener (see `ag2-assistant onboard`)."
-                ),
-                vars=[
-                    schema.AuthEnvVar(name=name, label=label, optional=True)
-                    for name, label in (
-                        ("GEMINI_API_KEY", "Gemini API key"),
-                        ("OPENAI_API_KEY", "OpenAI API key"),
-                        ("ANTHROPIC_API_KEY", "Anthropic API key"),
-                    )
-                ],
-            ),
         ]
 
     async def authenticate(self, method_id: str, **kwargs: Any) -> None:
+        if method_id != _TERMINAL_METHOD_ID:
+            raise AuthenticationFailedError(f"unknown auth method {method_id!r}")
         raise AuthenticationFailedError(f"{method_id!r} completes out of band — {_SETUP_HINT}")
+
+
+def client_supports_terminal_auth(capabilities: schema.ClientCapabilities | None) -> bool:
+    """Whether a client may be offered ``terminal`` auth methods.
+
+    ACP v1 permits them only when ``clientCapabilities.auth.terminal`` is true, and
+    an omitted capability means unsupported. The Registry validator's
+    ``_meta["terminal-auth"]`` counts too, so a Registry listing check still sees
+    the method.
+    """
+    if capabilities is None:
+        return False
+    if capabilities.auth is not None and capabilities.auth.terminal:
+        return True
+    return bool((capabilities.field_meta or {}).get(_REGISTRY_TERMINAL_AUTH_META))
+
+
+class NegotiatedAuthScope(_ConnectionScope):
+    """A connection scope whose ``initialize`` advertises only the auth methods the
+    client declared it supports."""
+
+    __slots__ = ()
+
+    async def initialize(
+        self,
+        protocol_version: int,
+        client_capabilities: schema.ClientCapabilities | None = None,
+        client_info: schema.Implementation | None = None,
+        **kwargs: Any,
+    ) -> schema.InitializeResponse:
+        response = await super().initialize(
+            protocol_version, client_capabilities, client_info, **kwargs
+        )
+        if client_supports_terminal_auth(client_capabilities) or not response.auth_methods:
+            return response
+        methods = [m for m in response.auth_methods if m.type != _TERMINAL_METHOD_ID]
+        return response.model_copy(update={"auth_methods": methods})
+
+
+class AssistantACPAgent(ACPAgent):
+    """``ACPAgent`` whose connections negotiate auth methods (``NegotiatedAuthScope``)."""
+
+    def bind(self, client: "acp.Client | None") -> _ConnectionScope:
+        scope = NegotiatedAuthScope(self, client)
+        self._scope = scope
+        return scope
 
 
 def _codex_subscription_signed_in(config: Config) -> bool:

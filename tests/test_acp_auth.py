@@ -1,5 +1,5 @@
-"""Terminal + env_var auth methods (ADR 0035), and the credential-state seam that
-picks between advertising them and staying ungated.
+"""The terminal auth method (ADR 0035), and the credential-state seam that
+picks between advertising it and staying ungated.
 
 Drives real ``ag2.acp`` connections in-process (``ag2.acp.testing.connect``) — no
 real LLM (``ag2.testing.TestConfig``), no subprocess.
@@ -9,12 +9,20 @@ import asyncio
 
 import acp
 import pytest
+from acp import schema
 from ag2 import Agent
 from ag2.acp import ACPAgent
 from ag2.acp.testing import connect
 from ag2.testing import TestConfig
 
-from assistant.acp.auth import AssistantAuthMethods, choose_auth, profile_has_credentials
+from assistant.acp.auth import (
+    AssistantACPAgent,
+    AssistantAuthMethods,
+    choose_auth,
+    client_supports_terminal_auth,
+    profile_has_credentials,
+)
+from tests.support.fakes import text_block
 
 
 def test_choose_auth_is_none_for_a_credentialed_profile(config):
@@ -56,18 +64,42 @@ def test_profile_has_credentials_openai_subscription_reads_codex_tokens(config, 
     assert profile_has_credentials(cfg, {}) is True
 
 
-async def test_unconfigured_advertises_methods_and_session_new_fails_auth_required():
-    """Cold/keyless: ``initialize`` carries both methods; ``session/new`` fails
-    ``auth_required`` promptly rather than hanging."""
+TERMINAL_AUTH = schema.ClientCapabilities(auth=schema.AuthCapabilities(terminal=True))
+# What the ACP Registry's validator sends: no ``auth``, the ``_meta`` flag instead.
+REGISTRY_VALIDATOR = schema.ClientCapabilities.model_validate(
+    {"terminal": True, "_meta": {"terminal_output": True, "terminal-auth": True}}
+)
+
+
+@pytest.mark.parametrize(
+    ("capabilities", "expected"),
+    [
+        (None, set()),
+        (schema.ClientCapabilities(), set()),
+        (TERMINAL_AUTH, {"terminal"}),
+        (REGISTRY_VALIDATOR, {"terminal"}),
+    ],
+    ids=["no-capabilities", "no-terminal-auth", "auth-terminal", "registry-validator"],
+)
+async def test_unconfigured_advertises_terminal_only_to_clients_that_support_it(
+    capabilities, expected
+):
+    """Cold/keyless: ``initialize`` carries the terminal method only for a client that
+    declares terminal auth (ACP v1) or the Registry's ``_meta`` flag; either way
+    ``session/new`` fails ``auth_required`` promptly rather than hanging."""
     agent = Agent(name="acp-test", config=TestConfig("42"))
-    acp_agent = ACPAgent(
+    acp_agent = AssistantACPAgent(
         agent, name="AG2 Assistant", version="0.0.0-test", auth=choose_auth(None, {})
     )
 
     async with connect(acp_agent, initialize=False) as (client, _recorder):
-        init = await asyncio.wait_for(client.initialize(protocol_version=acp.PROTOCOL_VERSION), 5)
-        ids = {m.id for m in init.auth_methods}
-        assert ids == {"terminal", "env_var"}
+        init = await asyncio.wait_for(
+            client.initialize(
+                protocol_version=acp.PROTOCOL_VERSION, client_capabilities=capabilities
+            ),
+            5,
+        )
+        assert {m.id for m in init.auth_methods} == expected
 
         with pytest.raises(acp.RequestError) as exc_info:
             await asyncio.wait_for(client.new_session(cwd="."), 5)
@@ -87,17 +119,45 @@ async def test_credentialed_profile_serves_session_new_and_prompt_with_no_authen
 
     async with connect(acp_agent) as (client, recorder):
         session = await client.new_session(cwd=".")
-        response = await client.prompt(session_id=session.session_id, prompt=[acp.text_block("hi")])
+        response = await client.prompt(session_id=session.session_id, prompt=[text_block("hi")])
     assert response.stop_reason == "end_turn"
 
 
-async def test_authenticate_always_rejects_terminal_and_env_var():
-    """Both methods complete out of band — ``authenticate`` never succeeds for either."""
+async def test_authenticate_always_rejects_terminal():
+    """Terminal setup completes out of band — ``authenticate`` never succeeds."""
     provider = AssistantAuthMethods()
-    with pytest.raises(Exception, match="terminal"):
+    with pytest.raises(Exception, match="out of band"):
         await provider.authenticate("terminal")
-    with pytest.raises(Exception, match="env_var"):
-        await provider.authenticate("env_var")
+
+
+@pytest.mark.parametrize("method_id", ["env_var", "agent", ""])
+async def test_authenticate_rejects_an_unknown_method_as_unknown(method_id):
+    with pytest.raises(Exception, match="unknown auth method"):
+        await AssistantAuthMethods().authenticate(method_id)
+
+
+async def test_initialize_points_the_client_at_gateway_setup():
+    """The hint a client shows is the advertised method's description, as sent."""
+    agent = Agent(name="acp-test", config=TestConfig("42"))
+    acp_agent = AssistantACPAgent(
+        agent, name="AG2 Assistant", version="0.0.0-test", auth=AssistantAuthMethods()
+    )
+
+    async with connect(acp_agent, initialize=False) as (client, _recorder):
+        init = await client.initialize(
+            protocol_version=acp.PROTOCOL_VERSION, client_capabilities=TERMINAL_AUTH
+        )
+    (method,) = init.auth_methods
+    assert "ag2-assistant gateway" in method.description
+    assert "API_KEY" not in method.description
+
+
+def test_client_supports_terminal_auth_reads_only_the_auth_capability_or_registry_flag():
+    assert not client_supports_terminal_auth(None)
+    # ``terminal`` alone is the terminal/* methods capability, not terminal auth.
+    assert not client_supports_terminal_auth(schema.ClientCapabilities(terminal=True))
+    assert client_supports_terminal_auth(TERMINAL_AUTH)
+    assert client_supports_terminal_auth(REGISTRY_VALIDATOR)
 
 
 async def test_authenticate_over_the_wire_surfaces_as_a_request_error():
