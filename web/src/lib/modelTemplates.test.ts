@@ -34,7 +34,7 @@ test('no group in the order is empty', () => {
 })
 
 // The grouping rule, stated as an assertion: the three that need no API key sit
-// under that heading, and the other six sit under their vendor's.
+// under that heading, and the rest sit under their vendor's.
 const NO_KEY_CARDS = ['OpenAI · Sign in with ChatGPT', 'Claude Code · CLI login', 'Codex · CLI login']
 
 test('the templates needing no API key are exactly the subscription group', () => {
@@ -49,6 +49,21 @@ test('the templates needing no API key are exactly the subscription group', () =
 
 test('the subscription group comes first', () => {
   assert.equal(GROUP_ORDER[0], SUBSCRIPTION_GROUP)
+})
+
+test('Ollama local, remote and cloud have distinct setup cards', () => {
+  const ollama = MODEL_TEMPLATES.filter((t) => t.name.startsWith('Ollama'))
+  assert.deepEqual(ollama.map(label), [
+    'Ollama · Local',
+    'Ollama · Remote',
+    'Ollama Cloud',
+  ])
+  assert.deepEqual(ollama.map((t) => t.type), ['ollama', 'ollama', 'ollama_cloud'])
+  assert.equal(ollama[0].host, 'http://localhost:11434')
+  assert.equal(ollama[1].host, '')
+  assert.match(ollama[0].blurb, /on this machine/i)
+  assert.match(ollama[1].blurb, /remote Ollama host URL/i)
+  assert.match(ollama[2].blurb, /API key/i)
 })
 
 test('every blurb says something the card label does not', () => {

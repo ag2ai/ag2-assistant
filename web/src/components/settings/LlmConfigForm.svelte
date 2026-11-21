@@ -8,7 +8,8 @@
   // host for ollama, neither for gemini. The type is editable only as an API
   // interface, and only once a Base URL names an endpoint. The key field is a
   // Secret picker plus a paste-to-create shortcut (a pasted key mints a
-  // value-unique Secret on save; api_key rides only the draft-test call).
+  // value-unique Secret on save; Ollama Cloud also offers an explicit save-and-fetch
+  // action because its catalog endpoint rejects browser CORS preflight).
   import { onMount, untrack } from 'svelte'
   import { api } from '../../transport/api/index.ts'
   import { fetchModelCatalog } from '../../transport/modelCatalog.ts'
@@ -153,7 +154,12 @@
       return 'Runs on your Claude Code CLI login (claude-agent-acp) — no API key is involved.'
     if (type === 'codex')
       return 'Runs on your Codex CLI login (codex-acp) — no API key is involved.'
-    if (type === 'ollama') return 'Ollama is local — no API key is used.'
+    if (type === 'ollama') return 'Uses the Ollama server at this Host URL — no API key is used.'
+    if (type === 'ollama_cloud') {
+      if (pastedKey.trim()) return 'Save the key as a Secret to fetch models, or save the configuration to store it.'
+      if (secretId) return 'Uses the selected Ollama Cloud Secret.'
+      return 'Requires an Ollama Cloud API key. Paste one above or select a saved Secret.'
+    }
     const env = ENV_OF[type]
     const shared = ctx?.s?.keys?.[PROV_OF[type] || '']
     if (pastedKey.trim()) return 'A new Secret will be created from this key on save (rename it later in Settings → Secrets).'
@@ -216,8 +222,12 @@
       hasCredential, hasEndpoint: !!baseUrl.trim(), hasPastedKey: !!settledKey,
     }),
   )
+  const needsCloudSecret = $derived(type === 'ollama_cloud' && !!pastedKey.trim())
   let probed = $state(false)
   let probing = $state(false)
+  let savingCloudKey = $state(false)
+  let catalogActionError = $state('')
+  let catalogRevealVersion = $state(0)
   // null = none read; an array = the live list
   let providerCatalog = $state<string[] | null>(null)
   let catalogReason = $state('')
@@ -229,12 +239,13 @@
   async function probeCatalog(refresh = false) {
     const seq = ++probeSeq
     if (!catalogFrom) { providerCatalog = null; catalogReason = ''; probing = false; return }
+    catalogActionError = ''
     probed = true
     probing = true
     let result: { reason: string; catalog: string[] | null }
     try {
-      // A pasted key the browser sends itself; a saved Secret only the gateway can
-      // resolve (ADR 0024). Both answer in one envelope.
+      // Browser-compatible pasted keys go straight to their provider; saved Secrets
+      // are resolved only by the gateway (ADR 0024). Both answer in one envelope.
       const r = catalogFrom === 'browser'
         ? await fetchModelCatalog({ type, baseUrl: baseUrl.trim(), key: settledKey, refresh })
         : await api.llmCatalog(
@@ -254,6 +265,36 @@
     catalogReason = result.reason
     providerCatalog = result.catalog
     probing = false
+    if (!result.reason) catalogRevealVersion += 1
+  }
+
+  async function saveCloudKeyAndFetch() {
+    if (!needsCloudSecret || !pastedKey.trim()) return
+    savingCloudKey = true
+    catalogActionError = ''
+    try {
+      const secret = await createOrSnap({
+        name: autoSecretName(name || 'Ollama Cloud', pastedKey),
+        value: pastedKey.trim(),
+      })
+      probed = false
+      providerCatalog = null
+      catalogReason = ''
+      secretId = secret.id
+      pastedKey = ''
+      settledKey = ''
+      void loadSecrets()
+      await probeCatalog(true)
+    } catch (e) {
+      catalogActionError = errText(e)
+    } finally {
+      savingCloudKey = false
+    }
+  }
+
+  function fetchCatalogFromButton() {
+    if (needsCloudSecret) void saveCloudKeyAndFetch()
+    else void probeCatalog(true)
   }
 
   // Re-read whenever the identity the list describes changes — but only once a
@@ -486,10 +527,24 @@
       <label for="lf-model">Model</label>
       <!-- Offered but never imposed: whatever is typed here wins. The list is the
            provider's when one could be read, and Known models when it could not. -->
-      <ModelCombobox
-        bind:value={model} {type} placeholder="e.g. gemini-3.6-flash"
-        catalog={providerCatalog} loading={probing} onFirstFocus={() => probeCatalog()}
-      />
+      <div class="llmkeyfield">
+        <ModelCombobox
+          bind:value={model} {type}
+          placeholder={type === 'ollama_cloud' ? 'e.g. qwen3-coder:480b' : 'e.g. gemini-3.6-flash'}
+          catalog={providerCatalog} loading={probing} reveal={catalogRevealVersion}
+          onFirstFocus={() => probeCatalog()}
+        />
+        {#if type === 'ollama' || type === 'ollama_cloud'}
+          <button
+            type="button" class="open"
+            disabled={probing || savingCloudKey || (!catalogFrom && !needsCloudSecret)}
+            onclick={fetchCatalogFromButton}
+          >{savingCloudKey ? 'Saving key…' : probing
+            ? 'Fetching…'
+            : needsCloudSecret ? 'Save key & fetch models' : 'Fetch models'}</button>
+        {/if}
+      </div>
+      {#if catalogActionError}<span class="llmhint" role="status">{catalogActionError}</span>{/if}
     </div>
     {#if catalogFrom && probed}
       <!-- One row for both states, like the ACP picker's: why there is no list (if
@@ -497,7 +552,9 @@
       <div class="llmfield">
         <span class="llmhint">
           {#if catalogHint}{catalogHint} {/if}
-          <button class="linkbtn" onclick={() => probeCatalog(true)}>Re-read the model list</button>
+          {#if type !== 'ollama' && type !== 'ollama_cloud'}
+            <button class="linkbtn" onclick={() => probeCatalog(true)}>Re-read the model list</button>
+          {/if}
         </span>
       </div>
     {/if}
@@ -521,7 +578,7 @@
     </div>
   {:else if type === 'ollama'}
     <div class="llmfield">
-      <label for="lf-host">Host</label>
+      <label for="lf-host">Host URL <span class="llmhint">The app server must be able to reach this URL; in a container, localhost refers to the container.</span></label>
       <input id="lf-host" bind:value={host} onblur={settleEndpoint} placeholder="http://localhost:11434" spellcheck="false" />
     </div>
   {/if}
@@ -558,7 +615,7 @@
       <label for="lf-secret">Secret <span class="llmhint">a reusable API key — manage in Settings → Secrets</span></label>
       <div class="llmkeyfield">
         <select id="lf-secret" bind:value={secretId} disabled={!!pastedKey.trim()}>
-          <option value="">No secret — provider default / env key</option>
+          <option value="">{type === 'ollama_cloud' ? 'No secret — API key required' : 'No secret — provider default / env key'}</option>
           {#each pickerSecrets as s (s.id)}
             <option value={s.id}>{s.name} {s.hint}{s.default ? ' · default' : ''}</option>
           {/each}

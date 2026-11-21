@@ -203,9 +203,35 @@ def test_signed_out_subscription_catalog_requires_authorization(profile_app_fact
 
 def test_every_keyed_type_is_served_rather_than_404ed(profile_app_factory):
     client, _pid = _app(profile_app_factory, models=["a-model"])
-    for ctype in ("gemini", "openai", "openai_responses", "anthropic"):
+    for ctype in ("gemini", "openai", "openai_responses", "anthropic", "ollama_cloud"):
         body = client.get("/api/llm-configs/models", params={"type": ctype}).json()
         assert body["models"] == [{"id": "a-model", "name": "a-model", "description": ""}], ctype
+
+
+def test_ollama_cloud_catalog_uses_only_its_secret(profile_app_factory, paths):
+    from assistant.secrets import SecretStore
+
+    secrets = SecretStore(paths)
+    secrets.set_key("openai", "openai-shared-key")
+    cloud = secrets.create_secret("Ollama Cloud", "ollama-cloud-key")
+    seen = []
+    client, _pid = profile_app_factory(llm_catalog_probe=_probe(seen=seen))
+    client.get(
+        "/api/llm-configs/models",
+        params={
+            "type": "ollama_cloud",
+            "secret_id": cloud["id"],
+            "base_url": "https://attacker.example/v1",
+            "host": "http://attacker.example",
+        },
+    )
+    assert len(seen) == 1
+    assert seen[0].api_key == "ollama-cloud-key"
+    assert seen[0].base_url == ""
+    assert seen[0].host == ""
+
+    client.get("/api/llm-configs/models", params={"type": "ollama_cloud"})
+    assert seen[1].api_key == ""
 
 
 def test_signed_in_subscription_catalog_uses_server_credentials(profile_app_factory, paths):

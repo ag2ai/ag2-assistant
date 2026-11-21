@@ -167,6 +167,21 @@ test('a keyless local host is the gateway’s to probe, not the browser’s', ()
   assert.equal(catalogSource('ollama'), 'gateway')
 })
 
+test('Ollama Cloud uses the gateway only after the key is saved as a Secret', () => {
+  assert.equal(catalogSource('ollama_cloud'), '')
+  assert.equal(catalogSource('ollama_cloud', { hasCredential: true }), 'gateway')
+  assert.equal(catalogSource('ollama_cloud', { hasPastedKey: true }), '')
+  assert.equal(catalogSource('ollama_cloud', {
+    hasCredential: true, hasPastedKey: true,
+  }), '')
+  assert.equal(browserProbeRequest({ type: 'ollama_cloud', key: 'ollama-cloud-key' }), null)
+})
+
+test('Ollama catalog failures name the host reachability boundary', () => {
+  assert.match(catalogNote('unreachable', 'ollama'), /from this app/)
+  assert.match(catalogNote('unreachable', 'ollama_cloud'), /Ollama Cloud/)
+})
+
 test('a type with no catalog to read asks nobody', () => {
   for (const type of ['claude_code', 'codex', 'openai_subscription', '', 'nonsense']) {
     assert.equal(catalogSource(type), '', type)

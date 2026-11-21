@@ -11,7 +11,7 @@ export type LabelMap = Record<string, string>
 export const TYPE_LABEL: LabelMap = {
   openai: 'OpenAI · Chat Completions', openai_responses: 'OpenAI · Responses',
   openai_subscription: 'OpenAI · ChatGPT subscription',
-  anthropic: 'Anthropic', gemini: 'Gemini', ollama: 'Ollama',
+  anthropic: 'Anthropic', gemini: 'Gemini', ollama: 'Ollama', ollama_cloud: 'Ollama Cloud',
   claude_code: 'Claude Code · CLI login', codex: 'Codex · CLI login',
 }
 
@@ -26,14 +26,14 @@ export const GROUP_ORDER: string[] = [SUBSCRIPTION_GROUP, 'OpenAI', 'Anthropic',
 export const TYPE_GROUP: LabelMap = {
   openai_subscription: SUBSCRIPTION_GROUP, claude_code: SUBSCRIPTION_GROUP, codex: SUBSCRIPTION_GROUP,
   openai_responses: 'OpenAI', openai: 'OpenAI',
-  anthropic: 'Anthropic', gemini: 'Google', ollama: 'Ollama',
+  anthropic: 'Anthropic', gemini: 'Google', ollama: 'Ollama', ollama_cloud: 'Ollama',
 }
 
 // LLM config type -> what the user must bring, chipped on every template card.
 export const TYPE_CHIP: LabelMap = {
   openai_subscription: 'OAuth', claude_code: 'ACP', codex: 'ACP',
   openai_responses: 'API key', openai: 'API key',
-  anthropic: 'API key', gemini: 'API key', ollama: 'no key',
+  anthropic: 'API key', gemini: 'API key', ollama: 'no key', ollama_cloud: 'API key',
 }
 
 // Voice provider -> its label (only realtime-capable providers exist here).

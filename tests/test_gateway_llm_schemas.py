@@ -405,6 +405,7 @@ def test_the_list_names_the_options_each_provider_tool_takes(client):
     }
     assert by_type["anthropic"]["web_fetch"][0] == {"id": "max_uses", "kind": "int"}
     assert by_type["ollama"] == {}
+    assert by_type["ollama_cloud"] == {}
 
 
 def test_a_provider_tool_option_round_trips_through_a_save(client):

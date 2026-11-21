@@ -88,6 +88,7 @@ const FAMILY: Record<string, string> = {
   openai_responses: 'openai',
   openai_subscription: 'openai',
   codex: 'openai',
+  ollama_cloud: 'ollama',
   claude_code: 'anthropic',
 }
 

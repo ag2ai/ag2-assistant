@@ -32,6 +32,7 @@ KEY_ENV = {
 }
 OLLAMA_BASE_ENV = "OLLAMA_BASE_URL"  # our convention; model_config reads it
 DEFAULT_OLLAMA_BASE = "http://localhost:11434"
+OLLAMA_CLOUD_BASE = "https://ollama.com/v1"
 
 # Channel bot tokens get the same treatment as provider keys: stored here, editable
 # from the UI, applied live. Keyed directly by env var name (the closed set from

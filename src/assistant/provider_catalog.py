@@ -7,6 +7,7 @@ names which of the four reasons stopped it.
 import httpx
 
 from assistant.codex_auth import BACKEND_BASE, CLIENT_VERSION, Creds, default_headers
+from assistant.secrets import OLLAMA_CLOUD_BASE
 
 # Why a catalog could not be read: a rejected credential, an endpoint that could not
 # be reached, one that answered but lists nothing, and a type no probe applies to.
@@ -18,6 +19,7 @@ NOT_PROBEABLE = "not_probeable"
 # The types the gateway probes with server-side credentials.
 GATEWAY_PROBEABLE = (
     "ollama",
+    "ollama_cloud",
     "gemini",
     "openai",
     "openai_responses",
@@ -127,6 +129,10 @@ def _request(target: CatalogTarget) -> tuple[str, dict[str, str]]:
         return f"{BACKEND_BASE}/models?client_version={CLIENT_VERSION}", headers
     if ctype == "ollama":
         return (target.host or DEFAULT_OLLAMA_HOST).rstrip("/") + "/api/tags", {}
+    if ctype == "ollama_cloud":
+        return OLLAMA_CLOUD_BASE.rstrip("/") + "/models", {
+            "Authorization": f"Bearer {target.api_key}"
+        }
     base = (target.base_url or DEFAULT_BASE_URL[ctype]).rstrip("/")
     if ctype == "gemini":
         # Header, not the `?key=` the browser path must use: a URL reaches our logs.
@@ -165,6 +171,8 @@ async def probe_provider_models(
     if target.type not in GATEWAY_PROBEABLE:
         raise CatalogUnavailable(NOT_PROBEABLE)
     # Nothing to ask with, and nothing was asked — never a failure to reach anything.
+    if target.type == "ollama_cloud" and not target.api_key:
+        raise CatalogUnavailable(NOT_PROBEABLE)
     if (
         target.type not in ("ollama", "openai_subscription")
         and not target.api_key

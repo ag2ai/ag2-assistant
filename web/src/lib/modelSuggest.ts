@@ -39,6 +39,9 @@ export const REASON = Object.freeze({
 // Ollama is gateway-only — only that side reaches a host behind a Docker bridge.
 const CATALOG_TYPE: Record<string, { keyless: boolean; browser: boolean }> = {
   ollama: { keyless: true, browser: false },
+  // Ollama Cloud rejects browser preflight requests, so its key must be saved as a
+  // Secret before the gateway can read the catalog.
+  ollama_cloud: { keyless: false, browser: false },
   gemini: { keyless: false, browser: true },
   openai: { keyless: false, browser: true },
   openai_responses: { keyless: false, browser: true },
@@ -59,6 +62,7 @@ export function catalogSource(
   const rules = CATALOG_TYPE[type]
   if (!rules) return ''
   if (type === 'openai_subscription') return hasCredential ? 'gateway' : ''
+  if (type === 'ollama_cloud' && hasPastedKey) return ''
   // An unsaved key goes to the provider that owns it, never to our backend (ADR
   // 0024); once it becomes a Secret the gateway takes over again.
   if (hasPastedKey && rules.browser) return 'browser'
@@ -156,6 +160,7 @@ export function browserProbeRequest({ type, baseUrl = '', key = '' }: {
   key?: string
 }): ProbeRequest | null {
   const secret = String(key || '').trim()
+  if (type === 'ollama_cloud') return null
   if (!secret || !DEFAULT_BASE_URL[type]) return null
   const base = (String(baseUrl || '').trim() || DEFAULT_BASE_URL[type]).replace(/\/+$/, '')
   if (type === 'gemini') return { url: `${base}/models?key=${encodeURIComponent(secret)}`, headers: {} }
@@ -211,6 +216,8 @@ export function catalogNote(reason: string | undefined, type: string): string {
   const provider = TYPE_LABEL[type] || 'the provider'
   if (reason === REASON.UNAUTHORIZED)
     return `${provider} rejected this credential, so its model list couldn't be read. Known names are offered below.`
+  if (reason === REASON.UNREACHABLE && type === 'ollama')
+    return `Couldn't reach Ollama at the configured host from this app. Check the URL and make sure the server accepts connections from the app. Known names are offered below.`
   if (reason === REASON.UNREACHABLE)
     return `Couldn't reach ${provider} for its model list. Known names are offered below.`
   if (reason === REASON.NO_LIST_ENDPOINT)

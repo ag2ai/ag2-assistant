@@ -13,6 +13,26 @@ export type ModelTemplate = {
   blurb: string
   base_url?: string
   host?: string
+  ollamaMode?: OllamaMode
+}
+
+export type OllamaMode = 'local' | 'remote' | 'cloud'
+export type OllamaModelTemplate = ModelTemplate & { ollamaMode: OllamaMode }
+
+export const OLLAMA_TEMPLATES: Record<OllamaMode, OllamaModelTemplate> = {
+  local: {
+    name: 'Ollama · Local', type: 'ollama', model: 'llama3.2',
+    host: 'http://localhost:11434', ollamaMode: 'local',
+    blurb: 'Use an Ollama server on this machine — no API key needed',
+  },
+  remote: {
+    name: 'Ollama · Remote', type: 'ollama', model: '', host: '', ollamaMode: 'remote',
+    blurb: 'Enter a remote Ollama host URL and choose one of its models — no API key needed',
+  },
+  cloud: {
+    name: 'Ollama Cloud', type: 'ollama_cloud', model: '', ollamaMode: 'cloud',
+    blurb: 'Use Ollama-hosted models with an Ollama Cloud API key',
+  },
 }
 
 export const MODEL_TEMPLATES: ModelTemplate[] = [
@@ -47,5 +67,7 @@ export const MODEL_TEMPLATES: ModelTemplate[] = [
     blurb: 'Any Anthropic-API endpoint — set the model name and URL',
   },
   { name: 'Gemini', type: 'gemini', model: 'gemini-3.6-flash', blurb: 'Gemini models, including image generation' },
-  { name: 'Ollama', type: 'ollama', model: 'llama3.2', host: 'http://localhost:11434', blurb: 'Models running locally via Ollama' },
+  OLLAMA_TEMPLATES.local,
+  OLLAMA_TEMPLATES.remote,
+  OLLAMA_TEMPLATES.cloud,
 ]
