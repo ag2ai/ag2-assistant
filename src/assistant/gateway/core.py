@@ -282,6 +282,7 @@ class Gateway:
         model_factory: Callable | None = None,
         environment_factory: Callable | None = None,
         history_factory: Callable | None = None,
+        chat_log_factory: Callable[[SerialStore], ChatEventLog] | None = None,
         subscription_auth: CodexAuth | None = None,
         google: GoogleAuth | None = None,
         plugins: Iterable[Plugin] = (),
@@ -301,6 +302,7 @@ class Gateway:
         self._environment_factory = environment_factory or docker_environment
         self._plugins = tuple(plugins)
         self._history_factory = history_factory or (lambda path: SqliteKnowledgeStore(str(path)))
+        self._chat_log_factory = chat_log_factory or ChatEventLog
         self._subscription_auth = subscription_auth or CodexAuth(self._config.paths)
         self._google = google or GoogleAuth(self._config.paths)
         self._resources = ProfileResources()
@@ -668,7 +670,7 @@ class Gateway:
                     ),
                 ).value
             )
-            self._writer = ChatEventLog(self._event_store)
+            self._writer = self._chat_log_factory(self._event_store)
 
     async def refresh(self) -> None:
         """Refresh runtime configuration and retire obsolete owned resources."""
@@ -836,7 +838,9 @@ class Gateway:
                 condition=TypeCondition(CompactionStarted) | CompactionCompleted | CompactionFailed,
             )
             self._streams[chat_id] = stream
-            self._chat_activity[chat_id] = ChatActivity()
+            # Keep the sidebar projection until the log loads; forget its fingerprint to force one.
+            self._chat_activity.setdefault(chat_id, ChatActivity())
+            self._synced.pop(chat_id, None)
             if is_internal_stream(chat_id):
                 weakref.finalize(
                     stream,
@@ -947,9 +951,8 @@ class Gateway:
             self._synced[chat_id] = await self._log_fingerprint(chat_id)
 
     async def _log_fingerprint(self, chat_id: str) -> str | None:
-        """Hash the stored log without encoding its full text on the event loop."""
-        raw = await self._read_log(chat_id)
-        return await asyncio.to_thread(_log_digest, raw) if raw is not None else None
+        """The sha256 of the chat's stored log, hashed in a worker thread."""
+        return await asyncio.to_thread(_log_digest, await self._read_log(chat_id))
 
     async def _draft_history(self, context: ConversationContext) -> list:
         return await self.replay_events(str(context.stream.id))

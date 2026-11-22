@@ -8,17 +8,23 @@ import pytest
 from ag2.events import ModelMessage, ModelResponse
 from ag2.knowledge.constants import LOG_PREFIX
 
-from assistant.gateway.core import Gateway
-from tests.support.fakes import TransientChatEventLog, fake_agent_factory, fake_title_factory
+from tests.support.apps import real_gateway
+from tests.support.fakes import TransientChatEventLog, fake_agent_factory
 
 
-def gateway(config):
-    return Gateway(
-        config,
-        memory=False,
-        agent_factory=fake_agent_factory(),
-        title_factory=fake_title_factory(),
-    )
+def gateway(config, **kwargs):
+    return real_gateway(config, memory=False, agent_factory=fake_agent_factory(), **kwargs)
+
+
+def flaky_gateway(config):
+    """A gateway over a TransientChatEventLog, and a getter for that log."""
+    logs: list[TransientChatEventLog] = []
+
+    def chat_log(store):
+        logs.append(TransientChatEventLog(store))
+        return logs[-1]
+
+    return gateway(config, chat_log_factory=chat_log), lambda: logs[-1]
 
 
 @pytest.mark.parametrize("restore", [False, True], ids=["persist", "hydrate"])
@@ -237,7 +243,8 @@ async def test_concurrent_status_and_stream_reads_preserve_live_subscriptions(co
 async def test_transient_history_failure_retries_without_a_log_change(
     config, opened, primed, stage
 ):
-    writer, reader = gateway(config), gateway(config)
+    writer = gateway(config)
+    reader, log = flaky_gateway(config)
     await writer.start()
     await reader.start()
     try:
@@ -250,7 +257,7 @@ async def test_transient_history_failure_retries_without_a_log_change(
         expected = await writer.chat_status("shared")
         path = f"{LOG_PREFIX}shared.jsonl"
         stored = await writer._event_store.read(path)
-        reader._writer = TransientChatEventLog(reader._event_store, stage)
+        log().fail_once(stage)
 
         assert await reader.chat_status("shared") == previous
         recovered = await reader.chat_status("shared")
@@ -264,6 +271,31 @@ async def test_transient_history_failure_retries_without_a_log_change(
             row["text"] for row in await reader.transcript("shared") if row["role"] == "user"
         ]
         assert messages == (["first", "after"] if primed else ["after"])
+    finally:
+        await reader.close()
+        await writer.close()
+
+
+@pytest.mark.parametrize("stage", ["load", "replay"])
+async def test_failed_first_open_retries_and_keeps_the_sidebar_status(config, stage):
+    writer = gateway(config)
+    reader, log = flaky_gateway(config)
+    await writer.start()
+    await reader.start()
+    try:
+        await writer.send_message("first", chat_id="shared")
+        listed = await reader.chat_status("shared")
+        log().fail_once(stage)
+
+        await reader.stream_for("shared")
+        assert await reader.chat_status("shared") == listed
+        events = await (await reader.stream_for("shared")).history.get_events()
+        assert events
+        assert await reader.chat_status("shared") == listed
+        messages = [
+            row["text"] for row in await reader.transcript("shared") if row["role"] == "user"
+        ]
+        assert messages == ["first"]
     finally:
         await reader.close()
         await writer.close()
