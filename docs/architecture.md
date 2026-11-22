@@ -111,6 +111,10 @@ memory, voice, HITL, and the persistent stores hanging off the event-stream spin
 - **Chats & streams.** `stream_for(chat_id)` returns the live per-chat
   `Stream`, hydrating it from disk on first use (`_get_stream`), repairing broken
   compaction with `sanitize_history()` before resume.
+- **Sidebar status.** Saved chats without a live stream keep only their activity
+  projection and a content fingerprint. Listing chats replays the same persisted
+  events, including archived events, without retaining every chat's full stream.
+  Opening a chat still hydrates its complete resumable context independently.
 - **Turns.** `send_message()` resolves the stream, injects surface context, builds a
   per-turn permission manager + HITL hook (`_ask_kwargs`), runs `agent.ask(...)`,
   subscribes to the stream to tally usage and forward events, then persists events +

@@ -10,6 +10,7 @@ import json
 import types
 from contextlib import asynccontextmanager
 from pathlib import PurePosixPath
+from typing import Literal
 
 from acp import schema as acp_schema
 from ag2 import Agent
@@ -20,6 +21,31 @@ from ag2.tools.sandbox.base import ExecResult
 from fast_depends import Provider
 
 from assistant.compaction import CHECKPOINT_SCHEMA
+from assistant.gateway.history import ChatEventLog
+
+
+class TransientChatEventLog(ChatEventLog):
+    """The real chat log, failing its next load or replay once ``fail_once`` arms it."""
+
+    def __init__(self, store):
+        super().__init__(store)
+        self._failing: Literal["load", "replay"] | None = None
+
+    def fail_once(self, stage: Literal["load", "replay"]) -> None:
+        self._failing = stage
+
+    def _maybe_fail(self, stage: Literal["load", "replay"]) -> None:
+        if self._failing == stage:
+            self._failing = None
+            raise OSError("synthetic transient history read failure")
+
+    async def load_current(self, stream_id):
+        self._maybe_fail("load")
+        return await super().load_current(stream_id)
+
+    async def replay(self, stream_id, current, archive=None):
+        self._maybe_fail("replay")
+        return await super().replay(stream_id, current, archive)
 
 
 def text_block(text: str) -> acp_schema.TextContentBlock:

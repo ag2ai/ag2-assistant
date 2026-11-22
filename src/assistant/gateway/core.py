@@ -284,6 +284,7 @@ class Gateway:
         model_factory: Callable | None = None,
         environment_factory: Callable | None = None,
         history_factory: Callable | None = None,
+        chat_log_factory: Callable[[SerialStore], ChatEventLog] | None = None,
         subscription_auth: CodexAuth | None = None,
         google: GoogleAuth | None = None,
         plugins: Iterable[Plugin] = (),
@@ -303,6 +304,7 @@ class Gateway:
         self._environment_factory = environment_factory or docker_environment
         self._plugins = tuple(plugins)
         self._history_factory = history_factory or (lambda path: SqliteKnowledgeStore(str(path)))
+        self._chat_log_factory = chat_log_factory or ChatEventLog
         self._subscription_auth = subscription_auth or CodexAuth(self._config.paths)
         self._google = google or GoogleAuth(self._config.paths)
         self._resources = ProfileResources()
@@ -670,7 +672,7 @@ class Gateway:
                     ),
                 ).value
             )
-            self._writer = ChatEventLog(self._event_store)
+            self._writer = self._chat_log_factory(self._event_store)
 
     async def refresh(self) -> None:
         """Refresh runtime configuration and retire obsolete owned resources."""
@@ -838,7 +840,9 @@ class Gateway:
                 condition=TypeCondition(CompactionStarted) | CompactionCompleted | CompactionFailed,
             )
             self._streams[chat_id] = stream
-            self._chat_activity[chat_id] = ChatActivity()
+            # Keep the sidebar projection until the log loads; forget its fingerprint to force one.
+            self._chat_activity.setdefault(chat_id, ChatActivity())
+            self._synced.pop(chat_id, None)
             if is_internal_stream(chat_id):
                 weakref.finalize(
                     stream,
@@ -893,15 +897,15 @@ class Gateway:
         if self._writer is not None and chat_id not in self._active:
             digest = None
             try:
-                digest = _log_digest(await self._read_log(chat_id))
+                digest = await self._log_fingerprint(chat_id)
                 if fresh or chat_id not in self._synced or self._synced[chat_id] != digest:
                     events = await self._writer.load_current(chat_id)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
                     await stream.history.replace(events)
                     self._chat_activity[chat_id] = await self._replay_activity(chat_id, events)
+                self._synced[chat_id] = digest
             except Exception as exc:
                 log_suppressed("chat stream hydrate", exc, chat_id=chat_id)
                 # A corrupt log keeps whatever the stream already holds.
-            self._synced[chat_id] = digest
         return stream
 
     async def _replay_activity(self, chat_id: str, events: list) -> ChatActivity:
@@ -930,7 +934,7 @@ class Gateway:
                 return self._chat_activity[chat_id]
             cached = self._chat_activity.get(chat_id)
             try:
-                digest = _log_digest(await self._read_log(chat_id))
+                digest = await self._log_fingerprint(chat_id)
                 if cached is not None and self._synced.get(chat_id) == digest:
                     return cached
                 events = await self._writer.load_current(chat_id)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
@@ -963,7 +967,11 @@ class Gateway:
         assert self._writer is not None
         async with self._log_locks.setdefault(chat_id, asyncio.Lock()):
             await self._writer.persist(chat_id, list(await stream.history.get_events()))  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
-            self._synced[chat_id] = _log_digest(await self._read_log(chat_id))
+            self._synced[chat_id] = await self._log_fingerprint(chat_id)
+
+    async def _log_fingerprint(self, chat_id: str) -> str | None:
+        """The sha256 of the chat's stored log, hashed in a worker thread."""
+        return await asyncio.to_thread(_log_digest, await self._read_log(chat_id))
 
     async def _draft_history(self, context: ConversationContext) -> list:
         return await self.replay_events(str(context.stream.id))
@@ -997,7 +1005,7 @@ class Gateway:
                         await stream.history.replace([*current, event])
                     log_suppressed("draft event delivery", exc, chat_id=chat_id)
                 try:
-                    self._synced[chat_id] = _log_digest(await self._read_log(chat_id))
+                    self._synced[chat_id] = await self._log_fingerprint(chat_id)
                 except Exception as exc:
                     self._synced.pop(chat_id, None)
                     log_suppressed("draft log synchronization", exc, chat_id=chat_id)
