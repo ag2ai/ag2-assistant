@@ -88,8 +88,8 @@ tokens are present, and serves the FastAPI app from `create_app()`
 is future work — the agent composes onto a Hub without changing the client API.
 
 **Security posture:** the gateway is single-user and local-first. The only access
-control is an **origin guard** on `/api/*` plus a per-socket origin check on the
-WebSocket routes (close code 1008). There are no auth headers; a remote deployment
+control is an **origin guard** on `/api/*` and every state-changing request, plus a
+per-socket origin check on the WebSocket routes (close code 1008). There are no auth headers; a remote deployment
 must sit behind its own auth proxy. See §12.
 
 ---
@@ -648,10 +648,16 @@ folders. A run's own output lives in its chat transcript, not the workspace.
 
 ## 12. Security model
 
-- **Origin guard** on every `/api/*` request and a per-socket origin check on both
-  WebSockets — the only access control. Same-origin browser traffic and non-browser
-  callers pass; cross-origin browser traffic is rejected (HTTP) / closed 1008 (WS).
-  Allowlist via `AG2ASSISTANT_ALLOWED_ORIGINS`.
+- **Origin guard** on every `/api/*` request, every state-changing request elsewhere
+  (e.g. `POST /hitl/{id}/answer`, also on the standalone `HitlServer`), and a per-socket
+  origin check on both WebSockets — the only access control. Same-origin browser traffic
+  and non-browser callers pass; cross-origin browser traffic is rejected (HTTP) / closed
+  1008 (WS). Allowlist via `AG2ASSISTANT_ALLOWED_ORIGINS`. Shared helpers live in
+  `assistant/web_security.py`.
+- **Content-Security-Policy** on every server-rendered page: the SPA index allows only
+  its own scripts, the three.js CDN, blob worklets and its inline importmap (by hash);
+  HITL pages allow only a per-response nonce; the OAuth callback page allows no script.
+  Values reflected into these pages are escaped.
 - **Single-user, local-first.** No auth headers; a remote deployment must front the
   gateway with its own auth.
 - **Filesystem sandboxing.** Workspace reads/writes go through `workspace.resolve()`

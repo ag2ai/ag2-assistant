@@ -9,16 +9,18 @@ Open Sauce body, signature coral accent).
 import asyncio
 import html
 import json
+import secrets
 import uuid
 import webbrowser
 from typing import Protocol
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from assistant.hitl.base import PendingGuard, Question
+from assistant.web_security import guarded, origin_ok
 
 _PAGE = """<!doctype html>
 <html lang="en">
@@ -29,7 +31,7 @@ _PAGE = """<!doctype html>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&display=swap" rel="stylesheet">
 <link href="https://fonts.cdnfonts.com/css/open-sauce-sans" rel="stylesheet">
-<style>
+<style nonce="{nonce}">
   :root {{
     --ink: #171717; --muted: #737373; --line: #e6e6e6;
     --accent: #f95339; --bg: #ffffff;
@@ -75,8 +77,8 @@ _PAGE = """<!doctype html>
 </head>
 <body>
   <div class="card" id="card">{body}</div>
-<script>
-  const ID = "{req_id}";
+<script nonce="{nonce}">
+  const ID = {req_id_js};
   async function answer(value) {{
     await fetch(`/hitl/${{ID}}/answer`, {{
       method: "POST", headers: {{"Content-Type": "application/json"}},
@@ -90,6 +92,13 @@ _PAGE = """<!doctype html>
     const v = document.getElementById("freetext").value.trim();
     if (v) answer(v);
   }}
+  for (const b of document.querySelectorAll("button[data-answer]")) {{
+    b.addEventListener("click", () => answer(b.dataset.answer));
+  }}
+  document.getElementById("send")?.addEventListener("click", submitText);
+  document.getElementById("freetext")?.addEventListener("keydown", (e) => {{
+    if (e.key === "Enter") submitText();
+  }});
 </script>
 </body>
 </html>"""
@@ -111,18 +120,13 @@ def _render_body(question: Question) -> str:
         for i, opt in enumerate(question.options):
             lower = opt.strip().lower()
             cls = "secondary" if lower in deny_words else ("primary" if i == 0 else "")
-            esc = html.escape(opt)
-            # The JS call goes inside a double-quoted onclick="…" attribute, so the
-            # whole call (incl. its JSON double-quotes) must be HTML-escaped or the
-            # quotes collide and break the page's JavaScript.
-            onclick = html.escape(f"answer({_js_str(opt)})", quote=True)
-            parts.append(f'<button class="{cls}" onclick="{onclick}">{esc}</button>')
+            esc = html.escape(opt, quote=True)
+            parts.append(f'<button class="{cls}" data-answer="{esc}">{esc}</button>')
         parts.append("</div>")
     else:
         parts.append(
-            '<input type="text" id="freetext" placeholder="Type your answer…" '
-            "autofocus onkeydown=\"if(event.key==='Enter')submitText()\">"
-            '<div class="options"><button class="primary" onclick="submitText()">Send</button></div>'
+            '<input type="text" id="freetext" placeholder="Type your answer…" autofocus>'
+            '<div class="options"><button class="primary" id="send">Send</button></div>'
         )
 
     parts.append('<div class="foot">Requested by your AG2 Assistant assistant</div>')
@@ -130,18 +134,34 @@ def _render_body(question: Question) -> str:
 
 
 def _js_str(s: str) -> str:
-    """Safely embed a Python string as a JS string literal."""
-    return json.dumps(s)
+    """Embed a Python string as a JS string literal, safe inside a <script> or attribute."""
+    return json.dumps(s).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 
 
 class _Answer(BaseModel):
     answer: str
 
 
-def _already_handled_page(req_id: str) -> str:
-    return _PAGE.format(
+def _page_csp(nonce: str) -> str:
+    """CSP for a HITL page: only its own nonce'd script/style, fonts, and same-origin fetch."""
+    return (
+        f"default-src 'none'; script-src 'nonce-{nonce}'; "
+        f"style-src 'nonce-{nonce}' https://fonts.googleapis.com https://fonts.cdnfonts.com; "
+        "font-src https://fonts.gstatic.com https://fonts.cdnfonts.com; connect-src 'self'; "
+        "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    )
+
+
+def _page_response(title: str, req_id_js: str, body: str) -> HTMLResponse:
+    nonce = secrets.token_urlsafe(16)
+    page = _PAGE.format(title=title, req_id_js=req_id_js, body=body, nonce=nonce)
+    return HTMLResponse(page, headers={"Content-Security-Policy": _page_csp(nonce)})
+
+
+def _already_handled_page() -> HTMLResponse:
+    return _page_response(
         title="Done",
-        req_id=req_id,
+        req_id_js='""',
         body='<div class="done"><div class="tick">&#10003;</div>'
         '<h1>Already handled</h1><p class="detail">This request has '
         "been answered or has expired. You can close this tab.</p></div>",
@@ -167,13 +187,11 @@ def add_hitl_routes(app, registry: HitlRegistry) -> None:
     async def hitl_page(req_id: str):
         question = registry.question_for(req_id)
         if question is None:
-            return HTMLResponse(_already_handled_page(req_id))
-        return HTMLResponse(
-            _PAGE.format(
-                title=question.kind.title(),
-                req_id=req_id,
-                body=_render_body(question),
-            )
+            return _already_handled_page()
+        return _page_response(
+            title=html.escape(question.kind.title()),
+            req_id_js=_js_str(req_id),
+            body=_render_body(question),
         )
 
     @app.post("/hitl/{req_id}/answer")
@@ -203,6 +221,16 @@ class HitlServer:
 
     def _build_app(self):
         app = FastAPI()
+
+        @app.middleware("http")
+        async def _origin_guard(request: Request, call_next):
+            """Reject cross-origin state-changing requests (e.g. a foreign page answering)."""
+            if guarded(request.method, request.url.path) and not origin_ok(
+                request.headers.get("origin"), request.headers.get("host")
+            ):
+                return JSONResponse({"error": "cross-origin request rejected"}, status_code=403)
+            return await call_next(request)
+
         add_hitl_routes(app, self)
         return app
 

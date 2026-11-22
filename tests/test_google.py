@@ -17,6 +17,7 @@ from assistant.config import Config
 from assistant.integrations import google_auth
 from assistant.integrations.google_auth import GoogleAuth, install_hint, libs_available
 from assistant.tools.google import _decode_drive_content, _extract_drive_id, build_google_tools
+from assistant.web_security import STATIC_PAGE_CSP
 from tests.support.apps import make_profile_app
 
 # Finders stand in for "are the optional [google] libs importable?" — the real one is
@@ -242,6 +243,14 @@ def test_google_login_url_and_callback(paths):
             "no longer valid"
             in client.get("/api/google/callback", params={"state": "bogus", "code": "x"}).text
         )
+
+
+def test_google_callback_escapes_reflected_error(paths):
+    with _client(paths, google=GoogleAuth(paths, finder=HAS_LIBS)) as client:
+        page = client.get("/api/google/callback", params={"error": "<script>alert(1)</script>"})
+        assert "<script>" not in page.text
+        assert "&lt;script&gt;alert(1)&lt;/script&gt;" in page.text
+        assert page.headers["content-security-policy"] == STATIC_PAGE_CSP
 
 
 def test_google_credentials_upload_endpoint(paths):
