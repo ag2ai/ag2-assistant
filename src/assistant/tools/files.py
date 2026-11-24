@@ -14,7 +14,7 @@ _MAX_TEXT_LINES = 500
 
 
 def _file_target(path: str, permissions: PermissionManager) -> Path:
-    """Resolve relative paths against the configured workspace."""
+    """Resolve a path, relative ones against the configured workspace."""
     raw = path.strip()
     if not raw:
         raise ValueError("A file path is required.")
@@ -24,8 +24,8 @@ def _file_target(path: str, permissions: PermissionManager) -> Path:
             raise ValueError(
                 "No workspace is available for a relative path — use an absolute path."
             )
-        target = (permissions.workspace_dir / target).resolve()
-    return target
+        target = permissions.workspace_dir / target
+    return target.resolve(strict=False)
 
 
 def _text_lines(target: Path) -> Iterator[tuple[str | None, int, int, bool]]:

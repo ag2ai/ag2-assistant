@@ -459,7 +459,8 @@ class PermissionManager:
             READ_WRITE,
         )
 
-        target = Path(target).expanduser()
+        # Resolve the target itself, so a symlink is checked where it points.
+        target = Path(target).expanduser().resolve(strict=False)
         folder = _norm(target if target.is_dir() else target.parent)
 
         if self.workspace_dir is not None and (
