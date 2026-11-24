@@ -111,3 +111,30 @@ async def test_a_refusal_names_where_the_link_points(tmp_path, layout):
     manager = _manager(tmp_path, workspace, DenyingAsker())
     out = await write_file_impl(str(workspace / "link"), "PWNED", manager, overwrite=True)
     assert str(secrets.resolve()) in out
+
+
+async def test_a_link_loop_is_refused_without_raising(tmp_path, layout):
+    workspace, _secrets = layout
+    (workspace / "loopa").symlink_to(workspace / "loopb")
+    (workspace / "loopb").symlink_to(workspace / "loopa")
+    manager = _manager(tmp_path, workspace, DenyingAsker())
+    out = await read_file_impl(str(workspace / "loopa"), manager)
+    assert isinstance(out, str)
+    assert await manager.check(workspace / "loopa") is False
+
+
+async def test_a_dangling_link_out_of_the_workspace_creates_nothing(tmp_path, layout):
+    workspace, secrets = layout
+    (workspace / "dangling").symlink_to(secrets / "new.txt")
+    manager = _manager(tmp_path, workspace, DenyingAsker())
+    out = await write_file_impl(str(workspace / "dangling"), "PWNED", manager, overwrite=True)
+    assert "denied write permission" in out
+    assert not (secrets / "new.txt").exists()
+
+
+async def test_a_new_file_under_a_dir_link_is_refused(tmp_path, layout):
+    workspace, secrets = layout
+    manager = _manager(tmp_path, workspace, DenyingAsker())
+    out = await write_file_impl(str(workspace / "dirlink" / "created.txt"), "x", manager)
+    assert "denied write permission" in out
+    assert not (secrets / "created.txt").exists()

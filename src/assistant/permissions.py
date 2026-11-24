@@ -460,7 +460,10 @@ class PermissionManager:
         )
 
         # Resolve the target itself, so a symlink is checked where it points.
-        target = Path(target).expanduser().resolve(strict=False)
+        try:
+            target = Path(target).expanduser().resolve(strict=False)
+        except (OSError, RuntimeError):
+            return False  # a link loop: refuse rather than guess
         folder = _norm(target if target.is_dir() else target.parent)
 
         if self.workspace_dir is not None and (

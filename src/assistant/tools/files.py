@@ -25,7 +25,10 @@ def _file_target(path: str, permissions: PermissionManager) -> Path:
                 "No workspace is available for a relative path — use an absolute path."
             )
         target = permissions.workspace_dir / target
-    return target.resolve(strict=False)
+    try:
+        return target.resolve(strict=False)
+    except (OSError, RuntimeError) as exc:
+        raise ValueError(f"Can't resolve {path}: {exc}") from exc
 
 
 def _text_lines(target: Path) -> Iterator[tuple[str | None, int, int, bool]]:
