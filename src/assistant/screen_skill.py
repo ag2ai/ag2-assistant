@@ -190,7 +190,7 @@ class ScreenSkillRuntime(MemoryRuntime):
         if script == "preview":
             try:
                 return await self._preview(context, dict(values))
-            except (ValueError, TypeError, OSError, TimeoutError) as exc:
+            except (ValueError, TypeError, OSError) as exc:
                 return f"Preview unavailable: {exc}"
         if script == "list_screens":
             return list_screens(self.root).model_dump_json()

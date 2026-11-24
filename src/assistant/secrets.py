@@ -310,7 +310,7 @@ class SecretStore:
         try:
             self.update_secret(sid, default=True)
             return True
-        except (KeyError, ValueError):
+        except KeyError, ValueError:
             return False
 
     def set_key(self, provider: str, value: str) -> bool:

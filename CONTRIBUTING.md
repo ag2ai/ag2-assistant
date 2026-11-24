@@ -12,7 +12,7 @@ cd ag2-assistant
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-pre-commit install
+prek install
 ```
 
 ## Before you open a pull request

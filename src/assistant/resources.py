@@ -1,6 +1,7 @@
 """Profile-owned resource generations held by invocations until their scopes exit."""
 
 import asyncio
+import builtins
 import hashlib
 import inspect
 import json
@@ -222,7 +223,7 @@ class OwnedSqliteStore:
     async def write(self, path: str, content: str) -> None:
         await self._run(self._store.write, path, content)
 
-    async def list(self, path: str = "/") -> list[str]:
+    async def list(self, path: str = "/") -> builtins.list[str]:
         return await self._run(self._store.list, path)
 
     async def delete(self, path: str) -> None:

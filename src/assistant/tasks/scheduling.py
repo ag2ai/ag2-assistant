@@ -67,7 +67,7 @@ def parse_dt(iso: str | None) -> datetime | None:
         return None
     try:
         dt = datetime.fromisoformat(iso)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return None
     # Honour an explicit timezone as-is (so schedules don't drift by server tz);
     # only naive strings are assumed to be in the local timezone.
@@ -137,7 +137,7 @@ class Scheduler:
         while not self._stop.is_set():
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=self._interval)
-            except (asyncio.TimeoutError, TimeoutError):
+            except TimeoutError:
                 pass
             if self._stop.is_set():
                 break

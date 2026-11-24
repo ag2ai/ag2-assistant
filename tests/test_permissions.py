@@ -689,7 +689,6 @@ async def test_manager_mints_task_scoped_on_always(tmp_path):
     """A manager bound to a task_id mints its "always allow" grant into that task's
     scope, not the global one — so it persists across that task's future runs but
     never leaks into other chats/tasks."""
-    from assistant.hitl.base import Question
 
     store = PermissionStore(path=tmp_path / "perm.json")
 

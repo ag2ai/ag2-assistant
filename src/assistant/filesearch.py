@@ -44,7 +44,7 @@ def _readable_roots(store, profile: str, chat_id: str, task_id: str = "") -> lis
     for f in store.list_folders():
         try:
             p = Path(f.get("path", "")).expanduser().resolve()
-        except (OSError, ValueError):
+        except OSError, ValueError:
             continue
         if p.is_dir() and store.mode_for(p, profile, chat_id, task_id) is not None:
             readable.append(p)
@@ -85,7 +85,7 @@ def list_folder_dir(path) -> dict | None:
     (noise pruned, absolute paths), or None if `path` isn't a readable directory."""
     try:
         p = Path(path).expanduser().resolve()
-    except (OSError, ValueError, RuntimeError):
+    except OSError, ValueError, RuntimeError:
         return None
     if not p.is_dir():
         return None
@@ -105,7 +105,7 @@ def list_folder_dir(path) -> dict | None:
                     files.append({"name": name, "path": str(item), "size": item.stat().st_size})
             except OSError:
                 continue  # unreadable entry (broken symlink, race) — skip, never crash
-    except (PermissionError, OSError):
+    except PermissionError, OSError:
         return None
     dirs.sort(key=lambda d: d["name"].lower())
     files.sort(key=lambda f: f["name"].lower())

@@ -102,7 +102,7 @@ def _history_chat_id(raw: str) -> str | None:
             continue
         try:
             chat_id = json.loads(line)["chat"]
-        except (ValueError, KeyError):
+        except ValueError, KeyError:
             continue
     return chat_id
 

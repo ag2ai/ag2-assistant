@@ -7,6 +7,7 @@ in-process lock (`SerialStore`).
 """
 
 import asyncio
+import builtins
 import uuid
 from datetime import datetime
 
@@ -31,7 +32,7 @@ class SerialStore:
         async with self._lock:
             return await self._inner.read(path)
 
-    async def list(self, path: str = "/") -> list[str]:
+    async def list(self, path: str = "/") -> builtins.list[str]:
         async with self._lock:
             return await self._inner.list(path)
 

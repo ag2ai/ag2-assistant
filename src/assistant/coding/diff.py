@@ -89,7 +89,7 @@ def _candidate_files(directory: str) -> list[str]:
             )
             rels = [line for line in out.stdout.splitlines() if line]
             return rels[:MAX_FILES]
-        except (OSError, subprocess.CalledProcessError):
+        except OSError, subprocess.CalledProcessError:
             pass  # fall through to the plain walk
     rels = []
     for root, dirs, files in os.walk(directory):

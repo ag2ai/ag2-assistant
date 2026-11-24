@@ -157,7 +157,7 @@ class _PersistentSession:
             close.set()
         try:
             await asyncio.wait_for(task, 10)
-        except (TimeoutError, asyncio.CancelledError):
+        except TimeoutError, asyncio.CancelledError:
             task.cancel()
 
 

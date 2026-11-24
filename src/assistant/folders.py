@@ -367,7 +367,7 @@ class FolderStore:
         for f in self._folders:
             try:
                 p = Path(f.get("path", "")).expanduser().resolve()
-            except (OSError, ValueError, RuntimeError):
+            except OSError, ValueError, RuntimeError:
                 continue
             mode = self.mode_for(p, profile, chat_id, task_id)
             if mode is not None:
@@ -430,7 +430,7 @@ class FolderStore:
         or ``(None, None)`` if it resolves under no granted root — the shared resolver."""
         try:
             p = Path(abs_path).expanduser().resolve()
-        except (OSError, ValueError, RuntimeError):
+        except OSError, ValueError, RuntimeError:
             return None, None
         root = next(
             (r for r in self.readable_roots(profile, chat_id, task_id) if p == r or r in p.parents),
