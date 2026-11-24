@@ -44,8 +44,8 @@ npm --prefix web test              # SPA unit tests (node:test over web/src/**/*
 npm --prefix web run build         # rebuild the SPA bundle if you touched web/
 ```
 
-CI runs the unit tests on every Python version `pyproject.toml` promises — 3.12, 3.13 and
-3.14 — so a change that only works on the newest one fails there even though it passed for
+CI runs the unit tests on every Python version `pyproject.toml` promises — 3.12, 3.13, 3.14
+and 3.15 — so a change that only works on the newest one fails there even though it passed for
 you. To reproduce a specific leg:
 
 ```bash
