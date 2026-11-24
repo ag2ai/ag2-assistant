@@ -36,7 +36,7 @@ jobs:
           # release change `uv version --short` or `uv build` between the CI run
           # that passed and the release that publishes — on the one workflow you
           # can't safely re-run after the fact.
-          version: "0.11.28"
+          version: "0.13.8"
           enable-cache: false
 
       - name: Check release tag matches project version
