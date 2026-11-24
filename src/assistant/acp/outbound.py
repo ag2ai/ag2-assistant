@@ -131,7 +131,7 @@ class Outbound:
     def pending(self) -> list[dict]:
         try:
             data = json.loads(self._path.read_text())
-        except (OSError, ValueError):
+        except OSError, ValueError:
             return []
         return (
             [entry for entry in data if isinstance(entry, dict)] if isinstance(data, list) else []

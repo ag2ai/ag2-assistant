@@ -3,7 +3,7 @@
 #   powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/ag2ai/ag2-assistant/main/scripts/install.ps1 | iex"
 #
 # Installs uv first if it isn't present (uv also downloads a compatible Python,
-# so no system Python 3.12 is required). Re-running the script upgrades an
+# so no system Python 3.14 is required). Re-running the script upgrades an
 # existing install to the latest commit on the ref.
 #
 # Environment overrides:
@@ -31,7 +31,7 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
 }
 
 Write-Host "Installing ag2-assistant ($Ref) ..."
-uv tool install --force --python ">=3.12" $Spec
+uv tool install --force --python ">=3.14" $Spec
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Host ""

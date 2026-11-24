@@ -9,7 +9,7 @@ description = "AG2 Assistant — a personal AI assistant powered by AG2's framew
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 dependencies = [
     # Dev installs, CI and the Docker image all resolve this through uv.lock, so they
     # run the same AG2 the published wheel asks for. ddgs powers the native
@@ -47,7 +47,7 @@ dev = [
     "ty>=0.0.97,<0.0.98",
     "pyrefly>=1.4,<1.5",
     "types-PyYAML>=6.0",
-    "pre-commit>=4.0.0",
+    "prek>=0.5.11",
     "types-jsonschema>=4.26.0.20260518",
     # The unit suite and mypy exercise the Gemini and OpenAI paths, so a dev install carries both.
     "ag2[gemini,openai]>=1.3.4",
@@ -89,7 +89,7 @@ markers = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
@@ -101,7 +101,7 @@ quote-style = "double"
 [tool.mypy]
 # `files` is configured rather than passed on the command line so a bare `mypy`
 # means the same thing in a terminal, in the pre-commit hook and in CI.
-python_version = "3.12"
+python_version = "3.14"
 mypy_path = "src"
 files = ["src/assistant"]
 plugins = ["pydantic.mypy"]
@@ -124,7 +124,7 @@ ignore_missing_imports = true
 
 [tool.ty.environment]
 # Same target and source root as mypy; the interpreter is the project's .venv.
-python-version = "3.12"
+python-version = "3.14"
 root = ["src"]
 
 [tool.ty.src]
@@ -133,7 +133,7 @@ include = ["src/assistant"]
 [tool.pyrefly]
 project-includes = ["src/assistant"]
 search-path = ["src"]
-python-version = "3.12"
+python-version = "3.14"
 # The same three untyped libraries mypy names in its overrides.
 ignore-missing-imports = ["cron_descriptor.*", "googleapiclient.*", "google_auth_oauthlib.*"]
 

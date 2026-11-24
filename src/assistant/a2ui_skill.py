@@ -189,7 +189,7 @@ def _fields_from(args: dict[str, Any] | Sequence[str] | None) -> dict[str, Any] 
     if len(items) == 1:
         try:
             value = json.loads(items[0])
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return None
         return value if isinstance(value, dict) else None
     fields: dict[str, Any] = {}
@@ -198,7 +198,7 @@ def _fields_from(args: dict[str, Any] | Sequence[str] | None) -> dict[str, Any] 
             return None
         try:
             fields[key[2:]] = json.loads(raw)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             fields[key[2:]] = raw
     return fields
 

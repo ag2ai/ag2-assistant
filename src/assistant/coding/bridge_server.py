@@ -53,7 +53,7 @@ async def _relay(reader, writer, proc) -> None:
                     break
                 proc.stdin.write(data)
                 await proc.stdin.drain()
-        except (ConnectionError, BrokenPipeError):
+        except ConnectionError:
             pass
         finally:
             if proc.stdin is not None and not proc.stdin.is_closing():
@@ -67,7 +67,7 @@ async def _relay(reader, writer, proc) -> None:
                     break
                 writer.write(data)
                 await writer.drain()
-        except (ConnectionError, BrokenPipeError):
+        except ConnectionError:
             pass
 
     t1 = asyncio.create_task(sock_to_proc())
@@ -81,7 +81,7 @@ async def _relay(reader, writer, proc) -> None:
             try:
                 proc.terminate()
                 await asyncio.wait_for(proc.wait(), timeout=5)
-            except (asyncio.TimeoutError, ProcessLookupError):
+            except asyncio.TimeoutError, ProcessLookupError:
                 try:
                     proc.kill()
                 except ProcessLookupError:
@@ -118,7 +118,7 @@ class BridgeServer:
     async def handle(self, reader, writer) -> None:
         try:
             frame = await read_frame(reader)
-        except (ConnectionError, ValueError):
+        except ConnectionError, ValueError:
             writer.close()
             return
 

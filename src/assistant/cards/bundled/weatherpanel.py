@@ -62,11 +62,11 @@ def condition_for(weather_code, windspeed_kmph=0.0) -> str:
     """Map a WWO weather code and wind speed to a drawable condition."""
     try:
         code = int(weather_code)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         code = -1
     try:
         wind = float(windspeed_kmph)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         wind = 0.0
 
     condition = _CODE_TO_CONDITION.get(code, "cloudy")
@@ -91,7 +91,7 @@ def _hour_label(slot_time) -> str:
     """Format a wttr.in hourly `time` ("0", "300", … "2100") as "12am" / "3pm"."""
     try:
         hour = int(slot_time) // 100
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return "?"
     suffix = "am" if hour < 12 else "pm"
     display = hour % 12 or 12
@@ -106,7 +106,7 @@ def _rain_row(today: dict) -> dict | None:
         try:
             chance = int(h.get("chanceofrain", 0))
             precip = float(h.get("precipMM", 0) or 0)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
         slots.append((h.get("time"), chance, precip))
     if not slots:
@@ -165,7 +165,7 @@ def _hours(data: dict, current: dict, metric: bool) -> list[dict]:
         for slot in slots:
             try:
                 at = int(slot.get("time", "")) // 100
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 continue
             slot_temp = slot.get("tempC") if metric else slot.get("tempF")
             if (day == 0 and at <= hour) or slot_temp is None or len(strip) >= HOURS:

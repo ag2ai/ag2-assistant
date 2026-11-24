@@ -120,7 +120,7 @@ class PinnedTransport(httpx.HTTPTransport):
 def _bounded_timeout(timeout) -> float:
     try:
         seconds = float(timeout)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return DEFAULT_TIMEOUT
     if seconds != seconds:  # NaN
         return DEFAULT_TIMEOUT
@@ -305,7 +305,7 @@ class NativeWebFetch(Tool):
     async def _fetch(self, event: ToolCallEvent) -> str:
         try:
             args = dict(event.serialized_arguments)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             args = {}
         url = args.get("url")
         if not isinstance(url, str) or not url:

@@ -52,7 +52,7 @@ def _oversized_model(model: dict) -> bool:
     """Whether a client-supplied data model exceeds the bound on a persisted body."""
     try:
         return len(json.dumps(model, ensure_ascii=False).encode()) > MAX_A2UI_STATE_BYTES
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return True
 
 

@@ -161,7 +161,7 @@ def mention_forms(workspace_dir, path: str) -> list[str]:
         forms.append(p)
         try:
             forms.append(str(Path(p).resolve().relative_to(root)))
-        except (ValueError, OSError):
+        except ValueError, OSError:
             pass  # not under the workspace — absolute form only
     else:
         forms.append(p)
@@ -457,7 +457,7 @@ def list_dirs(path: str) -> dict | None:
                     dirs.append({"name": item.name, "path": str(item)})
             except OSError:
                 continue  # skip entries we can't stat (broken symlinks, etc.)
-    except (PermissionError, OSError):
+    except PermissionError, OSError:
         return None
     dirs.sort(key=lambda d: d["name"].lower())
     return {"path": str(p), "parent": (str(p.parent) if p.parent != p else None), "dirs": dirs}

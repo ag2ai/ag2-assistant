@@ -79,7 +79,7 @@ def libs_available(finder: Finder) -> bool:
     """
     try:
         return all(finder(m) is not None for m in _REQUIRED_MODULES)
-    except (ImportError, ValueError):  # parent package missing, or a broken spec
+    except ImportError, ValueError:  # parent package missing, or a broken spec
         return False
 
 
