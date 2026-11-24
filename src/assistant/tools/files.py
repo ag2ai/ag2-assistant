@@ -26,9 +26,12 @@ def _file_target(path: str, permissions: PermissionManager) -> Path:
             )
         target = permissions.workspace_dir / target
     try:
-        return target.resolve(strict=False)
+        resolved = target.resolve(strict=False)
     except (OSError, RuntimeError) as exc:
         raise ValueError(f"Can't resolve {path}: {exc}") from exc
+    if resolved.is_symlink():
+        raise ValueError(f"Can't resolve {path}: symlink loop")
+    return resolved
 
 
 def _text_lines(target: Path) -> Iterator[tuple[str | None, int, int, bool]]:

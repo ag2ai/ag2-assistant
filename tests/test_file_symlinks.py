@@ -119,7 +119,7 @@ async def test_a_link_loop_is_refused_without_raising(tmp_path, layout):
     (workspace / "loopb").symlink_to(workspace / "loopa")
     manager = _manager(tmp_path, workspace, DenyingAsker())
     out = await read_file_impl(str(workspace / "loopa"), manager)
-    assert isinstance(out, str)
+    assert "symlink loop" in out.lower()
     assert await manager.check(workspace / "loopa") is False
 
 

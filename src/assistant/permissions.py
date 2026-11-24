@@ -463,7 +463,9 @@ class PermissionManager:
         try:
             target = Path(target).expanduser().resolve(strict=False)
         except (OSError, RuntimeError):
-            return False  # a link loop: refuse rather than guess
+            return False  # a link loop (Python 3.12 raises)
+        if target.is_symlink():
+            return False  # a link loop (Python 3.13+ stops on the link)
         folder = _norm(target if target.is_dir() else target.parent)
 
         if self.workspace_dir is not None and (
