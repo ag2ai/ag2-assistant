@@ -121,3 +121,48 @@ async def test_remove_stays_unprompted(paths, tmp_path):
     await _run(tools["remove_skill"], {"name": "standalone"}, asker, tmp_path)
     assert asker.questions == []
     assert not _installed(config)
+
+
+async def test_install_question_names_the_skill(paths, tmp_path):
+    _config, tools = _setup(paths, tmp_path)
+    asker = AnsweringAsker(DENY)
+    await _install(tools["install_skill"], asker, tmp_path)
+    assert "me/standalone" in asker.questions[0].text
+
+
+@pytest.mark.parametrize("tool", ["install_skill", "run_code", "run_code_local"])
+async def test_a_command_argument_offers_no_always_allow(tool, tmp_path):
+    """A model-added `command` field must not turn a code tool into a shell prefix."""
+    asker = AnsweringAsker(ALLOW_ONCE)
+    manager = PermissionManager(PermissionStore(path=tmp_path / "permissions.json"), asker)
+    arguments = json.dumps({"skill_id": "me/x", "code": "print(1)", "command": "git status"})
+    assert await manager.check_command(tool, arguments) is True
+    options = asker.questions[0].options
+    assert always_allow_command_label(tool, "git") not in options
+    assert always_allow_command_label(tool, None) not in options
+    assert "git status" != asker.questions[0].detail
+    assert PermissionStore(path=tmp_path / "permissions.json").granted_commands() == []
+
+
+@pytest.mark.parametrize("tool", ["install_skill", "run_code", "run_code_local"])
+async def test_a_stored_prefix_rule_never_authorises_a_code_tool(tool, tmp_path):
+    path = tmp_path / "permissions.json"
+    path.write_text(json.dumps({"commands": [f"{tool}(git *)", tool]}))
+    asker = AnsweringAsker(DENY)
+    manager = PermissionManager(PermissionStore(path=path), asker)
+    arguments = json.dumps({"skill_id": "me/x", "code": "print(1)", "command": "git status"})
+    assert await manager.check_command(tool, arguments) is False
+    assert len(asker.questions) == 1
+
+
+@pytest.mark.parametrize("tool", ["install_skill", "run_code", "run_code_local"])
+def test_a_prefix_grant_is_refused_for_a_code_tool(tool, tmp_path):
+    with pytest.raises(ValueError):
+        PermissionStore(path=tmp_path / "permissions.json").grant_command(f"{tool}(git *)")
+
+
+@pytest.mark.parametrize("tool", ["install_skill", "run_code", "run_code_local"])
+def test_the_store_ignores_a_hand_edited_code_tool_rule(tool, tmp_path):
+    path = tmp_path / "permissions.json"
+    path.write_text(json.dumps({"commands": [f"{tool}(git *)"]}))
+    assert PermissionStore(path=path).is_command_allowed(tool, "git status") is False
