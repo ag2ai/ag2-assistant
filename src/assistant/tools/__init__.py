@@ -128,6 +128,14 @@ def docker_environment(**kwargs):
     return DockerEnvironment(**kwargs)
 
 
+def jailed_environment(**kwargs):
+    """Factory for the in-pod Landlock jail backend (lazily imported: it pulls
+    the launcher module only when the `jailed` sandbox is actually selected)."""
+    from assistant.tools.jail_sandbox import JailedEnvironment
+
+    return JailedEnvironment(**kwargs)
+
+
 def build_agent_tools(
     ctype: str = "",
     sandbox: str = "local",
@@ -149,7 +157,9 @@ def build_agent_tools(
 
     Args:
         ctype: the llm_configs type, which decides what `builtin` may name.
-        sandbox: "local" (approval-gated) or "docker" (container-isolated).
+        sandbox: "local" (approval-gated host subprocess), "docker"
+            (container-isolated), or "jailed" (in-pod Landlock jail: confined to
+            a scratch workspace, no network, no secrets, no approval prompt).
         capabilities: subset of CAPABILITIES, or None for everything.
         builtin: provider-native tools switched on for this model, `{id: options}`.
     """
@@ -189,7 +199,39 @@ def build_agent_tools(
                         "falling back to the local sandbox with approval prompts.",
                         stacklevel=2,
                     )
-        if use_docker:
+        if sandbox == "jailed":
+            # In-pod Landlock jail: model-run code is confined to the sandbox
+            # work directory, with no network and with secret env stripped (see
+            # assistant.tools.jail). No host runner and no approval prompts are
+            # offered — the jail, not a human, is what keeps code away from the
+            # user's files and the instance's secrets. The launcher fails closed
+            # if Landlock is unavailable, so a misconfigured host runs nothing
+            # rather than running unconfined.
+            env = (environment_factory or jailed_environment)()
+            tools += [
+                SandboxCodeTool(
+                    environment=env,
+                    name="run_code",
+                    description=(
+                        "Run code in an isolated in-pod sandbox: it can read and write "
+                        "only its own scratch workspace, has no network, and cannot see "
+                        "the user's files or any secrets. Runs immediately without asking. "
+                        "Use for calculation, data transformation, parsing and verification. "
+                        "Supported languages: {languages}."
+                    ),
+                ),
+                SandboxShellTool(
+                    environment=env,
+                    blocked=_SHELL_BLOCKED,
+                    name="run_shell",
+                    description=(
+                        "Run a shell command in an isolated in-pod sandbox with no network "
+                        "and no access to the user's files or secrets; runs immediately "
+                        "without asking."
+                    ),
+                ),
+            ]
+        elif use_docker:
             # Docker is available → give the agent BOTH a sandboxed runner (isolated,
             # silent) and a host runner (approval-gated), and let it choose per call.
             # Distinct names are required (providers reject duplicate tool names).
@@ -327,6 +369,7 @@ def build_agent_tools(
 __all__ = [
     "build_agent_tools",
     "docker_environment",
+    "jailed_environment",
     "available_capabilities",
     "capability_catalogue",
     "CAPABILITIES",
