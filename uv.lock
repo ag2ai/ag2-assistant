@@ -80,7 +80,7 @@ openai = [
 
 [[package]]
 name = "ag2-assistant"
-version = "0.7.1"
+version = "0.7.2"
 source = { editable = "." }
 dependencies = [
     { name = "ag2", extra = ["a2ui", "acp", "ag-ui", "ddgs", "mcp"] },
