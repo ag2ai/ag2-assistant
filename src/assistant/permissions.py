@@ -478,7 +478,13 @@ class PermissionManager:
             READ_WRITE,
         )
 
-        target = Path(target).expanduser()
+        # Resolve the target itself, so a symlink is checked where it points.
+        try:
+            target = Path(target).expanduser().resolve(strict=False)
+        except (OSError, RuntimeError):
+            return False  # a link loop (Python 3.12 raises)
+        if target.is_symlink():
+            return False  # a link loop (Python 3.13+ stops on the link)
         folder = _norm(target if target.is_dir() else target.parent)
 
         if self.workspace_dir is not None and (
