@@ -481,7 +481,7 @@ class PermissionManager:
         # Resolve the target itself, so a symlink is checked where it points.
         try:
             target = Path(target).expanduser().resolve(strict=False)
-        except (OSError, RuntimeError):
+        except OSError, RuntimeError:
             return False  # a link loop (Python 3.12 raises)
         if target.is_symlink():
             return False  # a link loop (Python 3.13+ stops on the link)
