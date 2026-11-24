@@ -86,7 +86,8 @@ SHELL_TOOLS = frozenset({"run_shell_command", "run_shell_local"})
 # prefix-like unit, so there is no narrower persistable rule to offer. The
 # *sandboxed* runners carry no approval middleware at all — sandboxed code stays
 # friction-free; this guard is strictly about host authority.
-CODE_TOOLS = frozenset({"run_code", "run_code_local"})
+# install_skill counts: it adds scripts that run_skill_script runs without asking.
+CODE_TOOLS = frozenset({"run_code", "run_code_local", "install_skill"})
 # The union: no persisted whole-tool grant may exist for these, at mint time
 # (grant_command raises) or match time (a hand-edited bare rule never matches).
 _NO_BLANKET = SHELL_TOOLS | CODE_TOOLS
