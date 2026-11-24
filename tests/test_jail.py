@@ -1,181 +1,236 @@
-# Copyright (c) 2026, AG2ai, Inc., AG2ai open-source projects maintainers and core contributors
-#
-# SPDX-License-Identifier: Apache-2.0
-"""Tests for the Landlock code jail (assistant.tools.jail / jail_sandbox).
+"""The Landlock jail launcher and the `jailed` code/shell backend.
 
-Two layers:
-  * Logic tests — run everywhere (incl. macOS CI): argv construction, env
-    scrubbing, ABI gating, and the fail-closed exit path.
-  * Enforcement tests — Linux + Landlock only (skipped elsewhere): actually
-    confine a child and prove it cannot read a secret outside the workdir but
-    can use the workdir. These are the real proof and run in the pod image's CI.
+Enforcement tests need Linux with Landlock ABI >= 4 and skip elsewhere.
 """
 
-from __future__ import annotations
-
-import os
+import contextlib
+import json
+import socket
 import subprocess
 import sys
-import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
+from ag2.events import ToolCallEvent, ToolResultEvent
 
+import assistant.tools as tools_mod
 from assistant.tools import jail
+from assistant.tools.jail import JailLimits
+from assistant.tools.jail_sandbox import JailedEnvironment, JailedSandbox
+from tests.support.apps import real_gateway
+from tests.support.fakes import ScriptedModels
 
-LINUX_LANDLOCK = sys.platform == "linux" and jail.landlock_abi() >= 1
-
-
-# --- logic (all platforms) --------------------------------------------------
-
-def test_build_argv_shape():
-    argv = jail.build_argv("/x/jail.py", "/usr/bin/python3", workdir="/w",
-                           cmd=["python3", "s.py"], allow_net=False, trust_host=False,
-                           limits=jail.JAIL_DEFAULTS)
-    assert argv[:3] == ["/usr/bin/python3", "-I", "/x/jail.py"]
-    assert "--workdir" in argv and argv[argv.index("--workdir") + 1] == "/w"
-    assert "--allow-net" not in argv and "--trust-host" not in argv
-    # everything after `--` is the verbatim command
-    assert argv[argv.index("--") + 1:] == ["python3", "s.py"]
+ABI = jail.landlock_abi()
+ENFORCED = ABI >= jail.MIN_ABI
+requires_jail = pytest.mark.skipif(not ENFORCED, reason="needs Linux with Landlock ABI >= 4")
+LAUNCHER = Path(jail.__file__).resolve()
 
 
-def test_build_argv_flags_opt_in():
-    argv = jail.build_argv("/x/jail.py", "py", workdir="/w", cmd=["echo", "hi"],
-                           allow_net=True, trust_host=True, limits=jail.JAIL_DEFAULTS)
-    assert "--allow-net" in argv and "--trust-host" in argv
+def _jailed(workdir: Path, *cmd: str) -> subprocess.CompletedProcess[str]:
+    """Run ``cmd`` through the launcher CLI with ``workdir`` as its scratch directory."""
+    argv = jail.build_argv(LAUNCHER, sys.executable, workdir=workdir, cmd=cmd, limits=JailLimits())
+    return subprocess.run(argv, capture_output=True, text=True, timeout=60)
 
 
-def test_clean_env_strips_secrets(monkeypatch):
-    monkeypatch.setenv("PATH", "/usr/bin")
-    monkeypatch.setenv("LANG", "C.UTF-8")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-secret")
-    monkeypatch.setenv("AG2SPACE_PERMISSIONS", "deny")
-    monkeypatch.setenv("AWS_SESSION_TOKEN", "tok")
-    monkeypatch.setenv("MY_API_TOKEN", "t")
-    monkeypatch.setenv("RANDOM_UNLISTED", "x")
-    env = jail.clean_env("/work")
-    assert env["PATH"] == "/usr/bin"
-    assert env["LANG"] == "C.UTF-8"
-    assert env["HOME"] == "/work" and env["TMPDIR"] == "/work"
-    for leaked in ("ANTHROPIC_API_KEY", "AG2SPACE_PERMISSIONS", "AWS_SESSION_TOKEN",
-                   "MY_API_TOKEN", "RANDOM_UNLISTED"):
-        assert leaked not in env
+def _python(workdir: Path, snippet: str) -> subprocess.CompletedProcess[str]:
+    return _jailed(workdir, sys.executable, "-I", "-c", snippet)
 
 
-def test_handled_fs_mask_grows_with_abi():
-    # v1 has bits 0..12; refer(v2), truncate(v3), ioctl_dev(v5) add in later ABIs.
-    assert jail._handled_fs(1) == 0x1FFF
-    assert jail._handled_fs(2) == 0x1FFF | (1 << 13)
-    assert jail._handled_fs(3) == 0x1FFF | (1 << 13) | (1 << 14)
-    assert jail._handled_fs(5) & (1 << 15)
-    # workdir access never includes device ioctl
-    assert not (jail._workdir_access(5) & (1 << 15))
+def _warns_without_jail():
+    """Expects the missing-Landlock warning on hosts that cannot enforce the jail."""
+    if ENFORCED:
+        return contextlib.nullcontext()
+    return pytest.warns(UserWarning, match="Landlock ABI")
 
 
-def test_landlock_abi_zero_off_linux():
-    if sys.platform != "linux":
-        assert jail.landlock_abi() == 0
-
-
-def test_confine_fails_closed_without_landlock():
-    # Where Landlock is absent, confine_and_exec must NOT exec; it returns 70.
-    if LINUX_LANDLOCK:
-        pytest.skip("Landlock present; fail-closed path exercised only without it")
-    rc = jail.confine_and_exec(["/bin/echo", "should-not-run"], workdir=tempfile.gettempdir(),
-                               ro_paths=[], allow_net=False, cpu_sec=5, mem_mb=256,
-                               fsize_mb=8, nofile=64, nproc=16, trust_host=False)
-    assert rc == 70
-
-
-def test_main_fail_closed_via_subprocess(tmp_path):
-    # End-to-end through the launcher CLI. On Linux+Landlock the echo runs
-    # confined (rc 0); elsewhere it must fail closed (rc 70, nothing printed).
-    out = subprocess.run(
-        [sys.executable, "-I", os.path.abspath(jail.__file__), "--workdir", str(tmp_path),
-         "--", "/bin/echo", "ran"],
-        capture_output=True, text=True,
-    )
-    if LINUX_LANDLOCK:
-        assert out.returncode == 0 and "ran" in out.stdout
-    else:
-        assert out.returncode == 70 and "ran" not in out.stdout
-
-
-# --- enforcement (Linux + Landlock only) ------------------------------------
-
-requires_landlock = pytest.mark.skipif(not LINUX_LANDLOCK, reason="needs Linux Landlock")
-
-
-def _run_confined(tmp_path: Path, snippet: str, secret: Path):
-    """Run `python -c snippet` under the launcher, workdir=tmp_path."""
-    return subprocess.run(
-        [sys.executable, "-I", os.path.abspath(jail.__file__), "--workdir", str(tmp_path),
-         "--", sys.executable, "-I", "-c", snippet],
-        capture_output=True, text=True,
-    )
-
-
-@requires_landlock
-def test_secret_outside_workdir_is_denied(tmp_path):
-    secret = Path(tempfile.mkdtemp()) / "llm-key"
-    secret.write_text("sk-secret-value")
-    snip = (f"open({str(secret)!r}).read(); print('READ_SECRET')")
-    out = _run_confined(tmp_path, snip, secret)
-    assert "READ_SECRET" not in out.stdout
-    assert out.returncode != 0  # PermissionError inside the jail
-
-
-@requires_landlock
-def test_workdir_is_writable(tmp_path):
-    snip = ("open('ok.txt','w').write('hi'); print('WROTE', open('ok.txt').read())")
-    out = _run_confined(tmp_path, snip, tmp_path / "ok.txt")
-    assert "WROTE hi" in out.stdout and out.returncode == 0
-
-
-@requires_landlock
-def test_network_is_denied(tmp_path):
-    snip = ("import socket\n"
-            "try:\n"
-            "    socket.create_connection(('127.0.0.1', 4000), timeout=2); print('CONNECTED')\n"
-            "except OSError as e:\n"
-            "    print('BLOCKED', type(e).__name__)")
-    out = _run_confined(tmp_path, snip, tmp_path)
-    assert "CONNECTED" not in out.stdout
-    assert "BLOCKED" in out.stdout
-
-
-# --- build_agent_tools wiring (no Landlock needed) --------------------------
-
-class _RecordingEnvironment:
+class RecordingEnvironment:
     """The slice of AG2's environment contract the sandbox tools construct against."""
 
     supported_languages = ("python",)
-    from pathlib import PurePosixPath as _P
-    workdir = _P("/workspace")
+    workdir = PurePosixPath("/workspace")
     host_workdir = None
 
     def __init__(self, **kwargs):
         self.kwargs = kwargs
 
 
-def _middleware(tool):
-    return tuple(tool._tool._middleware)
+# --- launcher logic (every platform) ---------------------------------------
 
 
-def test_jailed_offers_one_runner_pair_without_approval():
-    """`jailed` gives exactly run_code + run_shell, both silent (the jail — not a
-    human — is the guard), and NO unconfined host runner."""
-    import assistant.tools as tools_mod
-
-    tools = tools_mod.build_agent_tools(
-        "gemini",
-        sandbox="jailed",
-        capabilities=["code"],
-        environment_factory=_RecordingEnvironment,
+def test_build_argv_passes_the_command_verbatim_after_the_separator(tmp_path):
+    argv = jail.build_argv(
+        LAUNCHER, "/usr/bin/python3", workdir=tmp_path, cmd=["sh", "-c", "--"], limits=JailLimits()
     )
+    assert argv[:3] == ["/usr/bin/python3", "-I", str(LAUNCHER)]
+    assert argv[argv.index("--workdir") + 1] == str(tmp_path)
+    assert argv[argv.index("--") + 1 :] == ["sh", "-c", "--"]
+
+
+def test_clean_env_keeps_only_the_allow_list(tmp_path):
+    env = jail.clean_env(
+        {
+            "PATH": "/usr/bin",
+            "LANG": "C.UTF-8",
+            "ANTHROPIC_API_KEY": "sk-secret",
+            "DATABASE_URL": "postgres://u:p@db",
+            "HOME": "/home/agent",
+        },
+        tmp_path,
+    )
+    assert env == {
+        "PATH": "/usr/bin",
+        "LANG": "C.UTF-8",
+        "HOME": str(tmp_path),
+        "TMPDIR": str(tmp_path),
+        "PWD": str(tmp_path),
+    }
+
+
+def test_handled_fs_mask_grows_with_abi():
+    assert jail._handled_fs(1) == 0x1FFF
+    assert jail._handled_fs(2) == 0x1FFF | (1 << 13)
+    assert jail._handled_fs(3) == 0x1FFF | (1 << 13) | (1 << 14)
+    assert jail._handled_fs(5) & (1 << 15)
+    assert not jail._workdir_access(5) & (1 << 15)
+
+
+def test_ruleset_attr_carries_only_the_fields_the_abi_knows():
+    assert len(jail._ruleset_attr(3, allow_net=True)) == 8
+    assert len(jail._ruleset_attr(4, allow_net=False)) == 16
+    assert len(jail._ruleset_attr(6, allow_net=False)) == 24
+    assert jail._ruleset_attr(4, allow_net=True)[8:16] == bytes(8)
+
+
+@pytest.mark.skipif(sys.platform == "linux", reason="checks the non-Linux answer")
+def test_landlock_abi_is_zero_off_linux():
+    assert jail.landlock_abi() == 0
+
+
+@pytest.mark.skipif(ENFORCED, reason="checks the refusal on hosts without the jail")
+def test_the_launcher_refuses_to_run_without_an_enforceable_jail(tmp_path):
+    out = _jailed(tmp_path, "/bin/echo", "ran")
+    assert out.returncode == 70
+    assert "ran" not in out.stdout
+    assert "[jail] refusing to run unconfined" in out.stderr
+
+
+async def test_a_jailed_sandbox_runs_every_command_through_the_launcher(tmp_path):
+    sandbox = JailedSandbox(tmp_path)
+    try:
+        result = await sandbox.exec(["/bin/echo", "ran"])
+    finally:
+        await sandbox.aclose()
+    if ENFORCED:
+        assert (result.exit_code, result.output) == (0, "ran")
+    else:
+        assert result.exit_code == 70 and "refusing" in result.output
+
+
+# --- wiring (every platform) -----------------------------------------------
+
+
+def test_isolated_environment_follows_the_sandbox_mode():
+    assert tools_mod.isolated_environment("jailed") is JailedEnvironment
+    assert tools_mod.isolated_environment("docker") is tools_mod.docker_environment
+
+
+def test_jailed_offers_one_silent_runner_pair_and_no_host_runner():
+    with _warns_without_jail():
+        tools = tools_mod.build_agent_tools(
+            "gemini",
+            sandbox="jailed",
+            capabilities=["code"],
+            environment_factory=RecordingEnvironment,
+        )
     by_name = {t.name: t for t in tools}
     assert set(by_name) == {"run_code", "run_shell"}
-    assert _middleware(by_name["run_code"]) == ()
-    assert _middleware(by_name["run_shell"]) == ()
-    # no host runners are offered in jailed mode
-    assert not ({"run_code_local", "run_shell_local", "run_code_sandboxed"} & set(by_name))
+    assert tuple(by_name["run_code"]._tool._middleware) == ()
+    assert tuple(by_name["run_shell"]._tool._middleware) == ()
+
+
+async def test_the_gateway_runs_jailed_shell_commands_under_the_launcher(config):
+    config.tools.sandbox = "jailed"
+    models = ScriptedModels(
+        script=lambda cfg, model: [
+            ToolCallEvent(name="run_shell", arguments=json.dumps({"command": "echo jailed-ran"})),
+            "done",
+        ]
+    )
+    gateway = real_gateway(config, memory=False, onboard=False, model_factory=models)
+    await gateway.start()
+    results = []
+
+    async def collect(event):
+        if isinstance(event, ToolResultEvent):
+            results.append(event.result.parts[0].content)
+
+    (await gateway.stream_for("jail")).subscribe(collect)
+    try:
+        with _warns_without_jail():
+            await gateway.send_message("run it", chat_id="jail")
+    finally:
+        await gateway.close()
+    assert len(results) == 1
+    expected = "jailed-ran" if ENFORCED else "[jail] refusing to run unconfined"
+    assert expected in results[0]
+
+
+# --- enforcement (Linux, Landlock ABI >= 4) ---------------------------------
+
+
+@requires_jail
+def test_a_file_outside_the_workdir_is_denied(tmp_path_factory):
+    secret = tmp_path_factory.mktemp("secrets") / "llm-key"
+    secret.write_text("sk-secret-value")
+    out = _python(tmp_path_factory.mktemp("work"), f"print(open({str(secret)!r}).read())")
+    assert "sk-secret-value" not in out.stdout
+    assert "PermissionError" in out.stderr
+
+
+@requires_jail
+def test_the_parent_process_environment_is_unreadable(tmp_path):
+    out = _python(tmp_path, "import os; open(f'/proc/{os.getppid()}/environ').read()")
+    assert "PermissionError" in out.stderr
+
+
+@requires_jail
+def test_the_workdir_is_writable(tmp_path):
+    out = _python(tmp_path, "open('ok.txt', 'w').write('hi'); print(open('ok.txt').read())")
+    assert (out.returncode, out.stdout.strip()) == (0, "hi")
+    assert (tmp_path / "ok.txt").read_text() == "hi"
+
+
+@requires_jail
+def test_tcp_to_a_listening_port_is_denied(tmp_path):
+    with socket.socket() as server:
+        server.bind(("127.0.0.1", 0))
+        server.listen()
+        port = server.getsockname()[1]
+        out = _python(
+            tmp_path,
+            "import socket\n"
+            "try:\n"
+            f"    socket.create_connection(('127.0.0.1', {port}), timeout=2); print('CONNECTED')\n"
+            "except OSError as e:\n"
+            "    print(type(e).__name__)",
+        )
+    assert out.stdout.strip() == "PermissionError"
+
+
+@requires_jail
+@pytest.mark.skipif(ABI < 6, reason="signal scoping needs Landlock ABI 6")
+def test_the_parent_process_cannot_be_signalled(tmp_path):
+    out = _python(tmp_path, "import os; os.kill(os.getppid(), 0)")
+    assert "PermissionError" in out.stderr
+
+
+@requires_jail
+def test_ordinary_shell_work_runs_inside_the_jail(tmp_path):
+    out = _jailed(
+        tmp_path,
+        "/bin/sh",
+        "-c",
+        "echo a > f.txt && ls | wc -l && cat f.txt > /dev/null && date +%Y >/dev/null && echo ok",
+    )
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.split() == ["1", "ok"]

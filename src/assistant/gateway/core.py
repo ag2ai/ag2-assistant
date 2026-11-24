@@ -127,7 +127,7 @@ from assistant.self_tools import build_self_tools
 from assistant.settings import profile_settings
 from assistant.storage import SerialStore, new_id
 from assistant.system_tools import build_system_tools
-from assistant.tools import build_agent_tools, docker_environment
+from assistant.tools import build_agent_tools, isolated_environment
 from assistant.tools.mcp import build_mcp_tools
 from assistant.usage import UsageLedger
 from assistant.voice import build_voice_agent
@@ -155,6 +155,15 @@ _MENTIONS_STREAM_CAP = 2000
 _MENTIONS_RESULT_CAP = 50
 # An event-log segment file is ``{stream_id}.jsonl`` or ``{stream_id}.dropped-N.jsonl``.
 _DROPPED_SEGMENT_RE = re.compile(r"\.dropped-\d+$")
+
+
+_ISOLATED = frozenset({"docker", "jailed"})
+
+
+def _sandbox_key(config: Config) -> str:
+    """The lease key of the isolated code backend `config` asks for."""
+    tools = config.tools
+    return fingerprint([tools.sandbox, tools.docker_image, tools.docker_network])
 
 
 def _log_stream_id(entry: str) -> str:
@@ -301,7 +310,7 @@ class Gateway:
         # caller (or a test) decides what an agent is; both default to production.
         self._agent_factory = agent_factory or create_agent
         self._model_factory = model_factory
-        self._environment_factory = environment_factory or docker_environment
+        self._environment_factory = environment_factory
         self._plugins = tuple(plugins)
         self._history_factory = history_factory or (lambda path: SqliteKnowledgeStore(str(path)))
         self._chat_log_factory = chat_log_factory or ChatEventLog
@@ -1030,9 +1039,8 @@ class Gateway:
         await self._resources.reconcile(
             "mcp", [fingerprint(server) for server in servers if server.get("enabled", True)]
         )
-        docker_key = fingerprint([config.tools.docker_image, config.tools.docker_network])
         await self._resources.reconcile(
-            "docker", [docker_key] if config.tools.sandbox == "docker" else []
+            "sandbox", [_sandbox_key(config)] if config.tools.sandbox in _ISOLATED else []
         )
         configs = [config]
         store = LlmConfigStore(config.paths)
@@ -1072,7 +1080,8 @@ class Gateway:
         agent = await self._select_agent(profile_config, lease)
         task_id = task_id or await self._task_for_stream(chat_id)
         extra = self._ask_kwargs(asker, chat_id, task_id or "", config=effective)
-        docker_key = fingerprint([effective.tools.docker_image, effective.tools.docker_network])
+        sandbox_key = _sandbox_key(effective)
+        sandbox_factory = self._environment_factory or isolated_environment(effective.tools.sandbox)
 
         def mcp_factory(servers):
             return [
@@ -1083,7 +1092,7 @@ class Gateway:
 
         def environment_factory(**kwargs):
             return lease.acquire(
-                "docker", docker_key, lambda: SharedEnvironment(self._environment_factory(**kwargs))
+                "sandbox", sandbox_key, lambda: SharedEnvironment(sandbox_factory(**kwargs))
             )
 
         def local_environment_factory():

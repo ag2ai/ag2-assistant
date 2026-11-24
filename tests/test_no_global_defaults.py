@@ -28,6 +28,7 @@ _BOUNDARY = {
     "cli.py",  # the CLI entry point wires everything from os.environ
     "paths.py",  # Paths.from_env — the one place the layout comes from
     "config.py",  # load_config — composes resolve_config with the real environment
+    "tools/jail.py",  # the jail launcher's own process entry point hands its env to main()
 }
 
 # Still reading the environment below the boundary, each with the task that ends it.

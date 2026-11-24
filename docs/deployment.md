@@ -167,6 +167,25 @@ isolation), mount the host Docker socket and switch the sandbox to `docker` — 
 commented block in `docker-compose.yml`. Note the trade-off: mounting `/var/run/docker.sock`
 grants the container control of the host Docker daemon. Enable it only if you accept that.
 
+### Jailed sandbox
+
+Where there is no Docker daemon (a Kubernetes pod, for one), `AG2ASSISTANT_SANDBOX=jailed`
+confines model-run code with Linux [Landlock](https://docs.kernel.org/userspace-api/landlock.html)
+instead. It needs no privileges, but it needs Linux 6.7 or newer (Landlock ABI 4); on an older
+kernel, or off Linux, `run_code` and `run_shell` refuse to run rather than run unconfined.
+
+| Confines | How |
+|----------|-----|
+| Files | read+write only in the sandbox's scratch directory, read+exec on the runtime (`/usr`, `/lib`, the Python prefix, a few `/etc` files); everything else, `/proc` and secret mounts included, is denied |
+| Network | every TCP bind and connect is denied |
+| Processes | on Linux 6.12+ (ABI 6) jailed code cannot signal the assistant or reach abstract unix sockets |
+| Environment | only `PATH`, locale, `TZ`, `TERM` and `PYTHONHASHSEED` are passed on |
+| Resources | CPU time, file size and open files are capped; memory and process count are left to the container's cgroup |
+
+What it does not confine: UDP (pair it with a NetworkPolicy), path-named unix sockets, and
+skill scripts, which run on the host as they do with `local`. The scratch directory lasts as
+long as the profile's sandbox, so files persist across calls and chats.
+
 ### Coding agents from Docker (ACP host bridge)
 
 The assistant can hand real coding tasks to a locally installed CLI coding agent
@@ -238,7 +257,7 @@ Notes:
 |---------|---------|-------------------|
 | `AG2ASSISTANT_DATA_DIR` | install root: secrets, profiles, config, memory | `/data` |
 | `AG2ASSISTANT_WORKSPACE` | the agent's readable/writable file space | `/workspace` |
-| `AG2ASSISTANT_SANDBOX` | `local` (in-container) or `docker` (sibling containers) | `local` |
+| `AG2ASSISTANT_SANDBOX` | `local` (in-container), `docker` (sibling containers) or `jailed` (Landlock, see [below](#jailed-sandbox)) | `local` |
 | `AG2ASSISTANT_WEB_FETCH_ALLOW_PRIVATE` | set to `true` to let `web_fetch` reach loopback, private and link-local hosts | `false` |
 | `AG2ASSISTANT_DISABLE_NATIVE_TOOLS` | set to `true` to remove the tools that only work in the native app | `false` |
 | `TZ` | IANA timezone for scheduled tasks (wall-clock local) — **set this** | unset → `UTC` |
