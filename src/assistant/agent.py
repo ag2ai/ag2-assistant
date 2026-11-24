@@ -75,6 +75,7 @@ from assistant.skills import (
 )
 from assistant.stub_tool_results import StubOldToolResultsMiddleware, stub_old_tool_results
 from assistant.tools import build_agent_tools, docker_environment, jailed_environment
+from assistant.tools.approval import require_command_approval
 from assistant.tools.docker_sandbox import build_docker_skill_runtime, docker_available
 from assistant.tools.mcp import build_mcp_tools
 
@@ -406,10 +407,17 @@ def build_skills_plugin(
     return plugin
 
 
-def build_skills_install_tools(config: Config, runtime) -> list:
-    """Build registry tools writing to the runtime's Skill directories."""
-    toolkit = SkillSearchToolkit(runtime)
-    return [toolkit.search_skills(), toolkit.install_skill(), toolkit.remove_skill()]
+def build_skills_install_tools(
+    config: Config, runtime, *, toolkit_factory: Callable = SkillSearchToolkit
+) -> list:
+    """Build registry tools writing to the runtime's Skill directories.
+    install_skill asks through the same command approval as run_code."""
+    toolkit = toolkit_factory(runtime)
+    return [
+        toolkit.search_skills(),
+        toolkit.install_skill(middleware=[require_command_approval()]),
+        toolkit.remove_skill(),
+    ]
 
 
 # Always-on behavioural guidance, kept separate from the (user-customisable)

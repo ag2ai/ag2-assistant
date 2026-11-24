@@ -86,7 +86,9 @@ SHELL_TOOLS = frozenset({"run_shell_command", "run_shell_local"})
 # prefix-like unit, so there is no narrower persistable rule to offer. The
 # *sandboxed* runners carry no approval middleware at all — sandboxed code stays
 # friction-free; this guard is strictly about host authority.
-CODE_TOOLS = frozenset({"run_code", "run_code_local"})
+# install_skill counts: it adds scripts that run_skill_script runs without asking.
+_RUNNERS = frozenset({"run_code", "run_code_local"})
+CODE_TOOLS = _RUNNERS | {"install_skill"}
 # The union: no persisted whole-tool grant may exist for these, at mint time
 # (grant_command raises) or match time (a hand-edited bare rule never matches).
 _NO_BLANKET = SHELL_TOOLS | CODE_TOOLS
@@ -143,8 +145,8 @@ def shell_prefix(command: str | None) -> str | None:
 def _shell_command(arguments) -> str | None:
     """Pull a shell command string out of tool arguments, or ``None`` for a non-shell
     (code/action) tool. Parsed the same way as ``_command_detail``; a truthy
-    ``command`` field marks a shell tool (→ prefix path), else the caller takes the
-    whole-tool path. No tool-name registry — the args shape alone decides."""
+    ``command`` field marks a shell call (→ prefix path); check_command reads it only
+    for SHELL_TOOLS, so other tools always take the whole-tool path."""
     raw = arguments if isinstance(arguments, str) else json.dumps(arguments)
     try:
         data = json.loads(raw)
@@ -153,6 +155,23 @@ def _shell_command(arguments) -> str | None:
     if isinstance(data, dict) and data.get("command"):
         return str(data["command"])
     return None
+
+
+def _question_text(tool_name: str, arguments, where: str) -> str:
+    """The permission question; install_skill names the skill it would fetch."""
+    if tool_name == "install_skill":
+        skill = _arguments(arguments).get("skill_id") or "a skill"
+        return f"Allow AG2 Assistant to install {skill} from GitHub? Its scripts can then run without asking."
+    return f"Allow AG2 Assistant to run {tool_name} {where}?"
+
+
+def _arguments(arguments) -> dict:
+    """Tool arguments as a dict, or empty when they are not a JSON object."""
+    try:
+        data = json.loads(arguments if isinstance(arguments, str) else json.dumps(arguments))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def always_allow_command_label(tool: str, prefix: str | None) -> str:
@@ -165,7 +184,7 @@ def always_allow_command_label(tool: str, prefix: str | None) -> str:
     return f"Always allow the {tool} tool"
 
 
-def _command_detail(arguments) -> str:
+def _command_detail(arguments, *, pick: bool = True) -> str:
     """Human-readable preview of what a shell/code tool will run — so the user can
     see the actual code/command before approving. Pulls the meaningful field out of
     the tool arguments (code/command/script/cmd) rather than showing wrapped JSON."""
@@ -176,7 +195,7 @@ def _command_detail(arguments) -> str:
         return str(arguments).strip()
     if isinstance(data, dict):
         for key in ("code", "command", "script", "cmd", "snippet"):
-            if data.get(key):
+            if pick and data.get(key):
                 return str(data[key]).strip()
         return "\n".join(f"{k}: {v}" for k, v in data.items()).strip()
     return str(arguments).strip()
@@ -307,7 +326,7 @@ class PermissionStore:
                 r_tool, r_prefix = parse_command_rule(rule)
             except ValueError:
                 continue  # ignore a hand-corrupted rule rather than crash a turn
-            if r_tool != tool:
+            if r_tool != tool or r_tool in CODE_TOOLS:
                 continue
             if r_prefix is None:
                 if command is None and r_tool not in _NO_BLANKET:
@@ -355,7 +374,7 @@ class PermissionStore:
                 f"{tool} needs a prefix rule (e.g. '{tool}(git *)') — "
                 "a blanket shell grant would cover any command, compounds included"
             )
-        if prefix is None and tool in CODE_TOOLS:
+        if tool in CODE_TOOLS:
             raise ValueError(
                 f"{tool} executes arbitrary code on this computer — it can't be "
                 "always-allowed; each run is approved individually"
@@ -459,7 +478,13 @@ class PermissionManager:
             READ_WRITE,
         )
 
-        target = Path(target).expanduser()
+        # Resolve the target itself, so a symlink is checked where it points.
+        try:
+            target = Path(target).expanduser().resolve(strict=False)
+        except OSError, RuntimeError:
+            return False  # a link loop (Python 3.12 raises)
+        if target.is_symlink():
+            return False  # a link loop (Python 3.13+ stops on the link)
         folder = _norm(target if target.is_dir() else target.parent)
 
         if self.workspace_dir is not None and (
@@ -527,7 +552,7 @@ class PermissionManager:
         further command prompts too. Persisted grants (this or any past turn, another
         profile, or the CLI/API) skip the prompt entirely.
         """
-        command = _shell_command(arguments)
+        command = _shell_command(arguments) if tool_name in SHELL_TOOLS else None
         prefix = shell_prefix(command) if command else None
 
         # Persisted grant wins first — an earlier "always allow" means no prompt.
@@ -545,7 +570,8 @@ class PermissionManager:
         if self.asker is None:
             return False
 
-        detail = _command_detail(arguments)
+        # Only the runners' own field is previewed alone; other tools show every argument.
+        detail = _command_detail(arguments, pick=tool_name in SHELL_TOOLS | _RUNNERS)
         if len(detail) > 4000:
             detail = detail[:4000] + "\n… (truncated)"
         if self.sandbox == "docker":
@@ -574,7 +600,7 @@ class PermissionManager:
 
         answer = await self.asker.ask(
             Question(
-                text=f"Allow AG2 Assistant to run {tool_name} {where}?",
+                text=_question_text(tool_name, arguments, where),
                 detail=detail,
                 options=options,
                 kind="permission",

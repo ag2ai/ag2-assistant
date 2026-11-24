@@ -16,7 +16,7 @@ FROM python:3.14-slim AS builder
 # uv (fast resolver/installer) — copied from its official image. Pinned: an
 # unpinned `:latest` would silently change the resolver between builds, which
 # defeats the point of installing from a committed lockfile.
-COPY --from=ghcr.io/astral-sh/uv:0.11.28 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.13.8 /uv /uvx /bin/
 
 # uv.lock pins `ag2` to a git ref (see [tool.uv.sources]), and uv shells out to
 # the git executable to fetch it — the slim base ships without one.

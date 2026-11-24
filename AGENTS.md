@@ -22,7 +22,7 @@ tick a checklist box once it is actually true.
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"     # dev carries gemini+openai; add ",google" for Gmail/Calendar/Drive
-pre-commit install          # run the lint/format/safety hooks on every commit
+prek install                # run the lint/format/safety hooks on every commit
 ```
 
 ## Checks (run these before you push)
@@ -44,12 +44,11 @@ npm --prefix web test              # SPA unit tests (node:test over web/src/**/*
 npm --prefix web run build         # rebuild the SPA bundle if you touched web/
 ```
 
-CI runs the unit tests on every Python version `pyproject.toml` promises — 3.12, 3.13 and
-3.14 — so a change that only works on the newest one fails there even though it passed for
-you. To reproduce a specific leg:
+The project targets Python 3.14 only (`requires-python = ">=3.14"`), and CI runs the unit
+tests on 3.14. To reproduce the CI run with that interpreter:
 
 ```bash
-UV_PYTHON=3.12 uv run pytest -m "not integration" -q
+UV_PYTHON=3.14 uv run pytest -m "not integration" -q
 ```
 
 Coverage is reported, never enforced. To see the number CI reports:

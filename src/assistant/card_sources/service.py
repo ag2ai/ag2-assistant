@@ -228,7 +228,7 @@ class CardSources:
         async with self.gateway.event_transaction() as emit:
             try:
                 latest, latest_revision, _ = await self._target(**target)
-            except (InstanceError, OSError, ValueError):
+            except InstanceError, OSError, ValueError:
                 latest, latest_revision = data, None
             if revision != latest_revision:
                 status, error, result_data = "discarded", "Instance changed while refreshing", data

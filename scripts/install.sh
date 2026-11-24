@@ -4,7 +4,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/ag2ai/ag2-assistant/main/scripts/install.sh | sh
 #
 # Installs uv first if it isn't present (uv also downloads a compatible Python,
-# so no system Python 3.12 is required). Re-running the script upgrades an
+# so no system Python 3.14 is required). Re-running the script upgrades an
 # existing install to the latest commit on the ref.
 #
 # Environment overrides:
@@ -33,7 +33,7 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 echo "Installing ag2-assistant (${REF}) ..."
-uv tool install --force --python ">=3.12" "$SPEC"
+uv tool install --force --python ">=3.14" "$SPEC"
 
 echo ""
 if command -v ag2-assistant >/dev/null 2>&1; then

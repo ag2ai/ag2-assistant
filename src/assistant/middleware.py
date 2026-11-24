@@ -112,7 +112,7 @@ def _is_transient(exc: BaseException) -> bool:
                 continue
             try:
                 status = int(status)
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 continue
             if 400 <= status <= 599:
                 return status in _TRANSIENT_HTTP_STATUS

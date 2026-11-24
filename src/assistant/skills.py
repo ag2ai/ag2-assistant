@@ -33,7 +33,7 @@ def skill_origin(location: str | None, bundled_root: Path, profile_root: Path | 
         loc = Path(location).resolve()
         bundled = bundled_root.resolve()
         profile = profile_root.resolve() if profile_root is not None else None
-    except (OSError, ValueError, RuntimeError):
+    except OSError, ValueError, RuntimeError:
         return ORIGIN_GLOBAL
     if profile is not None and (loc == profile or profile in loc.parents):
         return ORIGIN_PROFILE

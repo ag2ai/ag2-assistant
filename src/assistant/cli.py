@@ -369,7 +369,7 @@ def acp_serve(
         token = token or ""
         try:
             pid, _, _ = resolve_active_profile(profile, paths=default_paths(), env=os.environ)
-        except (UnknownProfile, ArchivedProfile):
+        except UnknownProfile, ArchivedProfile:
             pid = None
         if pid is not None:
             ensure_acp_connection(ConnectionStore(default_paths()), pid, port, token=token)

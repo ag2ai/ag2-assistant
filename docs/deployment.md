@@ -43,7 +43,7 @@ Open <http://localhost:8800/> and complete onboarding. See the main
 
 Install the CLI globally in its own isolated environment without cloning. The install
 script is the easiest path — it installs uv first if needed (and uv downloads a compatible
-Python, so no system Python 3.12 is required):
+Python, so no system Python 3.14 is required):
 
 ```bash
 # macOS / Linux
