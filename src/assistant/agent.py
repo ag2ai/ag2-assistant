@@ -74,7 +74,7 @@ from assistant.skills import (
     skill_origin,
 )
 from assistant.stub_tool_results import StubOldToolResultsMiddleware, stub_old_tool_results
-from assistant.tools import build_agent_tools, docker_environment
+from assistant.tools import build_agent_tools, docker_environment, jailed_environment
 from assistant.tools.docker_sandbox import build_docker_skill_runtime, docker_available
 from assistant.tools.mcp import build_mcp_tools
 
@@ -844,6 +844,14 @@ def create_agent(
             ),
         )
 
+    # The isolated-sandbox backend for the `code` tools. `docker` is the default,
+    # but when the mode is `jailed` the isolated backend is the in-pod Landlock
+    # jail, not Docker; an explicit caller-supplied factory still wins. Shared
+    # across calls via owned_resource, so the sandbox (and its work directory)
+    # persists for the lifetime of this agent's resource owner.
+    sandbox_factory = environment_factory
+    if environment_factory is docker_environment and config.tools.sandbox == "jailed":
+        sandbox_factory = jailed_environment
     tools = (
         []
         if invocation_only
@@ -857,9 +865,9 @@ def create_agent(
             config=config,  # enables generate_image (needs provider/keys)
             builtin=config.llm.builtin_tools,
             environment_factory=lambda **kwargs: owned_resource(
-                "docker",
+                "sandbox",
                 fingerprint(kwargs),
-                lambda: SharedEnvironment(environment_factory(**kwargs)),
+                lambda: SharedEnvironment(sandbox_factory(**kwargs)),
             ),
             local_environment_factory=lambda: owned_resource(
                 "local", "local", lambda: SharedEnvironment(LocalEnvironment())

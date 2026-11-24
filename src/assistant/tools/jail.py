@@ -48,6 +48,7 @@ import argparse
 import ctypes
 import os
 import resource
+import struct
 import sys
 
 # --- Landlock ABI constants (see linux/landlock.h) --------------------------
@@ -141,23 +142,21 @@ class _RulesetAttr(ctypes.Structure):
                 ("handled_access_net", ctypes.c_uint64)]
 
 
-class _PathBeneathAttr(ctypes.Structure):
-    _pack_ = 1
-    _fields_ = [("allowed_access", ctypes.c_uint64),
-                ("parent_fd", ctypes.c_int32)]
-
-
 def _add_path_rule(libc: ctypes.CDLL, ruleset_fd: int, path: str, access: int) -> None:
     try:
         fd = os.open(path, os.O_PATH | os.O_CLOEXEC)
     except OSError:
         return  # a ro path absent on this image: nothing to grant
     try:
-        attr = _PathBeneathAttr(allowed_access=access, parent_fd=fd)
+        # struct landlock_path_beneath_attr { __u64 allowed_access; __s32 parent_fd; }
+        # packed to 12 bytes. Built with struct.pack (not a packed ctypes.Structure,
+        # which warns under Python >= 3.14) so no warning reaches the command's stderr.
+        attr = struct.pack("<Qi", access, fd)
+        buf = (ctypes.c_char * len(attr)).from_buffer_copy(attr)
         rc = libc.syscall(ctypes.c_long(_NR_landlock_add_rule),
                           ctypes.c_int(ruleset_fd),
                           ctypes.c_int(_LANDLOCK_RULE_PATH_BENEATH),
-                          ctypes.byref(attr), ctypes.c_uint32(0))
+                          ctypes.byref(buf), ctypes.c_uint32(0))
         if rc != 0:
             raise JailError(f"landlock_add_rule({path}) failed: errno {ctypes.get_errno()}")
     finally:
