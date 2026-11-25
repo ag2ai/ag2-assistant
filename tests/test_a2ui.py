@@ -1,5 +1,6 @@
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -1264,12 +1265,26 @@ def test_a_coding_session_stored_before_it_was_a_file_is_redrawn_on_read():
 # --- The renderer forgets Card types (11) ---
 
 
+def _unignored_files(root: Path) -> list[Path]:
+    """Files under ``root`` that git tracks or would track, so ignored build output is skipped."""
+    listing = subprocess.run(
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "."],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    return [root / entry for entry in listing.split("\0") if entry]
+
+
 def test_the_front_end_knows_no_card_by_name():
     # Every Card is a file the server draws into primitives, so no Card's name is on
     # the wire and the renderer has nothing to branch on.
     web = Path(__file__).parents[1] / "web/src"
     sources = [
-        path for path in web.rglob("*") if path.is_file() and not path.name.endswith(".test.ts")
+        path
+        for path in _unignored_files(web)
+        if path.is_file() and not path.name.endswith(".test.ts")
     ]
     named = {
         name: sorted(

@@ -433,7 +433,7 @@ Every key above also has an env override (these win over `config.yaml`):
 | `AG2ASSISTANT_TURN_SUMMARIES` | `gateway.turn_summaries` (default `false`; see [Turn summaries](#turn-summaries)) |
 | `AG2ASSISTANT_CHAT_CACHE_SIZE` | `gateway.chat_cache_size` (default `16`): idle chats kept in memory; others reload from disk when opened, and task runs are always freed when they finish |
 | `AG2ASSISTANT_ACTIVITY_FILE` | a path the [activity](#activity) snapshot is mirrored to (unset: no file) |
-| `AG2ASSISTANT_SANDBOX` | `tools.sandbox` (`local` / `docker`) |
+| `AG2ASSISTANT_SANDBOX` | `tools.sandbox` (`local` / `docker` / `jailed`; see [deployment](deployment.md#jailed-sandbox)) |
 | `AG2ASSISTANT_DISABLE_NATIVE_TOOLS` | `tools.disable_native` (default `false`; `true` removes the tools that only work in the native app from chat, task and ACP turns: `ask_user`, `answer_question`, `list_open_questions`, `describe_settings`, `describe_integrations`, `list_coding_agents`, `install_skill`, `remove_skill`, `search_skills`, `list_folders`) |
 | `AG2ASSISTANT_WEB_FETCH_ALLOW_PRIVATE` | `tools.web_fetch_allow_private` (default `false`; `true` lets `web_fetch` and `fetch_page` reach loopback, private and link-local hosts, such as a dev server on `localhost`) |
 | `AG2ASSISTANT_DOCKER_IMAGE` / `AG2ASSISTANT_DOCKER_NETWORK` | Docker sandbox |

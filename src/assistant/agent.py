@@ -74,7 +74,7 @@ from assistant.skills import (
     skill_origin,
 )
 from assistant.stub_tool_results import StubOldToolResultsMiddleware, stub_old_tool_results
-from assistant.tools import build_agent_tools, docker_environment
+from assistant.tools import build_agent_tools, isolated_environment
 from assistant.tools.approval import require_command_approval
 from assistant.tools.docker_sandbox import build_docker_skill_runtime, docker_available
 from assistant.tools.mcp import build_mcp_tools
@@ -781,7 +781,7 @@ def create_agent(
     extra_plugins: list | None = None,
     default_model=None,
     resources: ProfileResources | None = None,
-    environment_factory: Callable = docker_environment,
+    environment_factory: Callable | None = None,
     compaction_store=None,
     aggregate_in_turn: bool = True,
 ) -> Agent:
@@ -852,6 +852,7 @@ def create_agent(
             ),
         )
 
+    sandbox_factory = environment_factory or isolated_environment(config.tools.sandbox)
     tools = (
         []
         if invocation_only
@@ -865,9 +866,9 @@ def create_agent(
             config=config,  # enables generate_image (needs provider/keys)
             builtin=config.llm.builtin_tools,
             environment_factory=lambda **kwargs: owned_resource(
-                "docker",
+                "sandbox",
                 fingerprint(kwargs),
-                lambda: SharedEnvironment(environment_factory(**kwargs)),
+                lambda: SharedEnvironment(sandbox_factory(**kwargs)),
             ),
             local_environment_factory=lambda: owned_resource(
                 "local", "local", lambda: SharedEnvironment(LocalEnvironment())

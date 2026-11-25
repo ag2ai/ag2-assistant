@@ -166,6 +166,7 @@ class ToolsConfig(BaseModel):
 
     # "local" = subprocess on the host (command-filtered + approval-gated).
     # "docker" = isolated container with no host FS access (approval dropped).
+    # "jailed" = Landlock-confined host subprocess, Linux 6.7+ (approval dropped).
     sandbox: str = "local"
     preview_browser: str = ""
     docker_image: str = "python:3.12-slim"

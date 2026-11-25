@@ -131,8 +131,8 @@ def agent(
     ),
     sandbox: str | None = typer.Option(
         None,
-        help="Execution sandbox: 'local' (host, approval-gated) or 'docker' "
-        "(isolated container, no prompts). Overrides AG2ASSISTANT_SANDBOX.",
+        help="Execution sandbox: 'local' (host, approval-gated), 'docker' (isolated "
+        "container) or 'jailed' (Landlock, Linux 6.7+). Overrides AG2ASSISTANT_SANDBOX.",
     ),
     profile: str | None = typer.Option(
         None, "--profile", "-p", help="Profile id to run in (default: the active default)."
@@ -202,7 +202,8 @@ def chat(
         True, help="Enable desktop permission/HITL prompts (browser popup)."
     ),
     sandbox: str | None = typer.Option(
-        None, help="Execution sandbox: 'local' or 'docker'. Overrides AG2ASSISTANT_SANDBOX."
+        None,
+        help="Execution sandbox: 'local', 'docker' or 'jailed'. Overrides AG2ASSISTANT_SANDBOX.",
     ),
     profile: str | None = typer.Option(
         None, "--profile", "-p", help="Profile id to chat in (default: the active default)."
@@ -878,7 +879,8 @@ def run(
     memory: bool = typer.Option(True, help="Enable persistent user-profile memory."),
     rest: bool = typer.Option(True, help="Also serve the REST/WebSocket API."),
     sandbox: str | None = typer.Option(
-        None, help="Execution sandbox: 'local' or 'docker'. Overrides AG2ASSISTANT_SANDBOX."
+        None,
+        help="Execution sandbox: 'local', 'docker' or 'jailed'. Overrides AG2ASSISTANT_SANDBOX.",
     ),
     data_dir: str | None = typer.Option(
         None, "--data-dir", help="Override the install root (same as the top-level --data-dir)."

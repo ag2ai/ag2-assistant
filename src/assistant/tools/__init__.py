@@ -20,7 +20,9 @@ local one is dropped from the list below rather than offered alongside it.
 """
 
 import warnings
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from ag2.tools import (
     DuckDuckSearchTool,
@@ -35,13 +37,14 @@ from assistant.coding.detect import available_agents, parse_bridge
 from assistant.config import Config
 from assistant.integrations.google_auth import GoogleAuth
 from assistant.settings import profile_settings
-from assistant.tools import docker_sandbox
+from assistant.tools import docker_sandbox, jail
 from assistant.tools.approval import require_command_approval
 from assistant.tools.ask import ask_user
 from assistant.tools.coding import build_coding_tools
 from assistant.tools.files import list_folder, read_file, update_file, write_file
 from assistant.tools.google import build_google_tools
 from assistant.tools.image_gen import build_image_tool, image_available
+from assistant.tools.jail_sandbox import JailedEnvironment
 from assistant.tools.mcp import build_mcp_tools
 from assistant.tools.web_fetch import local_fetch_tools, native_first, web_fetch, web_fetch_tool
 
@@ -128,6 +131,11 @@ def docker_environment(**kwargs):
     return DockerEnvironment(**kwargs)
 
 
+def isolated_environment(sandbox: str) -> Callable[..., Any]:
+    """The production factory for the isolated code backend the `sandbox` mode names."""
+    return JailedEnvironment if sandbox == "jailed" else docker_environment
+
+
 def build_agent_tools(
     ctype: str = "",
     sandbox: str = "local",
@@ -149,7 +157,8 @@ def build_agent_tools(
 
     Args:
         ctype: the llm_configs type, which decides what `builtin` may name.
-        sandbox: "local" (approval-gated) or "docker" (container-isolated).
+        sandbox: "local" (approval-gated host subprocess), "docker" (container-isolated)
+            or "jailed" (Landlock-confined host subprocess, no approval).
         capabilities: subset of CAPABILITIES, or None for everything.
         builtin: provider-native tools switched on for this model, `{id: options}`.
     """
@@ -189,7 +198,38 @@ def build_agent_tools(
                         "falling back to the local sandbox with approval prompts.",
                         stacklevel=2,
                     )
-        if use_docker:
+        if sandbox == "jailed":
+            if jail.landlock_abi() < jail.MIN_ABI:
+                warnings.warn(
+                    "Jailed sandbox requested but this kernel lacks Landlock ABI "
+                    f">= {jail.MIN_ABI} (Linux 6.7); run_code and run_shell will refuse to run.",
+                    stacklevel=2,
+                )
+            env = (environment_factory or JailedEnvironment)()
+            tools += [
+                SandboxCodeTool(
+                    environment=env,
+                    name="run_code",
+                    description=(
+                        "Run code in an isolated sandbox: it can read and write only its "
+                        "own scratch workspace, cannot open TCP connections, and cannot "
+                        "see the user's files or any secrets. Runs immediately without asking. "
+                        "Use for calculation, data transformation, parsing and verification. "
+                        "Supported languages: {languages}."
+                    ),
+                ),
+                SandboxShellTool(
+                    environment=env,
+                    blocked=_SHELL_BLOCKED,
+                    name="run_shell",
+                    description=(
+                        "Run a shell command in an isolated sandbox with no TCP network "
+                        "and no access to the user's files or secrets; runs immediately "
+                        "without asking."
+                    ),
+                ),
+            ]
+        elif use_docker:
             # Docker is available → give the agent BOTH a sandboxed runner (isolated,
             # silent) and a host runner (approval-gated), and let it choose per call.
             # Distinct names are required (providers reject duplicate tool names).
@@ -327,6 +367,7 @@ def build_agent_tools(
 __all__ = [
     "build_agent_tools",
     "docker_environment",
+    "isolated_environment",
     "available_capabilities",
     "capability_catalogue",
     "CAPABILITIES",
