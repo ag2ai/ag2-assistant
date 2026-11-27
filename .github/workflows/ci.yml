@@ -15,7 +15,7 @@ jobs:
       RUFF_VERSION: "0.15.18"
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v7
         with:
           version: "0.13.8" # matches the pin in Dockerfile
       - name: Ruff lint
@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v7
         with:
           version: "0.13.8" # matches the pin in Dockerfile
       # The Dockerfile installs with `uv sync --frozen`, which HARD-FAILS when
@@ -43,7 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v7
         with:
           version: "0.13.8"
       - name: Install (pinned deps via uv.lock)
@@ -76,7 +76,7 @@ jobs:
       COVERAGE_PYTHON: "3.14"
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v7
         with:
           version: "0.13.8" # matches the pin in Dockerfile
       # Install from the committed uv.lock, so CI, the Dockerfile and local dev all
@@ -149,7 +149,7 @@ jobs:
       - name: Typecheck
         working-directory: web
         run: npm run check
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v7
         with:
           version: "0.13.8" # matches the pin in Dockerfile
       - name: Install the package (for the OpenAPI dump)
