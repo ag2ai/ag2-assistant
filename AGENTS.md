@@ -27,10 +27,8 @@ prek install                # run the lint/format/safety hooks on every commit
 
 ## Checks (run these before you push)
 
-These are the same checks CI runs. They are advisory: the repository has no rulesets, so
-a red pull request is reported by the `CI status` check rather than blocked by it. (Classic
-branch protection needs admin to read, so it has not been ruled out. To enforce this,
-require the single `CI status` check — it stays one name as the test matrix grows.)
+The `main` branch requires the aggregate `CI status` check. A failed, cancelled, or
+skipped prerequisite blocks the merge, including for Dependabot PRs.
 
 ```bash
 ruff check .                       # lint
