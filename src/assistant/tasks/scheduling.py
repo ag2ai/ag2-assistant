@@ -54,11 +54,11 @@ def describe_cron(spec: str | None) -> str | None:
         desc = ExpressionDescriptor(expr, opts).get_description()
     except Exception:
         return CronSim(expr, datetime.now().astimezone()).explain()  # cronsim-valid fallback
-    # cron-descriptor drops the cadence for minute-0 + hour-range ("0 4-14 …" →
-    # "Between 04:00 and 14:59, …"), unlike its JS sibling cronstrue ("Every
-    # hour, between 04:00 AM and 02:59 PM, …"). Restore the canonical phrasing.
-    if desc.startswith("Between "):
-        desc = "Every hour, b" + desc[1:]
+    # Rephrase minute-0 + hour-range ("At 0 minutes past the hour, between …")
+    # as "Every hour, between …".
+    prefix = "At 0 minutes past the hour, between "
+    if desc.startswith(prefix):
+        desc = "Every hour, between " + desc.removeprefix(prefix)
     return desc
 
 

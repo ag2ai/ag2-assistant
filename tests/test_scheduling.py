@@ -27,7 +27,7 @@ def test_normalize_cron():
 
 
 def test_describe_cron():
-    # minute-0 + hour-range gets its cadence restored (cron-descriptor omits it)
+    # minute-0 + hour-range reads as "Every hour, between …"
     assert (
         describe_cron("0 4-14 * * 1-5")
         == "Every hour, between 04:00 and 14:59, Monday through Friday"
