@@ -132,7 +132,7 @@ def agent(
     sandbox: str | None = typer.Option(
         None,
         help="Execution sandbox: 'local' (host, approval-gated), 'docker' (isolated "
-        "container) or 'jailed' (Landlock, Linux 6.7+). Overrides AG2ASSISTANT_SANDBOX.",
+        "container) or 'jailed' (Landlock, Linux 6.12+). Overrides AG2ASSISTANT_SANDBOX.",
     ),
     profile: str | None = typer.Option(
         None, "--profile", "-p", help="Profile id to run in (default: the active default)."

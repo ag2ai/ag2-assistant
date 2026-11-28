@@ -171,20 +171,22 @@ grants the container control of the host Docker daemon. Enable it only if you ac
 
 Where there is no Docker daemon (a Kubernetes pod, for one), `AG2ASSISTANT_SANDBOX=jailed`
 confines model-run code with Linux [Landlock](https://docs.kernel.org/userspace-api/landlock.html)
-instead. It needs no privileges, but it needs Linux 6.7 or newer (Landlock ABI 4); on an older
-kernel, or off Linux, `run_code` and `run_shell` refuse to run rather than run unconfined.
+and a seccomp filter instead. It needs no privileges, but it needs Linux 6.12 or newer (Landlock
+ABI 6) on x86-64 or arm64; on an older kernel, or off Linux, `run_code` and `run_shell` refuse
+to run rather than run unconfined. Any `AG2ASSISTANT_SANDBOX` value other than `local`, `docker`
+or `jailed` offers no code or shell tool at all.
 
 | Confines | How |
 |----------|-----|
 | Files | read+write only in the sandbox's scratch directory, read+exec on the runtime (`/usr`, `/lib`, the Python prefix, a few `/etc` files); everything else, `/proc` and secret mounts included, is denied |
-| Network | every TCP bind and connect is denied |
-| Processes | on Linux 6.12+ (ABI 6) jailed code cannot signal the assistant or reach abstract unix sockets |
+| Network | `socket()` and io_uring are refused, so no TCP, MPTCP, UDP, DNS, ICMP or unix socket can be opened; only `socketpair()` between the command's own processes works |
+| Processes | jailed code cannot signal or ptrace the assistant; every process a command starts, background and `setsid` ones included, is killed when the command ends or times out |
 | Environment | only `PATH`, locale, `TZ`, `TERM` and `PYTHONHASHSEED` are passed on |
-| Resources | CPU time, file size and open files are capped; memory and process count are left to the container's cgroup |
+| Resources | CPU time, file size, open files and address space (4 GiB) are capped, and a command may start at most 128 more tasks than its user already runs |
 
-What it does not confine: UDP (pair it with a NetworkPolicy), path-named unix sockets, and
-skill scripts, which run on the host as they do with `local`. The scratch directory lasts as
-long as the profile's sandbox, so files persist across calls and chats.
+What it does not confine: skill scripts, which run on the host as they do with `local`. The
+scratch directory lasts as long as the profile's sandbox, so files persist across calls and
+chats.
 
 ### Coding agents from Docker (ACP host bridge)
 
