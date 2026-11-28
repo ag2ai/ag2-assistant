@@ -183,6 +183,7 @@ class CardSources:
         error = ""
         result_data = data
         keys = {}
+        parsed: Any = None
         try:
             arguments = bind_arguments(source.args, source.parameters)
             async with asyncio.timeout(TIMEOUT):
