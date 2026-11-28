@@ -166,7 +166,8 @@ class ToolsConfig(BaseModel):
 
     # "local" = subprocess on the host (command-filtered + approval-gated).
     # "docker" = isolated container with no host FS access (approval dropped).
-    # "jailed" = Landlock-confined host subprocess, Linux 6.7+ (approval dropped).
+    # "jailed" = Landlock-confined host subprocess, Linux 6.12+ (approval dropped).
+    # Any other value offers no code or shell tool.
     sandbox: str = "local"
     preview_browser: str = ""
     docker_image: str = "python:3.12-slim"
@@ -409,7 +410,7 @@ def apply_env_overrides(cfg: Config, env: Mapping[str, str]) -> None:
         except ValueError:
             pass
     if v := get("AG2ASSISTANT_SANDBOX"):
-        cfg.tools.sandbox = v
+        cfg.tools.sandbox = v.strip().lower()
     if v := get("AG2ASSISTANT_DOCKER_IMAGE"):
         cfg.tools.docker_image = v
     if v := get("AG2ASSISTANT_DOCKER_NETWORK"):

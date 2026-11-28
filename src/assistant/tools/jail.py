@@ -1,4 +1,4 @@
-"""Landlock + rlimit launcher: confine this process, then exec the command.
+"""Landlock + seccomp + rlimit launcher: run a command confined, then kill what it left.
 
 Stdlib-only, so it also runs standalone: ``python -I jail.py --workdir DIR -- CMD``.
 """
@@ -7,9 +7,11 @@ import argparse
 import ctypes
 import os
 import resource
+import signal
 import stat
 import struct
 import sys
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +22,9 @@ _NR_ADD_RULE = 445
 _NR_RESTRICT_SELF = 446
 _CREATE_RULESET_VERSION = 1 << 0
 _RULE_PATH_BENEATH = 1
+_PR_SET_PDEATHSIG = 1
+_PR_SET_SECCOMP = 22
+_PR_SET_CHILD_SUBREAPER = 36
 _PR_SET_NO_NEW_PRIVS = 38
 _O_PATH = getattr(os, "O_PATH", 0)
 
@@ -51,8 +56,28 @@ _READ_WRITE = _FS_RIGHTS["read_file"][0] | _FS_RIGHTS["write_file"][0]
 _NET_TCP = (1 << 0) | (1 << 1)  # bind + connect, ABI 4
 _SCOPE_ALL = (1 << 0) | (1 << 1)  # abstract unix sockets + signals, ABI 6
 
-#: The lowest ABI that can deny TCP; below it the jail refuses unless --allow-net.
-MIN_ABI = 4
+#: The lowest ABI that also scopes signals; below it the jail refuses to run.
+MIN_ABI = 6
+
+# seccomp BPF (linux/filter.h, linux/seccomp.h): opcodes, return actions, seccomp_data offsets.
+_BPF_LD_W_ABS = 0x20
+_BPF_JEQ_K = 0x15
+_BPF_JGE_K = 0x35
+_BPF_RET_K = 0x06
+_SECCOMP_MODE_FILTER = 2
+_RET_KILL_PROCESS = 0x80000000
+_RET_ERRNO = 0x00050000
+_RET_ALLOW = 0x7FFF0000
+_DATA_NR, _DATA_ARCH, _DATA_ARG0 = 0, 4, 16
+_AF_UNIX = 1
+_X32_BIT = 0x40000000
+
+# Per machine: (AUDIT_ARCH, socket, socketpair); io_uring_setup/enter/register are 425-427 on both.
+_ARCHES = {
+    "x86_64": (0xC000003E, 41, 53),
+    "aarch64": (0xC00000B7, 198, 199),
+}
+_IO_URING = (425, 426, 427)
 
 # Read-only roots the interpreter, shared libraries and coreutils need; absent ones are skipped.
 _DEFAULT_RO = (
@@ -80,11 +105,13 @@ class JailError(RuntimeError):
 
 @dataclass(frozen=True)
 class JailLimits:
-    """Per-command rlimits; memory and process count are left to the container cgroup."""
+    """Per-command rlimits; ``procs`` is how many more tasks the command's user may start."""
 
     cpu_sec: int = 30
     fsize_mb: int = 64
     nofile: int = 256
+    as_mb: int = 4096
+    procs: int = 128
 
 
 def _libc() -> ctypes.CDLL:
@@ -112,9 +139,9 @@ def _workdir_access(abi: int) -> int:
     return _handled_fs(abi) & ~_FS_RIGHTS["ioctl_dev"][0]
 
 
-def _ruleset_attr(abi: int, allow_net: bool) -> bytes:
+def _ruleset_attr(abi: int) -> bytes:
     """``struct landlock_ruleset_attr``, cut to the size this ABI knows."""
-    net = _NET_TCP if abi >= 4 and not allow_net else 0
+    net = _NET_TCP if abi >= 4 else 0
     scoped = _SCOPE_ALL if abi >= 6 else 0
     size = 24 if abi >= 6 else 16 if abi >= 4 else 8
     return struct.pack("<QQQ", _handled_fs(abi), net, scoped)[:size]
@@ -143,17 +170,15 @@ def _add_path_rule(libc: ctypes.CDLL, ruleset_fd: int, path: Path, access: int) 
         os.close(fd)
 
 
-def apply_landlock(workdir: Path, ro_paths: Sequence[Path], allow_net: bool) -> None:
-    """Restrict this process to ``workdir`` (rw) and ``ro_paths`` (read+exec), with no TCP.
+def apply_landlock(workdir: Path, ro_paths: Sequence[Path]) -> None:
+    """Restrict this process to ``workdir`` (rw) and ``ro_paths`` (read+exec), signals scoped.
 
     Raises :class:`JailError` when the kernel cannot enforce that or any step fails."""
     abi = landlock_abi()
-    if abi < 1:
-        raise JailError("Landlock is unavailable on this kernel")
-    if abi < MIN_ABI and not allow_net:
-        raise JailError(f"Landlock ABI {abi} cannot block TCP (needs {MIN_ABI}, Linux 6.7)")
+    if abi < MIN_ABI:
+        raise JailError(f"Landlock ABI {abi} is too old (needs {MIN_ABI}, Linux 6.12)")
     libc = _libc()
-    attr = _ruleset_attr(abi, allow_net)
+    attr = _ruleset_attr(abi)
     buf = ctypes.create_string_buffer(attr, len(attr))
     ruleset_fd = libc.syscall(
         ctypes.c_long(_NR_CREATE_RULESET), buf, ctypes.c_size_t(len(attr)), ctypes.c_uint32(0)
@@ -177,8 +202,74 @@ def apply_landlock(workdir: Path, ro_paths: Sequence[Path], allow_net: bool) -> 
         os.close(ruleset_fd)
 
 
+def socket_filter(machine: str) -> list[tuple[int, int, int, int]]:
+    """BPF ``(code, jt, jf, k)`` that refuses socket(), io_uring and non-unix socketpair().
+
+    A foreign syscall ABI (x32, 32-bit compat) kills the process."""
+    if machine not in _ARCHES:
+        raise JailError(f"no socket filter for machine {machine!r}")
+    arch, nr_socket, nr_socketpair = _ARCHES[machine]
+    refuse = _RET_ERRNO | 13  # EACCES
+    prog = [
+        (_BPF_LD_W_ABS, 0, 0, _DATA_ARCH),
+        (_BPF_JEQ_K, 1, 0, arch),
+        (_BPF_RET_K, 0, 0, _RET_KILL_PROCESS),
+        (_BPF_LD_W_ABS, 0, 0, _DATA_NR),
+    ]
+    if machine == "x86_64":
+        prog += [(_BPF_JGE_K, 0, 1, _X32_BIT), (_BPF_RET_K, 0, 0, _RET_KILL_PROCESS)]
+    for nr in (nr_socket, *_IO_URING):
+        prog += [(_BPF_JEQ_K, 0, 1, nr), (_BPF_RET_K, 0, 0, refuse)]
+    prog += [
+        (_BPF_JEQ_K, 0, 3, nr_socketpair),
+        (_BPF_LD_W_ABS, 0, 0, _DATA_ARG0),
+        (_BPF_JEQ_K, 1, 0, _AF_UNIX),
+        (_BPF_RET_K, 0, 0, refuse),
+        (_BPF_RET_K, 0, 0, _RET_ALLOW),
+    ]
+    return prog
+
+
+class _SockFilter(ctypes.Structure):
+    _fields_ = [
+        ("code", ctypes.c_ushort),
+        ("jt", ctypes.c_ubyte),
+        ("jf", ctypes.c_ubyte),
+        ("k", ctypes.c_uint32),
+    ]
+
+
+class _SockFprog(ctypes.Structure):
+    _fields_ = [("len", ctypes.c_ushort), ("filter", ctypes.POINTER(_SockFilter))]
+
+
+def apply_socket_filter() -> None:
+    """Install :func:`socket_filter` on this process; needs no_new_privs already set."""
+    prog = socket_filter(os.uname().machine)
+    filters = (_SockFilter * len(prog))(*(_SockFilter(*ins) for ins in prog))
+    fprog = _SockFprog(len(prog), filters)
+    if _libc().prctl(_PR_SET_SECCOMP, _SECCOMP_MODE_FILTER, ctypes.byref(fprog), 0, 0) != 0:
+        raise JailError(f"seccomp filter install failed: errno {ctypes.get_errno()}")
+
+
+def _user_tasks(uid: int) -> int:
+    """How many tasks (threads included) ``uid`` runs now, the count RLIMIT_NPROC checks."""
+    total = 0
+    for entry in os.scandir("/proc"):
+        if not entry.name.isdigit():
+            continue
+        try:
+            status = Path(entry.path, "status").read_text()
+        except OSError:
+            continue
+        fields = dict(line.split(":", 1) for line in status.splitlines() if ":" in line)
+        if int(fields.get("Uid", "-1").split()[0]) == uid:
+            total += int(fields.get("Threads", "1"))
+    return total
+
+
 def apply_rlimits(limits: JailLimits) -> None:
-    """Lower CPU time, file size and open-fd limits, soft and hard, never raising one."""
+    """Lower CPU, file size, open-fd, address-space and process limits, never raising one."""
 
     def cap(what: int, want: int) -> None:
         _, hard = resource.getrlimit(what)
@@ -189,6 +280,8 @@ def apply_rlimits(limits: JailLimits) -> None:
         cap(resource.RLIMIT_CPU, limits.cpu_sec)
         cap(resource.RLIMIT_FSIZE, limits.fsize_mb * 1024 * 1024)
         cap(resource.RLIMIT_NOFILE, limits.nofile)
+        cap(resource.RLIMIT_AS, limits.as_mb * 1024 * 1024)
+        cap(resource.RLIMIT_NPROC, _user_tasks(os.getuid()) + limits.procs)
     except (ValueError, OSError) as e:
         raise JailError(f"rlimit setup failed: {e}") from e
 
@@ -206,18 +299,18 @@ def confine_and_exec(
     *,
     workdir: Path,
     ro_paths: Sequence[Path],
-    allow_net: bool,
     limits: JailLimits,
     env: Mapping[str, str],
 ) -> int:
     """Confine this process and ``execve`` ``cmd``; returns only when it did not run.
 
-    Any confinement failure returns 70 before anything is changed or executed."""
+    Any confinement failure returns 70 before anything is executed."""
     if not cmd:
         return 2
     try:
-        apply_landlock(workdir, ro_paths, allow_net)
         apply_rlimits(limits)
+        apply_landlock(workdir, ro_paths)
+        apply_socket_filter()
         os.chdir(workdir)
     except (JailError, OSError) as e:
         sys.stderr.write(f"[jail] refusing to run unconfined: {e}\n")
@@ -227,6 +320,100 @@ def confine_and_exec(
     except OSError as e:
         sys.stderr.write(f"[jail] exec failed: {e}\n")
     return 127
+
+
+def _children(pid: int) -> list[int]:
+    """The live and zombie children of ``pid``, read from /proc."""
+    found = []
+    for entry in os.scandir("/proc"):
+        if not entry.name.isdigit():
+            continue
+        try:
+            stat_line = Path(entry.path, "stat").read_text()
+        except OSError:
+            continue
+        if int(stat_line.rsplit(")", 1)[1].split()[1]) == pid:
+            found.append(int(entry.name))
+    return found
+
+
+def kill_descendants() -> None:
+    """SIGKILL and reap every descendant; as subreaper, orphans come back here to be killed."""
+    me = os.getpid()
+    while True:
+        for child in _children(me):
+            try:
+                os.kill(child, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        try:
+            reaped, _ = os.waitpid(-1, os.WNOHANG)
+        except ChildProcessError:
+            return
+        if reaped == 0:
+            time.sleep(0.01)
+
+
+def _exit_code(status: int) -> int:
+    code = os.waitstatus_to_exitcode(status)
+    return 128 - code if code < 0 else code
+
+
+def _on_launcher_death(*_) -> None:
+    kill_descendants()
+    os._exit(137)
+
+
+def _keep(launcher: int, run_child) -> int:
+    """Subreaper for one command: wait for it, then kill whatever it left behind.
+
+    The launcher dying (a timeout's killpg) ends the run the same way."""
+    libc = _libc()
+    if libc.prctl(_PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) != 0:
+        return 70
+    signal.signal(signal.SIGTERM, _on_launcher_death)
+    libc.prctl(_PR_SET_PDEATHSIG, signal.SIGTERM, 0, 0, 0)
+    if os.getppid() != launcher:
+        return 137
+    pid = os.fork()
+    if pid == 0:
+        os._exit(run_child())
+    while True:
+        reaped, status = os.waitpid(-1, 0)
+        if reaped == pid:
+            break
+    kill_descendants()
+    return _exit_code(status)
+
+
+def run_confined(
+    cmd: Sequence[str],
+    *,
+    workdir: Path,
+    ro_paths: Sequence[Path],
+    limits: JailLimits,
+    env: Mapping[str, str],
+) -> int:
+    """Run ``cmd`` jailed under a keeper in its own session; nothing it starts outlives it."""
+    if landlock_abi() < MIN_ABI:
+        sys.stderr.write(
+            f"[jail] refusing to run unconfined: Landlock ABI {landlock_abi()} "
+            f"is too old (needs {MIN_ABI}, Linux 6.12)\n"
+        )
+        return 70
+    launcher = os.getpid()
+    keeper = os.fork()
+    if keeper == 0:
+        os.setsid()
+        code = _keep(
+            launcher,
+            lambda: confine_and_exec(
+                cmd, workdir=workdir, ro_paths=ro_paths, limits=limits, env=env
+            ),
+        )
+        os._exit(code)
+    _, status = os.waitpid(keeper, 0)
+    return _exit_code(status)
 
 
 def build_argv(
@@ -245,6 +432,10 @@ def build_argv(
         str(limits.fsize_mb),
         "--nofile",
         str(limits.nofile),
+        "--as-mb",
+        str(limits.as_mb),
+        "--procs",
+        str(limits.procs),
         "--",
         *cmd,
     ]
@@ -254,10 +445,11 @@ def _parse(argv: Sequence[str]) -> argparse.Namespace:
     defaults = JailLimits()
     p = argparse.ArgumentParser(prog="jail", description="Run a command under a Landlock jail.")
     p.add_argument("--workdir", type=Path, required=True)
-    p.add_argument("--allow-net", action="store_true", help="leave TCP unblocked")
     p.add_argument("--cpu-sec", type=int, default=defaults.cpu_sec)
     p.add_argument("--fsize-mb", type=int, default=defaults.fsize_mb)
     p.add_argument("--nofile", type=int, default=defaults.nofile)
+    p.add_argument("--as-mb", type=int, default=defaults.as_mb)
+    p.add_argument("--procs", type=int, default=defaults.procs)
     p.add_argument("cmd", nargs=argparse.REMAINDER)
     ns = p.parse_args(argv)
     if ns.cmd[:1] == ["--"]:
@@ -267,12 +459,19 @@ def _parse(argv: Sequence[str]) -> argparse.Namespace:
 
 def main(argv: Sequence[str], env: Mapping[str, str]) -> int:
     ns = _parse(argv)
-    return confine_and_exec(
+    if not ns.cmd:
+        return 2
+    return run_confined(
         ns.cmd,
         workdir=ns.workdir.resolve(),
         ro_paths=[Path(p) for p in _DEFAULT_RO],
-        allow_net=ns.allow_net,
-        limits=JailLimits(cpu_sec=ns.cpu_sec, fsize_mb=ns.fsize_mb, nofile=ns.nofile),
+        limits=JailLimits(
+            cpu_sec=ns.cpu_sec,
+            fsize_mb=ns.fsize_mb,
+            nofile=ns.nofile,
+            as_mb=ns.as_mb,
+            procs=ns.procs,
+        ),
         env=env,
     )
 

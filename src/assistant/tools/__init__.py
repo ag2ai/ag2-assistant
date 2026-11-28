@@ -131,6 +131,22 @@ def docker_environment(**kwargs):
     return DockerEnvironment(**kwargs)
 
 
+#: Every value ``tools.sandbox`` may take; any other offers no code or shell tool.
+SANDBOXES = frozenset({"local", "docker", "jailed"})
+#: Every code and shell runner name build_agent_tools can offer, in any sandbox mode.
+RUNNER_TOOLS = frozenset(
+    {
+        "run_code",
+        "run_shell",
+        "run_shell_command",
+        "run_code_sandboxed",
+        "run_shell_sandboxed",
+        "run_code_local",
+        "run_shell_local",
+    }
+)
+
+
 def isolated_environment(sandbox: str) -> Callable[..., Any]:
     """The production factory for the isolated code backend the `sandbox` mode names."""
     return JailedEnvironment if sandbox == "jailed" else docker_environment
@@ -198,11 +214,17 @@ def build_agent_tools(
                         "falling back to the local sandbox with approval prompts.",
                         stacklevel=2,
                     )
-        if sandbox == "jailed":
+        if sandbox not in SANDBOXES:
+            warnings.warn(
+                f"Unknown sandbox {sandbox!r} (expected one of {sorted(SANDBOXES)}); "
+                "no code or shell tools are offered.",
+                stacklevel=2,
+            )
+        elif sandbox == "jailed":
             if jail.landlock_abi() < jail.MIN_ABI:
                 warnings.warn(
                     "Jailed sandbox requested but this kernel lacks Landlock ABI "
-                    f">= {jail.MIN_ABI} (Linux 6.7); run_code and run_shell will refuse to run.",
+                    f">= {jail.MIN_ABI} (Linux 6.12); run_code and run_shell will refuse to run.",
                     stacklevel=2,
                 )
             env = (environment_factory or JailedEnvironment)()
@@ -212,7 +234,7 @@ def build_agent_tools(
                     name="run_code",
                     description=(
                         "Run code in an isolated sandbox: it can read and write only its "
-                        "own scratch workspace, cannot open TCP connections, and cannot "
+                        "own scratch workspace, has no network, and cannot "
                         "see the user's files or any secrets. Runs immediately without asking. "
                         "Use for calculation, data transformation, parsing and verification. "
                         "Supported languages: {languages}."
@@ -223,7 +245,7 @@ def build_agent_tools(
                     blocked=_SHELL_BLOCKED,
                     name="run_shell",
                     description=(
-                        "Run a shell command in an isolated sandbox with no TCP network "
+                        "Run a shell command in an isolated sandbox with no network "
                         "and no access to the user's files or secrets; runs immediately "
                         "without asking."
                     ),
@@ -368,6 +390,8 @@ __all__ = [
     "build_agent_tools",
     "docker_environment",
     "isolated_environment",
+    "RUNNER_TOOLS",
+    "SANDBOXES",
     "available_capabilities",
     "capability_catalogue",
     "CAPABILITIES",
